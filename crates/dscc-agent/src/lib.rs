@@ -8980,6 +8980,10 @@ fn file_matches_bytes(path: &FsPath, expected: &[u8]) -> io::Result<bool> {
     }
 }
 
+fn path_exists(path: &FsPath) -> io::Result<bool> {
+    path.try_exists()
+}
+
 fn canonical_forza_install_root(root: PathBuf) -> io::Result<PathBuf> {
     let root = fs::canonicalize(root)?;
     if root.is_dir() {
@@ -9054,26 +9058,63 @@ fn ensure_forza_icon_target_is_safe(root: &FsPath, target: &FsPath) -> io::Resul
 
 fn install_forza_playstation_glyphs(root: PathBuf) -> io::Result<String> {
     let root = canonical_forza_install_root(root)?;
+    let mut backup_actions = Vec::new();
+    let mut install_targets = Vec::new();
 
     for target in forza_controller_icon_targets(&root) {
         ensure_forza_icon_target_is_safe(&root, &target)?;
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)?;
-        }
         let backup = forza_controller_icon_backup_path(&target);
+        let target_exists = path_exists(&target)?;
+        let backup_exists = path_exists(&backup)?;
         let target_already_playstation =
             file_matches_bytes(&target, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP)?;
         let backup_is_playstation =
             file_matches_bytes(&backup, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP)?;
-        if target.exists()
-            && !target_already_playstation
-            && (!backup.exists() || backup_is_playstation)
-        {
-            fs::copy(&target, &backup)?;
+
+        if target_exists && !target_already_playstation {
+            backup_actions.push((target.clone(), backup));
+            install_targets.push(target);
+            continue;
+        }
+
+        if backup_exists && !backup_is_playstation {
+            install_targets.push(target);
+            continue;
+        }
+
+        if target_already_playstation {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "PlayStation glyphs are already present at {}, but DSCC does not have a saved original to restore. Verify the game files once, then enable the override again.",
+                    target.display()
+                ),
+            ));
+        }
+
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "ControllerIcons.zip was not found at {}. DSCC will not install PlayStation glyphs until it can save the original game file first.",
+                target.display()
+            ),
+        ));
+    }
+
+    for (target, backup) in backup_actions {
+        if let Some(parent) = backup.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(target, backup)?;
+    }
+
+    for target in install_targets {
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
         }
         let temp = target.with_extension("zip.dscc-new");
         fs::write(&temp, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP)?;
-        if target.exists() {
+        if path_exists(&target)? {
             fs::remove_file(&target)?;
         }
         fs::rename(temp, target)?;
@@ -9088,47 +9129,75 @@ fn install_forza_playstation_glyphs(root: PathBuf) -> io::Result<String> {
 fn restore_forza_original_glyphs(root: PathBuf) -> io::Result<String> {
     let root = canonical_forza_install_root(root)?;
 
-    let mut restored = 0usize;
+    let mut restore_actions = Vec::new();
     let mut invalid_backups = 0usize;
+    let mut unbacked_playstation_files = Vec::new();
     for target in forza_controller_icon_targets(&root) {
         ensure_forza_icon_target_is_safe(&root, &target)?;
         let backup = forza_controller_icon_backup_path(&target);
-        if !backup.exists() {
-            continue;
-        }
-        if file_matches_bytes(&backup, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP)? {
+        let backup_exists = path_exists(&backup)?;
+        let backup_is_playstation =
+            file_matches_bytes(&backup, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP)?;
+        let target_is_playstation =
+            file_matches_bytes(&target, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP)?;
+
+        if backup_exists && backup_is_playstation {
             invalid_backups += 1;
             continue;
         }
+
+        if backup_exists {
+            restore_actions.push((target, backup));
+            continue;
+        }
+
+        if target_is_playstation {
+            unbacked_playstation_files.push(target);
+        }
+    }
+
+    if invalid_backups > 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "DSCC found {invalid_backups} glyph backup file{} that already contain PlayStation icons. Verify the game files once, then enable the override again so DSCC can capture the original Xbox files.",
+                if invalid_backups == 1 { "" } else { "s" }
+            ),
+        ));
+    }
+
+    if !unbacked_playstation_files.is_empty() {
+        let target_list = unbacked_playstation_files
+            .iter()
+            .map(|target| target.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "DSCC found PlayStation glyph files without saved originals at {target_list}. Verify the game files once, then enable the override again so DSCC can capture the original Xbox files."
+            ),
+        ));
+    }
+
+    if restore_actions.is_empty() {
+        return Ok(
+            "Forza Horizon 6 button glyphs are already using the game defaults.".to_string(),
+        );
+    }
+
+    let mut restored = 0usize;
+    for (target, backup) in restore_actions {
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
         let temp = target.with_extension("zip.dscc-restore");
         fs::copy(&backup, &temp)?;
-        if target.exists() {
+        if path_exists(&target)? {
             fs::remove_file(&target)?;
         }
         fs::rename(temp, target)?;
         restored += 1;
-    }
-
-    if restored == 0 {
-        if invalid_backups > 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "DSCC found {invalid_backups} glyph backup file{} that already contain PlayStation icons. Verify the game files once, then enable the override again so DSCC can capture the original Xbox files.",
-                    if invalid_backups == 1 { "" } else { "s" }
-                ),
-            ));
-        }
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!(
-                "No DSCC backup ControllerIcons.zip files were found under {}.",
-                root.display()
-            ),
-        ));
     }
 
     Ok(format!(
@@ -13346,14 +13415,19 @@ mod tests {
         }
 
         install_forza_playstation_glyphs(root.clone()).expect("glyph install should succeed");
-        for target in forza_controller_icon_targets(&root) {
+        for (index, target) in targets.iter().enumerate() {
             assert_eq!(
-                fs::read(&target).expect("installed icon should be readable"),
+                fs::read(target).expect("installed icon should be readable"),
                 FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP
             );
             assert!(
-                forza_controller_icon_backup_path(&target).exists(),
+                forza_controller_icon_backup_path(target).exists(),
                 "original icon should be backed up"
+            );
+            assert_eq!(
+                fs::read_to_string(forza_controller_icon_backup_path(target))
+                    .expect("backup icon should be readable"),
+                format!("xbox-icons-{index}")
             );
         }
 
@@ -13366,6 +13440,35 @@ mod tests {
         }
 
         fs::remove_dir_all(&root).expect("temp glyph test dir should be removable");
+    }
+
+    #[test]
+    fn forza_glyph_installer_refuses_to_install_without_originals() {
+        let root = std::env::temp_dir().join(format!(
+            "dscc-forza-glyph-missing-originals-test-{}",
+            std::process::id()
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("old temp missing originals dir should be removable");
+        }
+        fs::create_dir_all(&root).expect("temp missing originals root should be creatable");
+
+        let error = install_forza_playstation_glyphs(root.clone())
+            .expect_err("glyph install should refuse missing original icon files");
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+
+        for target in forza_controller_icon_targets(&root) {
+            assert!(
+                !target.exists(),
+                "installer should not create unbacked PlayStation icon files"
+            );
+            assert!(
+                !forza_controller_icon_backup_path(&target).exists(),
+                "installer should not create backups when originals are missing"
+            );
+        }
+
+        fs::remove_dir_all(&root).expect("temp missing originals dir should be removable");
     }
 
     #[test]
@@ -13401,6 +13504,106 @@ mod tests {
         }
 
         fs::remove_dir_all(&root).expect("temp glyph recovery dir should be removable");
+    }
+
+    #[test]
+    fn forza_glyph_restore_succeeds_when_defaults_are_already_present() {
+        let root = std::env::temp_dir().join(format!(
+            "dscc-forza-glyph-defaults-test-{}",
+            std::process::id()
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("old temp defaults dir should be removable");
+        }
+
+        let targets = forza_controller_icon_targets(&root);
+        for (index, target) in targets.iter().enumerate() {
+            fs::create_dir_all(target.parent().expect("target has parent"))
+                .expect("target parent should be creatable");
+            fs::write(target, format!("xbox-icons-{index}")).expect("seed icon should be writable");
+        }
+
+        let message = restore_forza_original_glyphs(root.clone())
+            .expect("restore should no-op when defaults are present");
+        assert!(
+            message.contains("already using the game defaults"),
+            "restore should report a successful no-op"
+        );
+        for (index, target) in targets.iter().enumerate() {
+            assert_eq!(
+                fs::read_to_string(target).expect("default icon should remain readable"),
+                format!("xbox-icons-{index}")
+            );
+        }
+
+        fs::remove_dir_all(&root).expect("temp defaults dir should be removable");
+    }
+
+    #[test]
+    fn forza_glyph_restore_refuses_unbacked_playstation_files() {
+        let root = std::env::temp_dir().join(format!(
+            "dscc-forza-glyph-unbacked-test-{}",
+            std::process::id()
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("old temp unbacked dir should be removable");
+        }
+
+        let targets = forza_controller_icon_targets(&root);
+        for target in &targets {
+            fs::create_dir_all(target.parent().expect("target has parent"))
+                .expect("target parent should be creatable");
+            fs::write(target, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP)
+                .expect("PlayStation icon should be writable");
+        }
+
+        let error = restore_forza_original_glyphs(root.clone())
+            .expect_err("restore should refuse PlayStation icons without backups");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        for target in &targets {
+            assert_eq!(
+                fs::read(target).expect("PlayStation icon should remain readable"),
+                FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP
+            );
+        }
+
+        fs::remove_dir_all(&root).expect("temp unbacked dir should be removable");
+    }
+
+    #[test]
+    fn forza_glyph_restore_validates_every_target_before_replacing_files() {
+        let root = std::env::temp_dir().join(format!(
+            "dscc-forza-glyph-partial-restore-test-{}",
+            std::process::id()
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).expect("old temp partial restore dir should be removable");
+        }
+
+        let targets = forza_controller_icon_targets(&root);
+        for target in &targets {
+            fs::create_dir_all(target.parent().expect("target has parent"))
+                .expect("target parent should be creatable");
+            fs::write(target, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP)
+                .expect("PlayStation icon should be writable");
+        }
+        fs::write(
+            forza_controller_icon_backup_path(&targets[0]),
+            "xbox-icons-restorable",
+        )
+        .expect("backup icon should be writable");
+
+        let error = restore_forza_original_glyphs(root.clone())
+            .expect_err("restore should refuse a partial restore with one unbacked target");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        for target in &targets {
+            assert_eq!(
+                fs::read(target).expect("PlayStation icon should remain readable"),
+                FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP
+            );
+        }
+
+        fs::remove_dir_all(&root).expect("temp partial restore dir should be removable");
     }
 
     #[tokio::test]
