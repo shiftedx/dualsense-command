@@ -462,9 +462,16 @@ export async function importProfile(profile: {
 }
 
 export async function deleteProfile(profileId: string): Promise<ActionAcceptedDto | void> {
-  return apiFetch<ActionAcceptedDto | void>(`/profiles/${encodeURIComponent(profileId)}`, {
-    method: 'DELETE'
-  });
+  try {
+    return await apiFetch<ActionAcceptedDto | void>(`/profiles/${encodeURIComponent(profileId)}`, {
+      method: 'DELETE'
+    });
+  } catch (caught) {
+    if (caught instanceof ApiRequestError && caught.status === 404) {
+      return { accepted: true, message: 'Profile was already deleted' };
+    }
+    throw caught;
+  }
 }
 
 export async function writeSteamInputBinding(

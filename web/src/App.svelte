@@ -48,6 +48,12 @@
   };
   type ColorPickerTarget = 'lightbar' | 'rpm';
   type AppView = 'haptics' | 'buttonMapping';
+  type ToastTone = 'success' | 'info' | 'error';
+  type ToastMessage = {
+    id: number;
+    tone: ToastTone;
+    message: string;
+  };
   type EditableControllerConfig = Omit<ControllerConfiguration, 'controllerId' | 'model'>;
   type SteamBindingSlot = {
     key: string;
@@ -419,7 +425,7 @@
       steamBindingDraft = selectedSteamBinding.rawBinding;
       steamBindingLabelDraft = parseSteamBindingTriple(selectedSteamBinding.rawBinding).label;
       lastSteamBindingDraftKey = steamBindingKey(selectedSteamBinding);
-      steamBindingMessage = '';
+      clearSteamBindingMessage();
     }
   };
   const focusedSlotsByKey = Object.keys(steamSlotGlyphs).reduce<Array<{ key: string; focus: string }>>(
@@ -617,6 +623,8 @@
   let appSettingsMessage = '';
   let appSettingsBusy = false;
   let profileOverrideMessage = '';
+  let toastMessages: ToastMessage[] = [];
+  let nextToastId = 1;
   let selectedOverrideProfileId = '';
   let selectedProfileGameId = '';
   let configLoadedFor = '';
@@ -984,7 +992,7 @@
     lastSteamBindingDraftKey = steamBindingKey(selectedSteamBinding);
     steamBindingDraft = selectedSteamBinding.rawBinding;
     steamBindingLabelDraft = parseSteamBindingTriple(selectedSteamBinding.rawBinding).label;
-    steamBindingMessage = '';
+    clearSteamBindingMessage();
   }
   $: steamMappedSlots = steamBindingSlots
     .map((slot) => ({ ...slot, binding: bindingForSteamSlot(steamInputBindings, slot) }))
@@ -1177,6 +1185,31 @@
     return Math.round(clamp(safe, 0.5, 3.5) * 100) / 100;
   };
 
+  const toastToneForMessage = (message: string, fallback: ToastTone = 'success'): ToastTone => {
+    if (/(unable|failed|error|blocked|denied|unavailable|not found|cannot|could not|requires|invalid|refusing)/i.test(message)) {
+      return 'error';
+    }
+    if (/(saving|validating|loading|testing|waiting|restart)/i.test(message)) {
+      return 'info';
+    }
+    return fallback;
+  };
+
+  const dismissToast = (id: number) => {
+    toastMessages = toastMessages.filter((toast) => toast.id !== id);
+  };
+
+  const showToast = (message: string, tone: ToastTone = toastToneForMessage(message)) => {
+    const text = message.trim();
+    if (!text) return;
+    const id = nextToastId++;
+    toastMessages = [
+      ...toastMessages.filter((toast) => toast.message !== text),
+      { id, tone, message: text }
+    ].slice(-4);
+    window.setTimeout(() => dismissToast(id), tone === 'error' ? 6500 : 4200);
+  };
+
   const normalizedSteamControllerType = (label: string | null | undefined) => {
     const value = (label ?? '').toLowerCase();
     if (value.includes('edge')) return 'controller_ps5_edge';
@@ -1334,16 +1367,25 @@
     };
   }
 
+  const clearSteamBindingMessage = () => {
+    steamBindingMessage = '';
+  };
+
+  const setSteamBindingMessage = (message: string, tone: ToastTone = toastToneForMessage(message, 'info')) => {
+    steamBindingMessage = message;
+    showToast(message, tone);
+  };
+
   const selectSteamBinding = (binding: SteamInputBinding | null | undefined) => {
     if (!binding) {
-      steamBindingMessage = 'That Steam input is not present in the loaded layout yet.';
+      setSteamBindingMessage('That Steam input is not present in the loaded layout yet.', 'info');
       return;
     }
     selectedSteamBindingKey = steamBindingKey(binding);
     lastSteamBindingDraftKey = selectedSteamBindingKey;
     steamBindingDraft = binding.rawBinding;
     steamBindingLabelDraft = parseSteamBindingTriple(binding.rawBinding).label;
-    steamBindingMessage = '';
+    clearSteamBindingMessage();
   };
 
   const selectSteamSlot = (slot: SteamBindingSlot) => {
@@ -1352,7 +1394,7 @@
     if (binding) {
       selectSteamBinding(binding);
     } else {
-      steamBindingMessage = `${slot.label} has no Steam Input binding in this layout yet.`;
+      setSteamBindingMessage(`${slot.label} has no Steam Input binding in this layout yet.`, 'info');
     }
   };
 
@@ -1368,16 +1410,16 @@
 
   const saveSteamBinding = async (dryRun = false) => {
     if (!steamInputLayout || !selectedSteamBinding) {
-      steamBindingMessage = 'Load a Steam Input layout and select a binding first.';
+      setSteamBindingMessage('Load a Steam Input layout and select a binding first.', 'error');
       return;
     }
     const rawBinding = steamBindingDraft.trim();
     if (!rawBinding) {
-      steamBindingMessage = 'Choose a target binding before saving.';
+      setSteamBindingMessage('Choose a target binding before saving.', 'error');
       return;
     }
     steamBindingBusy = true;
-    steamBindingMessage = dryRun ? 'Validating Steam Input write...' : 'Saving Steam Input binding...';
+    setSteamBindingMessage(dryRun ? 'Validating Steam Input write...' : 'Saving Steam Input binding...', 'info');
     try {
       const response = await writeSteamInputBinding({
         layoutSource: steamInputLayout.source,
@@ -1389,16 +1431,17 @@
         profileName: activeProfileName || profileContextGame?.name || steamContextGame?.name || null,
         dryRun
       });
-      steamBindingMessage = response.backupPath
-        ? `${response.message} Backup: ${response.backupPath}`
-        : response.message;
+      setSteamBindingMessage(
+        response.backupPath ? `${response.message} Backup: ${response.backupPath}` : response.message,
+        'success'
+      );
       selectedSteamBindingKey = steamBindingKey(response.binding);
       lastSteamBindingDraftKey = selectedSteamBindingKey;
       steamBindingDraft = response.binding.rawBinding;
       steamBindingLabelDraft = parseSteamBindingTriple(response.binding.rawBinding).label;
       if (!dryRun) await refresh();
     } catch (caught) {
-      steamBindingMessage = caught instanceof Error ? caught.message : 'Unable to write Steam Input binding.';
+      setSteamBindingMessage(caught instanceof Error ? caught.message : 'Unable to write Steam Input binding.', 'error');
     } finally {
       steamBindingBusy = false;
     }
@@ -1889,6 +1932,40 @@
     buttons: [],
     profileAssignments: []
   });
+
+  const baseForzaTriggerDefaults = (): EditableControllerConfig['trigger'] => ({
+    sameRange: false,
+    l2From: 0,
+    l2To: 100,
+    r2From: 0,
+    r2To: 100,
+    l2Curve: defaultTriggerCurve('l2'),
+    r2Curve: defaultTriggerCurve('r2'),
+    effect: 'Adaptive resistance',
+    intensity: 'Strong (Standard)',
+    vibration: 'Medium'
+  });
+
+  const applyTriggerConfig = (trigger: EditableControllerConfig['trigger']) => {
+    l2From = normalizeTriggerPercent(trigger.l2From);
+    l2To = Math.max(l2From, normalizeTriggerPercent(trigger.l2To));
+    r2From = normalizeTriggerPercent(trigger.r2From);
+    r2To = Math.max(r2From, normalizeTriggerPercent(trigger.r2To));
+    l2Curve = normalizeTriggerCurve(trigger.l2Curve, defaultTriggerCurve('l2'));
+    r2Curve = normalizeTriggerCurve(trigger.r2Curve, defaultTriggerCurve('r2'));
+    triggerEffect = trigger.effect;
+    triggerIntensity = trigger.intensity;
+    vibrationIntensity = trigger.vibration;
+  };
+
+  const resetTriggerCurvesToProfileDefaults = () => {
+    applyTriggerConfig(baseForzaTriggerDefaults());
+    scheduleBaseFeelTestRefresh();
+    scheduleLiveControllerConfigSync();
+    const profileLabel = activeProfile?.scope === 'Built-in' ? activeProfile.name : 'Forza Horizon';
+    setApplyMessage(`Reset trigger curves to ${profileLabel} defaults`);
+  };
+
   const buildControllerConfig = (): EditableControllerConfig => {
     const base = currentControllerConfig
       ? editableConfigFromController(currentControllerConfig)
@@ -1987,7 +2064,10 @@
     scheduleLiveControllerConfigSync();
   };
   const restoreDefaults = async () => {
-    const profileId = snapshot?.profileResolution.selectedProfileId ?? activeProfileId;
+    const selectedProfile = profiles.find(
+      (profile) => profile.id === (snapshot?.profileResolution.selectedProfileId ?? activeProfileId)
+    );
+    const profileId = selectedProfile && selectedProfile.scope !== 'Built-in' ? 'forza-horizon' : selectedProfile?.id ?? activeProfileId;
     if (!profileId) {
       setApplyMessage('No active profile selected');
       return;
@@ -2007,18 +2087,25 @@
     }
   };
 
-  const setApplyMessage = (message: string) => {
+  const setApplyMessage = (message: string, tone: ToastTone = toastToneForMessage(message)) => {
     applyMessage = message;
+    showToast(message, tone);
     window.setTimeout(() => {
       if (applyMessage === message) applyMessage = '';
     }, 2600);
   };
 
-  const setAppSettingsMessage = (message: string) => {
+  const setAppSettingsMessage = (message: string, tone: ToastTone = toastToneForMessage(message)) => {
     appSettingsMessage = message;
+    showToast(message, tone);
     window.setTimeout(() => {
       if (appSettingsMessage === message) appSettingsMessage = '';
     }, 4200);
+  };
+
+  const setProfileOverrideMessage = (message: string, tone: ToastTone = toastToneForMessage(message)) => {
+    profileOverrideMessage = message;
+    showToast(message, tone);
   };
 
   const updateLanAccess = async (nextListenOnAllInterfaces = !listenOnAllInterfaces) => {
@@ -2035,11 +2122,12 @@
       setAppSettingsMessage(
         updated.restartRequired
           ? `Saved. Restart DSCC to use ${updated.desiredBindAddress}.`
-          : `Web UI is listening on ${updated.effectiveBindAddress}.`
+          : `Web UI is listening on ${updated.effectiveBindAddress}.`,
+        updated.restartRequired ? 'info' : 'success'
       );
       await refresh();
     } catch (caught) {
-      setAppSettingsMessage(caught instanceof Error ? caught.message : 'Unable to update LAN access.');
+      setAppSettingsMessage(caught instanceof Error ? caught.message : 'Unable to update LAN access.', 'error');
     } finally {
       appSettingsBusy = false;
     }
@@ -2056,10 +2144,10 @@
         }
       });
       snapshot = { ...snapshot, appSettings: updated };
-      setAppSettingsMessage(updated.settings.forzaPlaystationGlyphs.lastMessage);
+      setAppSettingsMessage(updated.settings.forzaPlaystationGlyphs.lastMessage, 'success');
       await refresh();
     } catch (caught) {
-      setAppSettingsMessage(caught instanceof Error ? caught.message : 'Unable to update controller button glyphs.');
+      setAppSettingsMessage(caught instanceof Error ? caught.message : 'Unable to update controller button glyphs.', 'error');
     } finally {
       appSettingsBusy = false;
     }
@@ -2074,10 +2162,10 @@
         profileId: selectedOverrideProfileId
       });
       snapshot = { ...snapshot, profileResolution: resolution };
-      profileOverrideMessage = `${selectedOverrideProfile?.name ?? selectedOverrideProfileId} is now used for ${overrideScope}`;
+      setProfileOverrideMessage(`${selectedOverrideProfile?.name ?? selectedOverrideProfileId} is now used for ${overrideScope}`, 'success');
       await refresh();
     } catch (caught) {
-      profileOverrideMessage = caught instanceof Error ? caught.message : 'Unable to set profile override.';
+      setProfileOverrideMessage(caught instanceof Error ? caught.message : 'Unable to set profile override.', 'error');
     }
   };
 
@@ -2091,10 +2179,10 @@
       });
       setProfileGameSelectionMode(false);
       snapshot = { ...snapshot, profileResolution: resolution };
-      profileOverrideMessage = `Automatic profile selection restored for ${previousScope}`;
+      setProfileOverrideMessage(`Automatic profile selection restored for ${previousScope}`, 'success');
       await refresh();
     } catch (caught) {
-      profileOverrideMessage = caught instanceof Error ? caught.message : 'Unable to clear profile override.';
+      setProfileOverrideMessage(caught instanceof Error ? caught.message : 'Unable to clear profile override.', 'error');
     }
   };
 
@@ -2138,19 +2226,26 @@
   };
 
   const deleteProfileById = async (id: string, name: string) => {
-    if (!window.confirm(`Delete profile "${name}"?`)) return;
     const fallbackProfileId =
+      profiles.find((profile) => profile.id === 'forza-horizon')?.id ??
       profiles.find((profile) => profile.id !== id && profile.scope === 'Built-in')?.id ??
       profiles.find((profile) => profile.id !== id)?.id ??
       '';
     profileFileBusy = true;
     try {
+      if (snapshot) {
+        snapshot = {
+          ...snapshot,
+          profiles: snapshot.profiles.filter((profile) => profile.id !== id)
+        };
+      }
       const response = await deleteProfile(id);
       await refresh();
       if (selectedOverrideProfileId === id) selectedOverrideProfileId = fallbackProfileId;
       setApplyMessage(response?.message ?? `Deleted ${name}`);
     } catch (caught) {
       setApplyMessage(caught instanceof Error ? caught.message : 'Failed to delete profile');
+      await refresh();
     } finally {
       profileFileBusy = false;
     }
@@ -2785,7 +2880,7 @@
           </div>
         </Tooltip>
         <Tooltip block text="Installs or restores PlayStation-style button glyphs for supported games. DSCC keeps backups so the game can be returned to its default glyph files." side="bottom" align="end">
-          <div class="dm-switch-line">
+          <div class="dm-switch-line dm-glyph-switch">
             <div>
               <span>Controller Glyphs</span>
               <strong>{glyphOverrideEnabled ? 'PlayStation Icons' : 'Game Default'}</strong>
@@ -2811,9 +2906,6 @@
         <button type="button" aria-label="Dismiss partial agent data notice" onclick={dismissPartialErrors}>dismiss</button>
       </aside>
     {/if}
-    {#if appSettingsMessage}
-      <p class="ops-note dm-warning" role="status" aria-live="polite">{appSettingsMessage}</p>
-    {/if}
     {#if configLoadError}<p class="ops-warning dm-warning">{configLoadError}</p>{/if}
 
     <section
@@ -2828,18 +2920,30 @@
             <span>Actuation Engine</span>
             <h2>Trigger Curves</h2>
           </div>
-          <Tooltip text="Holds the current L2 and R2 base resistance on the controller without needing a game." side="top" align="end">
-            <button
-              class:active={baseFeelTestActive}
-              class="dm-test-button"
-              type="button"
-              aria-pressed={baseFeelTestActive}
-              disabled={baseFeelTestBusy || !snapshot}
-              onclick={() => void toggleBaseFeelTest()}
-            >
-              {baseFeelTestActive ? 'Testing Actuation' : 'Test Actuation'}
-            </button>
-          </Tooltip>
+          <div class="dm-section-actions">
+            <Tooltip text="Restores L2/R2 range, curve, base force, and body feel to the active profile defaults. Custom profiles reset to the stock Forza Horizon curve." side="top" align="end">
+              <button
+                class="dm-test-button"
+                type="button"
+                disabled={!snapshot}
+                onclick={resetTriggerCurvesToProfileDefaults}
+              >
+                <RotateCcw size={14} /> Reset
+              </button>
+            </Tooltip>
+            <Tooltip text="Holds the current L2 and R2 base resistance on the controller without needing a game." side="top" align="end">
+              <button
+                class:active={baseFeelTestActive}
+                class="dm-test-button"
+                type="button"
+                aria-pressed={baseFeelTestActive}
+                disabled={baseFeelTestBusy || !snapshot}
+                onclick={() => void toggleBaseFeelTest()}
+              >
+                {baseFeelTestActive ? 'Testing Actuation' : 'Test Actuation'}
+              </button>
+            </Tooltip>
+          </div>
         </div>
 
         <div class="dm-curve-stack">
@@ -3184,7 +3288,6 @@
               </select>
             </label>
             <div class="dm-action-row">
-              {#if applyMessage}<span role="status" aria-live="polite">{applyMessage}</span>{/if}
               <button class="dm-mini-button" type="button" onclick={requestProfileImport}>Import</button>
               <input bind:this={profileImportInput} class="ops-hidden-file" type="file" accept="application/json,.json,.dscc-profile" onchange={(event) => void handleProfileImport(event)} />
               <button class="dm-mini-button" type="button" disabled={!activeProfileId || profileFileBusy} onclick={() => void exportSelectedProfile()}>Export</button>
@@ -3417,5 +3520,15 @@
         </div>
       </div>
     </section>
+  {/if}
+  {#if toastMessages.length}
+    <div class="dm-toast-stack" aria-live="polite" aria-atomic="false">
+      {#each toastMessages as toast (toast.id)}
+        <button class="dm-toast {toast.tone}" type="button" onclick={() => dismissToast(toast.id)}>
+          <span>{toast.tone}</span>
+          <strong>{toast.message}</strong>
+        </button>
+      {/each}
+    </div>
   {/if}
 </main>
