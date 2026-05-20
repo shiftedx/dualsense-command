@@ -1,0 +1,32 @@
+﻿[package]
+name = "dscc-agent"
+version = "0.1.9"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow = "1"
+axum = { version = "0.7", features = ["json", "ws"] }
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+directories = "6"
+dscc-adapters = { workspace = true }
+dscc-core = { path = "../dscc-core" }
+dscc-device = { workspace = true }
+dscc-telemetry = { path = "../dscc-telemetry" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tower-http = { version = "0.6", features = ["fs"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_ToolHelp",
+] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
