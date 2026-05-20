@@ -153,6 +153,7 @@ const STEAM_INPUT_CACHE_TTL: Duration = Duration::from_secs(30);
 const STEAM_GAME_CATALOG_CACHE_TTL: Duration = Duration::from_secs(300);
 const STEAM_INPUT_LAYOUT_SCAN_LIMIT: usize = 96;
 const TELEMETRY_WS_INVALIDATION_INTERVAL: Duration = Duration::from_millis(500);
+#[cfg(target_os = "windows")]
 const WINDOWS_PNP_CONTROLLER_CACHE_TTL: Duration = Duration::from_secs(60);
 const FORZA_BRAKE_FULL_FORCE_AT: f64 = 246.0 / 255.0;
 const FORZA_THROTTLE_FULL_FORCE_AT: f64 = 252.0 / 255.0;
@@ -6769,10 +6770,7 @@ async fn current_process_names() -> io::Result<Vec<String>> {
             .output()
             .await?;
         if !output.status.success() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "ps did not complete successfully",
-            ));
+            return Err(io::Error::other("ps did not complete successfully"));
         }
         let text = String::from_utf8_lossy(&output.stdout);
         Ok(text

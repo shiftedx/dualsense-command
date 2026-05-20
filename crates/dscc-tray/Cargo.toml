@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "dscc-tray"
 version = "0.1.9"
 edition.workspace = true
