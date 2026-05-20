@@ -2785,6 +2785,7 @@ code,
 
 .dm-action-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
@@ -2815,6 +2816,12 @@ code,
   font-size: 12px;
 }
 
+.dm-mini-button.primary {
+  border-color: rgba(0, 112, 204, 0.92);
+  background: var(--actuation);
+  color: #FFFFFF;
+}
+
 .dm-apply-button {
   width: 76px;
   min-height: 30px;
@@ -2837,6 +2844,31 @@ code,
   border-color: var(--ready);
   background: var(--ready);
   color: #06110A;
+}
+
+.dm-profile-rename {
+  display: grid;
+  grid-template-columns: minmax(210px, 260px) minmax(0, 1fr);
+  align-items: end;
+  gap: 10px;
+}
+
+.dm-profile-rename label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dm-profile-rename span {
+  color: var(--tungsten);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.dm-profile-rename input {
+  min-width: 0;
 }
 
 .ops-hidden-file {
@@ -2995,7 +3027,8 @@ code,
   .dm-deck,
   .dm-button-map-layout,
   .dm-parameter-strip,
-  .dm-profile-line {
+  .dm-profile-line,
+  .dm-profile-rename {
     grid-template-columns: 1fr;
     height: auto;
   }

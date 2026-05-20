@@ -9860,24 +9860,54 @@ async fn update_profile(
     State(state): State<AgentState>,
     Json(request): Json<UpdateProfileRequest>,
 ) -> Result<Json<ProfileSummary>, StatusCode> {
+    let name = request.name.trim();
+    if name.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
     let (updated, to_save) = {
         let mut inner = state.inner.write().await;
-        let profile = inner
+        let profile_index = inner
             .profiles
-            .iter_mut()
-            .find(|profile| profile.id == id)
+            .iter()
+            .position(|profile| profile.id == id)
             .ok_or(StatusCode::NOT_FOUND)?;
 
-        if profile.built_in {
+        if inner.profiles[profile_index].built_in {
             return Err(StatusCode::FORBIDDEN);
         }
 
-        profile.name = request.name;
-        let updated = profile.clone();
+        if inner
+            .profiles
+            .iter()
+            .any(|profile| profile.id != id && profile.name.trim().eq_ignore_ascii_case(name))
+        {
+            return Err(StatusCode::CONFLICT);
+        }
+
+        inner.profiles[profile_index].name = name.to_string();
+        let updated = inner.profiles[profile_index].clone();
+        for config in inner.controller_configs.values_mut() {
+            for assignment in &mut config.profile_assignments {
+                if assignment.profile_id == id {
+                    assignment.profile_name = updated.name.clone();
+                }
+            }
+        }
         inner.effect_revision = inner.effect_revision.saturating_add(1);
+        inner.logs.push(LogEntry {
+            level: "info".to_string(),
+            message: format!("Renamed profile {}", updated.name),
+            timestamp: current_timestamp(),
+        });
         (updated, build_persist_snapshot(&inner))
     };
     persist_snapshot(&state, to_save).await;
+    let _ = state.event_tx.send(RealtimeMessage {
+        kind: "snapshot_invalidated".to_string(),
+        controller: None,
+        message: Some("profile-renamed".to_string()),
+    });
     Ok(Json(updated))
 }
 
@@ -10406,6 +10436,64 @@ mod tests {
         let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
         let status: StatusResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(status.active_profile_id.as_deref(), Some("track-focus"));
+    }
+
+    #[tokio::test]
+    async fn custom_profile_can_be_renamed() {
+        let router = app(AgentState::mock());
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/profiles")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"name":"Track Focus"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/profiles/track-focus")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"name":"Endurance Focus"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let renamed: ProfileSummary = serde_json::from_slice(&body).unwrap();
+        assert_eq!(renamed.id, "track-focus");
+        assert_eq!(renamed.name, "Endurance Focus");
+        assert!(!renamed.built_in);
+
+        let profile: ProfileSummary =
+            get_json(router, "/api/profiles/track-focus", StatusCode::OK).await;
+        assert_eq!(profile.name, "Endurance Focus");
+    }
+
+    #[tokio::test]
+    async fn built_in_profile_cannot_be_renamed() {
+        let response = app(AgentState::mock())
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/profiles/forza-horizon")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"name":"Renamed Built In"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

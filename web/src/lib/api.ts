@@ -445,6 +445,14 @@ export async function createProfile(name: string): Promise<ProfileSummary> {
   return mapProfile(dto);
 }
 
+export async function renameProfile(profileId: string, name: string): Promise<ProfileSummary> {
+  const dto = await apiFetch<ProfileDto>(`/profiles/${encodeURIComponent(profileId)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ name })
+  });
+  return mapProfile(dto);
+}
+
 export async function exportProfile(profileId: string): Promise<ExportedProfile> {
   return apiFetch<ExportedProfile>(`/profiles/${encodeURIComponent(profileId)}/export`);
 }
