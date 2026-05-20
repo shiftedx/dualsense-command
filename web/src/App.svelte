@@ -1895,6 +1895,7 @@
       applyControllerConfig(await getControllerConfig(controllerId));
     } catch (caught) {
       configLoadError = caught instanceof Error ? caught.message : 'Unable to load controller configuration.';
+      showToast(configLoadError, 'error');
     }
   };
 
@@ -2906,8 +2907,6 @@
         <button type="button" aria-label="Dismiss partial agent data notice" onclick={dismissPartialErrors}>dismiss</button>
       </aside>
     {/if}
-    {#if configLoadError}<p class="ops-warning dm-warning">{configLoadError}</p>{/if}
-
     <section
       class:dm-view-hidden={activeView !== 'haptics'}
       class="dm-deck"
@@ -3502,9 +3501,6 @@
         {/if}
 
         <div class="dm-mapping-tray-actions">
-          {#if steamBindingMessage}
-            <p class="dm-mapping-tray-message">{steamBindingMessage}</p>
-          {/if}
           <button
             class="dm-mapping-action ghost"
             type="button"
