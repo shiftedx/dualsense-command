@@ -1,0 +1,13 @@
+{
+  "name": "dualsense-command-center",
+  "version": "0.1.9",
+  "description": "Clean-room Rust and TypeScript command center for PlayStation DualSense and DualSense Edge controllers.",
+  "private": true,
+  "scripts": {
+    "web:build": "npm --prefix web run build",
+    "web:dev": "npm --prefix web run dev",
+    "web:preview": "npm --prefix web run preview"
+  },
+  "license": "Apache-2.0",
+  "type": "commonjs"
+}

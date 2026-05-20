@@ -1,0 +1,24 @@
+[workspace]
+members = [
+    "crates/dscc-adapters",
+    "crates/dscc-agent",
+    "crates/dscc-cli",
+    "crates/dscc-core",
+    "crates/dscc-device",
+    "crates/dscc-telemetry",
+    "crates/dscc-tray",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+rust-version = "1.86"
+
+[workspace.dependencies]
+dscc-adapters = { path = "crates/dscc-adapters" }
+dscc-core = { path = "crates/dscc-core" }
+dscc-device = { path = "crates/dscc-device" }
+dscc-telemetry = { path = "crates/dscc-telemetry" }
+serde = { version = "1", features = ["derive"] }
+thiserror = "1"

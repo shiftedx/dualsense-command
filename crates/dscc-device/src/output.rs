@@ -1,0 +1,628 @@
+use std::{
+    collections::BTreeMap,
+    sync::{Mutex, MutexGuard},
+    time::Duration,
+};
+
+use dscc_core::{ControllerOutputFrame, PlayerLedsOutput, RumbleOutput, TriggerOutput};
+
+use crate::{
+    error::DeviceError,
+    manager::OutputMode,
+    status::{DeviceTransportKind, RawDeviceId},
+    transport::{DeviceHandle, DeviceTransport},
+};
+
+const USB_REPORT_ID: u8 = 0x02;
+const BT_REPORT_ID: u8 = 0x31;
+const BT_OUTPUT_TAG: u8 = 0x10;
+const OUTPUT_CRC32_SEED: u8 = 0xa2;
+
+const USB_REPORT_LEN: usize = 63;
+const BT_REPORT_LEN: usize = 78;
+const BT_CRC_OFFSET: usize = BT_REPORT_LEN - 4;
+const USB_COMMON_OFFSET: usize = 1;
+const BT_COMMON_OFFSET: usize = 3;
+
+const FLAG0_ENABLE_RUMBLE_EMULATION: u8 = 0x01;
+const FLAG0_USE_RUMBLE_NOT_HAPTICS: u8 = 0x02;
+const FLAG0_ALLOW_RIGHT_TRIGGER: u8 = 0x04;
+const FLAG0_ALLOW_LEFT_TRIGGER: u8 = 0x08;
+const FLAG1_ALLOW_LIGHTBAR: u8 = 0x04;
+const FLAG1_ALLOW_PLAYER_LEDS: u8 = 0x10;
+
+const COMMON_VALID_FLAG0: usize = 0;
+const COMMON_VALID_FLAG1: usize = 1;
+const COMMON_RUMBLE_RIGHT: usize = 2;
+const COMMON_RUMBLE_LEFT: usize = 3;
+const COMMON_RIGHT_TRIGGER: usize = 10;
+const COMMON_LEFT_TRIGGER: usize = 21;
+const COMMON_PLAYER_LEDS: usize = 43;
+const COMMON_LIGHTBAR_RED: usize = 44;
+const COMMON_LIGHTBAR_GREEN: usize = 45;
+const COMMON_LIGHTBAR_BLUE: usize = 46;
+const TRIGGER_EFFECT_LEN: usize = 11;
+const INPUT_USB_COMMON_OFFSET: usize = 1;
+const INPUT_BT_COMMON_OFFSET: usize = 2;
+const INPUT_COMMON_L2: usize = 4;
+const INPUT_COMMON_R2: usize = 5;
+const INPUT_READ_ATTEMPTS: usize = 4;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ControllerInputState {
+    pub l2: f64,
+    pub r2: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ControllerOutputTarget {
+    pub raw_device_id: RawDeviceId,
+    pub transport: DeviceTransportKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutputReportKind {
+    Usb,
+    Bluetooth,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EncodedOutputReport {
+    pub kind: OutputReportKind,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ControllerOutputWrite {
+    pub bytes: usize,
+    pub hardware_output: bool,
+    pub report_kind: OutputReportKind,
+}
+
+pub struct ControllerOutputManager<T: DeviceTransport> {
+    transport: T,
+    output_mode: OutputMode,
+    sessions: Mutex<BTreeMap<RawDeviceId, OutputSession>>,
+}
+
+struct OutputSession {
+    handle: Box<dyn DeviceHandle>,
+    sequence: u8,
+}
+
+impl<T: DeviceTransport> ControllerOutputManager<T> {
+    pub fn new(transport: T, output_mode: OutputMode) -> Self {
+        Self {
+            transport,
+            output_mode,
+            sessions: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    pub fn output_mode(&self) -> OutputMode {
+        self.output_mode
+    }
+
+    pub fn hardware_writes_enabled(&self) -> bool {
+        self.output_mode.hardware_writes_enabled()
+    }
+
+    pub fn write_frame(
+        &self,
+        target: &ControllerOutputTarget,
+        frame: &ControllerOutputFrame,
+    ) -> Result<ControllerOutputWrite, DeviceError> {
+        let mut sessions = self.lock_sessions();
+        if !sessions.contains_key(&target.raw_device_id) {
+            let handle = self.transport.open(&target.raw_device_id)?;
+            sessions.insert(
+                target.raw_device_id.clone(),
+                OutputSession {
+                    handle,
+                    sequence: 0,
+                },
+            );
+        }
+
+        let session = sessions
+            .get_mut(&target.raw_device_id)
+            .expect("session was inserted above");
+        let report = encode_controller_output_frame(frame, target.transport, session.sequence)?;
+        if report.kind == OutputReportKind::Bluetooth {
+            session.sequence = (session.sequence + 1) & 0x0f;
+        }
+
+        match session.handle.write(&report.bytes) {
+            Ok(_backend_bytes) => Ok(ControllerOutputWrite {
+                bytes: report.bytes.len(),
+                hardware_output: self.hardware_writes_enabled(),
+                report_kind: report.kind,
+            }),
+            Err(error) => {
+                sessions.remove(&target.raw_device_id);
+                Err(error)
+            }
+        }
+    }
+
+    pub fn read_input_state(
+        &self,
+        target: &ControllerOutputTarget,
+    ) -> Result<Option<ControllerInputState>, DeviceError> {
+        let mut sessions = self.lock_sessions();
+        if !sessions.contains_key(&target.raw_device_id) {
+            let handle = self.transport.open(&target.raw_device_id)?;
+            sessions.insert(
+                target.raw_device_id.clone(),
+                OutputSession {
+                    handle,
+                    sequence: 0,
+                },
+            );
+        }
+
+        let session = sessions
+            .get_mut(&target.raw_device_id)
+            .expect("session was inserted above");
+        for _ in 0..INPUT_READ_ATTEMPTS {
+            match session.handle.read_timeout(Duration::from_millis(3)) {
+                Ok(Some(report)) => {
+                    if let Some(input) = parse_dualsense_input_state(&report) {
+                        return Ok(Some(input));
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    sessions.remove(&target.raw_device_id);
+                    return Err(error);
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn lock_sessions(&self) -> MutexGuard<'_, BTreeMap<RawDeviceId, OutputSession>> {
+        match self.sessions.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+}
+
+fn parse_dualsense_input_state(report: &[u8]) -> Option<ControllerInputState> {
+    let common_offset = match report.first().copied()? {
+        0x01 if report.len() > INPUT_USB_COMMON_OFFSET + INPUT_COMMON_R2 => INPUT_USB_COMMON_OFFSET,
+        0x31 if report.len() > INPUT_BT_COMMON_OFFSET + INPUT_COMMON_R2 => INPUT_BT_COMMON_OFFSET,
+        _ => return None,
+    };
+
+    Some(ControllerInputState {
+        l2: f64::from(report[common_offset + INPUT_COMMON_L2]) / 255.0,
+        r2: f64::from(report[common_offset + INPUT_COMMON_R2]) / 255.0,
+    })
+}
+
+pub fn encode_controller_output_frame(
+    frame: &ControllerOutputFrame,
+    transport: DeviceTransportKind,
+    sequence: u8,
+) -> Result<EncodedOutputReport, DeviceError> {
+    match transport {
+        DeviceTransportKind::Usb => Ok(EncodedOutputReport {
+            kind: OutputReportKind::Usb,
+            bytes: encode_usb_output_report(frame),
+        }),
+        DeviceTransportKind::Bluetooth => Ok(EncodedOutputReport {
+            kind: OutputReportKind::Bluetooth,
+            bytes: encode_bluetooth_output_report(frame, sequence),
+        }),
+        DeviceTransportKind::Unknown => Err(DeviceError::TransportFault(
+            "cannot encode DualSense output report for unknown transport".to_string(),
+        )),
+    }
+}
+
+fn encode_usb_output_report(frame: &ControllerOutputFrame) -> Vec<u8> {
+    let mut report = vec![0; USB_REPORT_LEN];
+    report[0] = USB_REPORT_ID;
+    fill_common_output(&mut report, USB_COMMON_OFFSET, frame);
+    report
+}
+
+fn encode_bluetooth_output_report(frame: &ControllerOutputFrame, sequence: u8) -> Vec<u8> {
+    let mut report = vec![0; BT_REPORT_LEN];
+    report[0] = BT_REPORT_ID;
+    report[1] = (sequence & 0x0f) << 4;
+    report[2] = BT_OUTPUT_TAG;
+    fill_common_output(&mut report, BT_COMMON_OFFSET, frame);
+
+    let crc = dualsense_output_crc32(&report[..BT_CRC_OFFSET]);
+    report[BT_CRC_OFFSET..].copy_from_slice(&crc.to_le_bytes());
+    report
+}
+
+fn fill_common_output(report: &mut [u8], common_offset: usize, frame: &ControllerOutputFrame) {
+    report[common_offset + COMMON_VALID_FLAG0] |=
+        FLAG0_ALLOW_RIGHT_TRIGGER | FLAG0_ALLOW_LEFT_TRIGGER;
+    write_trigger(report, common_offset + COMMON_RIGHT_TRIGGER, &frame.r2);
+    write_trigger(report, common_offset + COMMON_LEFT_TRIGGER, &frame.l2);
+
+    if let Some(rumble) = frame.rumble {
+        report[common_offset + COMMON_VALID_FLAG0] |=
+            FLAG0_ENABLE_RUMBLE_EMULATION | FLAG0_USE_RUMBLE_NOT_HAPTICS;
+        write_rumble(report, common_offset, rumble);
+    }
+
+    if let Some(lightbar) = frame.lightbar {
+        report[common_offset + COMMON_VALID_FLAG1] |= FLAG1_ALLOW_LIGHTBAR;
+        let brightness = normalized(lightbar.brightness);
+        report[common_offset + COMMON_LIGHTBAR_RED] =
+            brightness_scaled(lightbar.color.red, brightness);
+        report[common_offset + COMMON_LIGHTBAR_GREEN] =
+            brightness_scaled(lightbar.color.green, brightness);
+        report[common_offset + COMMON_LIGHTBAR_BLUE] =
+            brightness_scaled(lightbar.color.blue, brightness);
+    }
+
+    if let Some(player_leds) = frame.player_leds {
+        report[common_offset + COMMON_VALID_FLAG1] |= FLAG1_ALLOW_PLAYER_LEDS;
+        report[common_offset + COMMON_PLAYER_LEDS] = player_led_mask(player_leds);
+    }
+}
+
+fn write_trigger(report: &mut [u8], offset: usize, trigger: &TriggerOutput) {
+    let encoded = encode_trigger(trigger);
+    report[offset..offset + TRIGGER_EFFECT_LEN].copy_from_slice(&encoded);
+}
+
+fn encode_trigger(trigger: &TriggerOutput) -> [u8; TRIGGER_EFFECT_LEN] {
+    let mut encoded = [0; TRIGGER_EFFECT_LEN];
+    match trigger {
+        TriggerOutput::Off => {
+            // Mode 0x05 retracts the actuator and clears the programmed effect.
+            encoded[0] = 0x05;
+        }
+        TriggerOutput::AdaptiveResistance {
+            start_position,
+            strength,
+        } => {
+            encoded[0] = 0x01;
+            encoded[1] = resistance_position(*start_position);
+            encoded[2] = force_byte(*strength);
+        }
+        TriggerOutput::Wall { position, strength } => {
+            encoded[0] = 0x02;
+            let start = normalized(*position);
+            let end = (start + 0.06).clamp(0.0, 1.0);
+            encoded[1] = resistance_position(start);
+            encoded[2] = resistance_position(end);
+            encoded[3] = force_byte(*strength);
+        }
+        TriggerOutput::Pulse {
+            amplitude,
+            frequency_hz,
+        } => {
+            encoded[0] = 0x06;
+            encoded[1] = frequency_byte(*frequency_hz);
+            encoded[2] = trigger_motor_strength(*amplitude);
+            encoded[3] = vibration_start_position(0.0);
+        }
+        TriggerOutput::PulseAb {
+            strength,
+            frequency_hz,
+            wall_zones,
+        } => {
+            encoded = encode_pulse_ab_trigger(*strength, *frequency_hz, *wall_zones);
+        }
+    }
+    encoded
+}
+
+fn encode_pulse_ab_trigger(
+    strength: f64,
+    frequency_hz: f64,
+    wall_zones: u8,
+) -> [u8; TRIGGER_EFFECT_LEN] {
+    let zone_strength = pulse_ab_zone_strength(strength);
+    let top_zones = wall_zones.clamp(1, 9) as usize;
+    let mut zones = [zone_strength; 10];
+    for zone in &mut zones[(10 - top_zones)..] {
+        *zone = 8;
+    }
+
+    let mut active: u16 = 0;
+    let mut packed_strength: u32 = 0;
+    for (index, strength) in zones.iter().enumerate() {
+        active |= 1_u16 << index;
+        packed_strength |= (u32::from(strength.saturating_sub(1)) & 0x07) << (3 * index);
+    }
+
+    [
+        0x26,
+        (active & 0xff) as u8,
+        ((active >> 8) & 0xff) as u8,
+        (packed_strength & 0xff) as u8,
+        ((packed_strength >> 8) & 0xff) as u8,
+        ((packed_strength >> 16) & 0xff) as u8,
+        ((packed_strength >> 24) & 0xff) as u8,
+        frequency_byte(frequency_hz),
+        0,
+        0,
+        0,
+    ]
+}
+
+fn pulse_ab_zone_strength(value: f64) -> u8 {
+    let amp = force_byte(value);
+    ((amp / 32).saturating_add(1)).clamp(1, 8)
+}
+
+fn write_rumble(report: &mut [u8], common_offset: usize, rumble: RumbleOutput) {
+    report[common_offset + COMMON_RUMBLE_RIGHT] = force_byte(rumble.high_frequency);
+    report[common_offset + COMMON_RUMBLE_LEFT] = force_byte(rumble.low_frequency);
+}
+
+fn player_led_mask(player_leds: PlayerLedsOutput) -> u8 {
+    match player_leds.count.clamp(0, 5) {
+        0 => 0x00,
+        1 => 0x04,
+        2 => 0x06,
+        3 => 0x15,
+        4 => 0x1b,
+        _ => 0x1f,
+    }
+}
+
+fn resistance_position(value: f64) -> u8 {
+    (30.0 + normalized(value) * 142.0).round() as u8
+}
+
+fn vibration_start_position(value: f64) -> u8 {
+    (normalized(value) * 137.0).round() as u8
+}
+
+fn force_byte(value: f64) -> u8 {
+    (normalized(value) * 255.0).round() as u8
+}
+
+fn trigger_motor_strength(value: f64) -> u8 {
+    (normalized(value) * 63.0).round() as u8
+}
+
+fn frequency_byte(frequency_hz: f64) -> u8 {
+    if frequency_hz.is_finite() {
+        frequency_hz.round().clamp(1.0, 255.0) as u8
+    } else {
+        1
+    }
+}
+
+fn brightness_scaled(value: u8, brightness: f64) -> u8 {
+    (f64::from(value) * brightness).round().clamp(0.0, 255.0) as u8
+}
+
+fn normalized(value: f64) -> f64 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+fn dualsense_output_crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffff;
+    crc = crc32_le_update(crc, OUTPUT_CRC32_SEED);
+    for byte in data {
+        crc = crc32_le_update(crc, *byte);
+    }
+    !crc
+}
+
+fn crc32_le_update(mut crc: u32, byte: u8) -> u32 {
+    crc ^= u32::from(byte);
+    for _ in 0..8 {
+        if crc & 1 == 1 {
+            crc = (crc >> 1) ^ 0xedb8_8320;
+        } else {
+            crc >>= 1;
+        }
+    }
+    crc
+}
+
+#[cfg(test)]
+mod tests {
+    use dscc_core::{LightbarOutput, RgbColor};
+
+    use super::*;
+    use crate::{enumeration::RawHidDevice, status::DeviceFamily, transport::MockTransport};
+
+    #[test]
+    fn usb_report_encodes_trigger_blocks_and_lightbar() {
+        let frame = ControllerOutputFrame {
+            l2: TriggerOutput::AdaptiveResistance {
+                start_position: 0.2,
+                strength: 0.5,
+            },
+            r2: TriggerOutput::Pulse {
+                amplitude: 0.75,
+                frequency_hz: 42.0,
+            },
+            lightbar: Some(LightbarOutput {
+                color: RgbColor {
+                    red: 100,
+                    green: 50,
+                    blue: 10,
+                },
+                brightness: 0.5,
+            }),
+            player_leds: Some(PlayerLedsOutput { count: 3 }),
+            rumble: None,
+        };
+
+        let report = encode_controller_output_frame(&frame, DeviceTransportKind::Usb, 0).unwrap();
+
+        assert_eq!(report.kind, OutputReportKind::Usb);
+        assert_eq!(report.bytes.len(), USB_REPORT_LEN);
+        assert_eq!(report.bytes[0], USB_REPORT_ID);
+        assert_eq!(
+            report.bytes[1],
+            FLAG0_ALLOW_RIGHT_TRIGGER | FLAG0_ALLOW_LEFT_TRIGGER
+        );
+        assert_eq!(
+            report.bytes[2],
+            FLAG1_ALLOW_LIGHTBAR | FLAG1_ALLOW_PLAYER_LEDS
+        );
+        assert_eq!(report.bytes[11], 0x06);
+        assert_eq!(report.bytes[12], 42);
+        assert_eq!(report.bytes[13], 47);
+        assert_eq!(report.bytes[22], 0x01);
+        assert_eq!(report.bytes[23], 58);
+        assert_eq!(report.bytes[24], 128);
+        assert_eq!(report.bytes[44], 0x15);
+        assert_eq!(report.bytes[45], 50);
+        assert_eq!(report.bytes[46], 25);
+        assert_eq!(report.bytes[47], 5);
+    }
+
+    #[test]
+    fn bluetooth_report_has_header_sequence_and_crc() {
+        let frame = ControllerOutputFrame {
+            l2: TriggerOutput::Off,
+            r2: TriggerOutput::Wall {
+                position: 0.4,
+                strength: 0.9,
+            },
+            ..ControllerOutputFrame::default()
+        };
+
+        let report =
+            encode_controller_output_frame(&frame, DeviceTransportKind::Bluetooth, 7).unwrap();
+        let crc = u32::from_le_bytes(report.bytes[BT_CRC_OFFSET..].try_into().unwrap());
+
+        assert_eq!(report.kind, OutputReportKind::Bluetooth);
+        assert_eq!(report.bytes.len(), BT_REPORT_LEN);
+        assert_eq!(report.bytes[0], BT_REPORT_ID);
+        assert_eq!(report.bytes[1], 0x70);
+        assert_eq!(report.bytes[2], BT_OUTPUT_TAG);
+        assert_eq!(
+            report.bytes[3],
+            FLAG0_ALLOW_RIGHT_TRIGGER | FLAG0_ALLOW_LEFT_TRIGGER
+        );
+        assert_eq!(report.bytes[13], 0x02);
+        assert_eq!(report.bytes[24], 0x05);
+        assert_eq!(crc, dualsense_output_crc32(&report.bytes[..BT_CRC_OFFSET]));
+        assert_ne!(crc, 0);
+    }
+
+    #[test]
+    fn usb_report_encodes_pulse_ab_wall_form_trigger() {
+        let frame = ControllerOutputFrame {
+            r2: TriggerOutput::PulseAb {
+                strength: 1.0,
+                frequency_hz: 20.0,
+                wall_zones: 2,
+            },
+            ..ControllerOutputFrame::default()
+        };
+
+        let report = encode_controller_output_frame(&frame, DeviceTransportKind::Usb, 0).unwrap();
+        let trigger = &report.bytes[11..22];
+
+        assert_eq!(trigger[0], 0x26);
+        assert_eq!(trigger[1], 0xff);
+        assert_eq!(trigger[2], 0x03);
+        assert_eq!(trigger[7], 20);
+    }
+
+    #[test]
+    fn pulse_ab_zone_strength_matches_shift_thump_boundaries() {
+        assert_eq!(pulse_ab_zone_strength(0.0), 1);
+        assert_eq!(pulse_ab_zone_strength(31.0 / 255.0), 1);
+        assert_eq!(pulse_ab_zone_strength(32.0 / 255.0), 2);
+        assert_eq!(pulse_ab_zone_strength(1.0), 8);
+    }
+
+    #[test]
+    fn dualsense_input_parser_reads_usb_and_bluetooth_trigger_axes() {
+        let mut usb = vec![0; 54];
+        usb[0] = 0x01;
+        usb[5] = 128;
+        usb[6] = 255;
+        let usb_input = parse_dualsense_input_state(&usb).expect("usb input parses");
+        assert!((usb_input.l2 - 128.0 / 255.0).abs() < f64::EPSILON);
+        assert_eq!(usb_input.r2, 1.0);
+
+        let mut bluetooth = vec![0; 78];
+        bluetooth[0] = 0x31;
+        bluetooth[6] = 64;
+        bluetooth[7] = 192;
+        let bluetooth_input =
+            parse_dualsense_input_state(&bluetooth).expect("bluetooth input parses");
+        assert!((bluetooth_input.l2 - 64.0 / 255.0).abs() < f64::EPSILON);
+        assert!((bluetooth_input.r2 - 192.0 / 255.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn output_manager_reads_trigger_axes_from_existing_session() {
+        let device = RawHidDevice::mock("mock://edge-input")
+            .with_family_hint(DeviceFamily::DualSenseEdge)
+            .with_transport_hint(DeviceTransportKind::Usb);
+        let raw_id = device.id.clone();
+        let transport = MockTransport::with_devices(vec![device]);
+        transport.push_read_report(raw_id.clone(), {
+            let mut report = vec![0; 54];
+            report[0] = 0x01;
+            report[5] = 25;
+            report[6] = 200;
+            report
+        });
+        let manager = ControllerOutputManager::new(transport, OutputMode::DryRunHid);
+        let target = ControllerOutputTarget {
+            raw_device_id: raw_id,
+            transport: DeviceTransportKind::Usb,
+        };
+
+        let input = manager
+            .read_input_state(&target)
+            .unwrap()
+            .expect("queued input report parses");
+
+        assert!((input.l2 - 25.0 / 255.0).abs() < f64::EPSILON);
+        assert!((input.r2 - 200.0 / 255.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn output_manager_records_dry_run_write_on_mock_transport() {
+        let device = RawHidDevice::mock("mock://edge")
+            .with_family_hint(DeviceFamily::DualSenseEdge)
+            .with_transport_hint(DeviceTransportKind::Usb);
+        let raw_id = device.id.clone();
+        let transport = MockTransport::with_devices(vec![device]);
+        let manager = ControllerOutputManager::new(transport.clone(), OutputMode::DryRunHid);
+        let target = ControllerOutputTarget {
+            raw_device_id: raw_id.clone(),
+            transport: DeviceTransportKind::Usb,
+        };
+
+        let write = manager
+            .write_frame(
+                &target,
+                &ControllerOutputFrame {
+                    r2: TriggerOutput::AdaptiveResistance {
+                        start_position: 0.1,
+                        strength: 0.8,
+                    },
+                    ..ControllerOutputFrame::default()
+                },
+            )
+            .unwrap();
+
+        let writes = transport.writes_for(&raw_id);
+        assert_eq!(write.bytes, USB_REPORT_LEN);
+        assert!(!write.hardware_output);
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0][0], USB_REPORT_ID);
+    }
+}

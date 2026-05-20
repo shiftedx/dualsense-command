@@ -1,0 +1,108 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Node / web
+/node_modules/
+/dist/
+/.vite/
+/web/node_modules/
+/web/dist/
+/web/.svelte-kit/
+/web/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Test/coverage reports
+/coverage/
+/playwright-report/
+/test-results/
+/web/coverage/
+/web/playwright-report/
+/web/test-results/
+
+# Local/editor
+.DS_Store
+.idea/
+.vscode/
+.cursor/
+.continue/
+.windsurf/
+*.log
+.env
+.env.*
+!.env.example
+
+# Local AI assistant / agent artifacts
+/.claude/
+/.claude.*
+/.aider*
+/claude.md
+/CLAUDE.md
+/claude.local.md
+/CLAUDE.local.md
+/.codex/
+/.codex.*
+/codex.md
+/CODEX.md
+/codex.local.md
+/CODEX.local.md
+/agents.md
+/AGENTS.md
+/agents.local.md
+/AGENTS.local.md
+/.agents/
+/.mcp/
+/.mcp.json
+/.mcp.*.json
+
+# Internal research, handoff, and planning notes
+/internal/
+/.internal/
+/research/
+/plans/
+/scratch/
+/designspec.md
+/PROVENANCE.md
+/WINDOWS_HANDOFF_PROMPT.md
+/docs/*research*.md
+/docs/*plan*.md
+/docs/*provenance*.md
+/docs/*notes*.md
+/docs/*prompt*.md
+/docs/*scratch*.md
+/docs/*experiment*.md
+/docs/*validation*.md
+/docs/*handoff*.md
+
+# Release/signing artifacts
+/release/
+/releases/
+/artifacts/
+/*.zip
+*.msi
+*.exe
+*.pdb
+*.cab
+*.wixobj
+*.wixpdb
+*.wxs
+*.pfx
+*.p12
+*.pem
+*.key
+
+# Local verification artifacts
+/.playwright-cli/
+/output/
+/captures/
+/logs/
+/private-lab/
+
+# Sony/official-app observations must stay private and reviewed before sharing.
+*FWUPDATE*.bin
+
+# Upstream research clone kept out of this clean-room implementation repo.
+/Forza-Horizon-DualSense-Python/
