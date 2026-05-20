@@ -2,6 +2,8 @@ use std::{collections::BTreeMap, net::SocketAddr, time::Duration};
 
 #[cfg(test)]
 use std::hash::{Hash, Hasher};
+#[cfg(target_os = "linux")]
+use std::path::Path;
 
 use anyhow::{bail, Context};
 use clap::{Args, Parser, Subcommand};
