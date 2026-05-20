@@ -13,6 +13,7 @@
     getControllerInput,
     getControllerConfig,
     importProfile,
+    renameProfile,
     runEffectTest,
     saveAppSettings,
     saveControllerConfig,
@@ -636,6 +637,9 @@
   let partialErrorsDismissed = false;
   let lastPartialErrorSignature = '';
   let newProfileName = '';
+  let renameProfileId = '';
+  let renameProfileName = '';
+  let profileRenameBusy = false;
   let profileSaveBusy = false;
   let profileFileBusy = false;
   let profileImportInput: HTMLInputElement | undefined;
@@ -899,6 +903,7 @@
     activeProfile ??
     null;
   $: canDeleteSelectedProfile = Boolean(selectedActionProfile && selectedActionProfile.scope !== 'Built-in');
+  $: canRenameSelectedProfile = Boolean(selectedActionProfile && selectedActionProfile.scope !== 'Built-in');
   $: controllerHeaderName = controllerModelText(controller);
   $: controllerHeaderMeta = controllerConnectionText(controller);
   $: controllerHeaderBatteryReadable = controllerBatteryReadable(controller);
@@ -2226,12 +2231,75 @@
     }
   };
 
+  const beginRenameSelectedProfile = () => {
+    if (!selectedActionProfile || selectedActionProfile.scope === 'Built-in') return;
+    renameProfileId = selectedActionProfile.id;
+    renameProfileName = selectedActionProfile.name;
+  };
+
+  const cancelRenameProfile = () => {
+    renameProfileId = '';
+    renameProfileName = '';
+  };
+
+  const submitRenameProfile = async () => {
+    const profile = profiles.find((item) => item.id === renameProfileId);
+    const name = renameProfileName.trim();
+    if (!profile || profile.scope === 'Built-in') {
+      cancelRenameProfile();
+      return;
+    }
+    if (!name) {
+      setApplyMessage('Profile name cannot be empty', 'error');
+      return;
+    }
+    if (name === profile.name) {
+      cancelRenameProfile();
+      return;
+    }
+    if (profiles.some((item) => item.id !== profile.id && item.name.trim().toLowerCase() === name.toLowerCase())) {
+      setApplyMessage('A profile with that name already exists', 'error');
+      return;
+    }
+
+    profileRenameBusy = true;
+    try {
+      const renamed = await renameProfile(profile.id, name);
+      if (snapshot) {
+        snapshot = {
+          ...snapshot,
+          profiles: snapshot.profiles.map((item) => (item.id === renamed.id ? { ...item, name: renamed.name } : item))
+        };
+      }
+      cancelRenameProfile();
+      await refresh();
+      setApplyMessage(`Renamed profile to ${renamed.name}`, 'success');
+    } catch (caught) {
+      setApplyMessage(caught instanceof Error ? caught.message : 'Unable to rename profile', 'error');
+      await refresh();
+    } finally {
+      profileRenameBusy = false;
+    }
+  };
+
+  const handleRenameProfileKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      void submitRenameProfile();
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelRenameProfile();
+    }
+  };
+
   const deleteProfileById = async (id: string, name: string) => {
     const fallbackProfileId =
       profiles.find((profile) => profile.id === 'forza-horizon')?.id ??
       profiles.find((profile) => profile.id !== id && profile.scope === 'Built-in')?.id ??
       profiles.find((profile) => profile.id !== id)?.id ??
       '';
+    if (renameProfileId === id) cancelRenameProfile();
     profileFileBusy = true;
     try {
       if (snapshot) {
@@ -3293,6 +3361,13 @@
               <button
                 class="dm-mini-button"
                 type="button"
+                disabled={!canRenameSelectedProfile || profileRenameBusy || !selectedActionProfile}
+                title={canRenameSelectedProfile ? 'Rename selected custom profile' : 'Built-in profiles cannot be renamed'}
+                onclick={beginRenameSelectedProfile}
+              >Rename</button>
+              <button
+                class="dm-mini-button"
+                type="button"
                 disabled={!canDeleteSelectedProfile || profileFileBusy || !selectedActionProfile}
                 title={canDeleteSelectedProfile ? 'Delete selected custom profile' : 'Built-in profiles cannot be deleted'}
                 onclick={() => selectedActionProfile && void deleteProfileById(selectedActionProfile.id, selectedActionProfile.name)}
@@ -3307,6 +3382,27 @@
               ><Save size={14} /> {profileSaveBusy ? 'Saving' : 'Save'}</button>
             </div>
           </div>
+          {#if renameProfileId}
+            <div class="dm-profile-rename">
+              <label>
+                <span>Name</span>
+                <input
+                  bind:value={renameProfileName}
+                  disabled={profileRenameBusy}
+                  maxlength="80"
+                  spellcheck="false"
+                  onkeydown={handleRenameProfileKeydown}
+                  aria-label="Profile name"
+                />
+              </label>
+              <div class="dm-action-row">
+                <button class="dm-mini-button" type="button" disabled={profileRenameBusy} onclick={cancelRenameProfile}>Cancel</button>
+                <button class="dm-mini-button primary" type="button" disabled={profileRenameBusy || !renameProfileName.trim()} onclick={() => void submitRenameProfile()}>
+                  {profileRenameBusy ? 'Saving' : 'Apply'}
+                </button>
+              </div>
+            </div>
+          {/if}
         </div>
       </aside>
     </section>
