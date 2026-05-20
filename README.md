@@ -6,6 +6,8 @@ It runs a lightweight background agent, starts from a tray launcher, and serves 
 
 The first supported live telemetry target is Forza Data Out. The project is built around modules so future releases can add other games that expose telemetry data without redesigning the app.
 
+<img width="2095" height="1422" alt="image" src="https://github.com/user-attachments/assets/9a6c4e78-2c9a-40ba-bc5a-a658f13dadfb" />
+
 ## Current Release
 
 - Version: `0.1.9`
