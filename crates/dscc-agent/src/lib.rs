@@ -103,6 +103,7 @@ const MAX_EFFECT_TEST_DURATION_MS: u64 = 1_500;
 const DEFAULT_BASE_FEEL_TEST_DURATION_MS: u64 = 30_000;
 const MAX_BASE_FEEL_TEST_DURATION_MS: u64 = 60_000;
 const UDP_TELEMETRY_PROCESS_INTERVAL: Duration = Duration::from_millis(33);
+#[cfg(target_os = "windows")]
 const SHARED_MEMORY_TELEMETRY_PROCESS_INTERVAL: Duration = Duration::from_millis(33);
 const FORZA_SHIFT_EVENT_HOLD: Duration = Duration::from_millis(190);
 const FORZA_SUSPENSION_IMPACT_HOLD: Duration = Duration::from_millis(170);
@@ -582,6 +583,7 @@ impl AdapterRuntime {
         }
     }
 
+    #[cfg(any(target_os = "windows", test))]
     fn mark_ready(&mut self) {
         self.listener_bound = true;
         self.listener_started_at.get_or_insert_with(Instant::now);
