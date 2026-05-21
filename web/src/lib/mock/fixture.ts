@@ -49,8 +49,19 @@ export const mockControllerProfileAssignments: ControllerProfileAssignment[] = [
 
 export const mockProfiles: ProfileSummary[] = [
   {
+    id: 'global',
+    name: 'Global',
+    builtIn: true,
+    scope: 'Global',
+    gameId: 'all',
+    active: false,
+    rules: 8,
+    updatedAt: 'built-in'
+  },
+  {
     id: 'forza-horizon',
     name: 'Base',
+    builtIn: true,
     scope: 'Built-in',
     gameId: 'all',
     active: false,
@@ -60,6 +71,7 @@ export const mockProfiles: ProfileSummary[] = [
   {
     id: 'forza-horizon-immersive',
     name: 'Immersive',
+    builtIn: true,
     scope: 'Built-in',
     gameId: 'all',
     active: false,
@@ -69,6 +81,7 @@ export const mockProfiles: ProfileSummary[] = [
   {
     id: MOCK_PROFILE_ID,
     name: 'Mock Horizon Track',
+    builtIn: false,
     scope: 'Game',
     gameId: MOCK_GAME_ID,
     active: true,
@@ -78,6 +91,7 @@ export const mockProfiles: ProfileSummary[] = [
   {
     id: 'mock-city-cruise',
     name: 'Mock City Cruise',
+    builtIn: false,
     scope: 'Global',
     gameId: 'all',
     active: false,
@@ -388,7 +402,8 @@ export const mockExportedProfiles: Record<string, ExportedProfile> = Object.from
       schema: MOCK_EXPORT_SCHEMA,
       id: profile.id,
       name: profile.name,
-      built_in: profile.scope === 'Built-in',
+      built_in: profile.builtIn,
+      builtIn: profile.builtIn,
       game_id: profile.scope === 'Game' ? profile.gameId : null,
       gameId: profile.scope === 'Game' ? profile.gameId : null,
       active: profile.active,

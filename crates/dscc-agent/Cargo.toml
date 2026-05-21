@@ -1,6 +1,6 @@
 ﻿[package]
 name = "dscc-agent"
-version = "0.2.0"
+version = "0.2.1"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -27,6 +27,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_Foundation",
     "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Memory",
 ] }
 
 [dev-dependencies]

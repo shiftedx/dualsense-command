@@ -243,6 +243,7 @@ export async function createMockProfile(name: string, options?: { gameId?: strin
   const profile: ProfileSummary = {
     id: uniqueProfileId(name),
     name,
+    builtIn: false,
     scope: gameId ? 'Game' : 'Global',
     gameId: gameId ?? 'all',
     active: false,
@@ -274,8 +275,8 @@ export async function exportMockProfile(profileId: string): Promise<ExportedProf
     schema: MOCK_EXPORT_SCHEMA,
     id: profile.id,
     name: profile.name,
-    built_in: profile.scope === 'Built-in',
-    builtIn: profile.scope === 'Built-in',
+    built_in: profile.builtIn,
+    builtIn: profile.builtIn,
     game_id: profile.scope === 'Game' ? profile.gameId : null,
     gameId: profile.scope === 'Game' ? profile.gameId : null,
     active: profile.active,
@@ -299,6 +300,7 @@ export async function importMockProfile(profile: {
   const imported: ProfileSummary = {
     id,
     name: profile.name,
+    builtIn: false,
     scope: gameId ? 'Game' : 'Global',
     gameId: gameId ?? 'all',
     active: false,
@@ -313,7 +315,7 @@ export async function importMockProfile(profile: {
 export async function deleteMockProfile(profileId: string): Promise<MockActionAccepted> {
   const profile = state.snapshot.profiles.find((item) => item.id === profileId);
   if (!profile) return { accepted: true, message: 'Profile was already deleted' };
-  if (profile.scope === 'Built-in') throw new Error('Built-in mock profiles cannot be deleted.');
+  if (profile.builtIn) throw new Error('Built-in mock profiles cannot be deleted.');
 
   state.snapshot.profiles = state.snapshot.profiles.filter((item) => item.id !== profileId);
   state.profileConfigs.delete(profileId);

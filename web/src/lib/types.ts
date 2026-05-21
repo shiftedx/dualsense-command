@@ -53,6 +53,7 @@ export interface ControllerStatus {
 export interface ProfileSummary {
   id: string;
   name: string;
+  builtIn: boolean;
   scope: 'Built-in' | 'Global' | 'Game';
   gameId: string;
   active: boolean;

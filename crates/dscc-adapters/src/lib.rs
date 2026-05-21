@@ -59,6 +59,16 @@ pub fn built_in_adapters() -> &'static [BuiltInAdapter] {
             enabled_by_default: false,
         },
         BuiltInAdapter {
+            id: "assetto-shared-memory",
+            display_name: "Assetto Shared Memory",
+            protocol: AdapterProtocol::SharedMemory,
+            default_port: None,
+            packet_formats: &["acpmf"],
+            setup_hint: "Launch Assetto Corsa Rally on Windows; DSCC reads the public Assetto shared-memory pages when a driving session is active.",
+            setup_url: Some("https://www.assettocorsamods.net/threads/doc-shared-memory-reference.58/"),
+            enabled_by_default: true,
+        },
+        BuiltInAdapter {
             id: "ea-wrc-udp",
             display_name: "EA SPORTS WRC UDP",
             protocol: AdapterProtocol::Udp,
@@ -502,6 +512,7 @@ mod tests {
 
         assert!(ids.contains(&"forza-data-out"));
         assert!(ids.contains(&"ea-f1-udp"));
+        assert!(ids.contains(&"assetto-shared-memory"));
         assert!(ids.contains(&"ea-wrc-udp"));
         assert!(ids.contains(&"beamng"));
         assert!(ids.contains(&"raceroom"));
