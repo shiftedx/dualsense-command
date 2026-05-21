@@ -1748,8 +1748,10 @@ mod windows_tray {
 
     fn fallback_profile_name(profile_id: &str) -> String {
         match profile_id {
+            "global" => "Global".to_string(),
             "forza-horizon" => "Base".to_string(),
             "forza-horizon-immersive" => "Immersive".to_string(),
+            "assetto-corsa-rally" => "Rally".to_string(),
             _ => profile_id.to_string(),
         }
     }
@@ -2115,7 +2117,7 @@ mod windows_tray {
             let snapshot = serde_json::from_str::<TraySnapshotDto>(
                 r#"{
                     "status":{
-                        "version":"0.2.0",
+                        "version":"0.2.1",
                         "healthy":true,
                         "active_profile_id":"forza-horizon",
                         "active_adapter_id":null
@@ -2142,7 +2144,7 @@ mod windows_tray {
             let summary = tray_health_summary_from_snapshot(&snapshot);
 
             assert_eq!(summary.agent_label, "Agent Online");
-            assert_eq!(summary.agent_detail, "v0.2.0 - profile ready");
+            assert_eq!(summary.agent_detail, "v0.2.1 - profile ready");
             assert_eq!(summary.profile_label, "Profile: Base");
             assert_eq!(summary.profile_detail, "forza-horizon");
             assert_eq!(summary.controller_label, "Controller: Edge");

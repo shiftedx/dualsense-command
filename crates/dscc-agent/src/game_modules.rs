@@ -7,12 +7,16 @@ use crate::{
 };
 
 pub(crate) const FORZA_DATA_OUT_ADAPTER_ID: &str = "forza-data-out";
+pub(crate) const ASSETTO_SHARED_MEMORY_ADAPTER_ID: &str = "assetto-shared-memory";
 pub(crate) const FORZA_HORIZON_PROFILE_ID: &str = "forza-horizon";
 pub(crate) const FORZA_HORIZON_IMMERSIVE_PROFILE_ID: &str = "forza-horizon-immersive";
+pub(crate) const ASSETTO_CORSA_RALLY_PROFILE_ID: &str = "assetto-corsa-rally";
+pub(crate) const ASSETTO_CORSA_RALLY_STEAM_APP_ID: &str = "3917090";
 pub(crate) const FORZA_HORIZON5_STEAM_APP_ID: &str = "1551360";
 pub(crate) const FORZA_HORIZON6_STEAM_APP_ID: &str = "2483190";
 
 const FORZA_HORIZON_PROFILE_TEMPLATES: &[&str] = &["Base", "Immersive"];
+const ASSETTO_CORSA_RALLY_PROFILE_TEMPLATES: &[&str] = &["Rally"];
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct GameModule {
@@ -25,6 +29,8 @@ pub(crate) struct GameModule {
     pub(crate) steam_install_dirs: &'static [&'static str],
     pub(crate) steam_catalog: bool,
     pub(crate) profile_templates: &'static [&'static str],
+    pub(crate) detection_lightbar_color: &'static str,
+    pub(crate) detection_lightbar_brightness: u8,
 }
 
 impl GameModule {
@@ -51,6 +57,8 @@ const BUILT_IN_GAME_MODULES: &[GameModule] = &[
         steam_install_dirs: &["ForzaHorizon6"],
         steam_catalog: true,
         profile_templates: FORZA_HORIZON_PROFILE_TEMPLATES,
+        detection_lightbar_color: "#00a8ff",
+        detection_lightbar_brightness: 58,
     },
     GameModule {
         id: "forza-horizon-5",
@@ -66,6 +74,8 @@ const BUILT_IN_GAME_MODULES: &[GameModule] = &[
         steam_install_dirs: &["ForzaHorizon5"],
         steam_catalog: true,
         profile_templates: FORZA_HORIZON_PROFILE_TEMPLATES,
+        detection_lightbar_color: "#00a8ff",
+        detection_lightbar_brightness: 58,
     },
     GameModule {
         id: "forza-motorsport",
@@ -77,6 +87,21 @@ const BUILT_IN_GAME_MODULES: &[GameModule] = &[
         steam_install_dirs: &[],
         steam_catalog: false,
         profile_templates: FORZA_HORIZON_PROFILE_TEMPLATES,
+        detection_lightbar_color: "#00a8ff",
+        detection_lightbar_brightness: 58,
+    },
+    GameModule {
+        id: "assetto-corsa-rally",
+        display_name: "Assetto Corsa Rally",
+        adapter_id: ASSETTO_SHARED_MEMORY_ADAPTER_ID,
+        default_profile_id: ASSETTO_CORSA_RALLY_PROFILE_ID,
+        process_names: &["acr.exe"],
+        steam_app_ids: &[ASSETTO_CORSA_RALLY_STEAM_APP_ID],
+        steam_install_dirs: &["Assetto Corsa Rally"],
+        steam_catalog: true,
+        profile_templates: ASSETTO_CORSA_RALLY_PROFILE_TEMPLATES,
+        detection_lightbar_color: "#ff3b30",
+        detection_lightbar_brightness: 62,
     },
 ];
 
@@ -278,6 +303,22 @@ mod tests {
     }
 
     #[test]
+    fn assetto_corsa_rally_is_a_distinct_shared_memory_module() {
+        let game = built_in_game_modules()
+            .iter()
+            .find(|game| game.id == "assetto-corsa-rally")
+            .expect("Assetto Corsa Rally module exists");
+
+        assert_eq!(game.adapter_id, ASSETTO_SHARED_MEMORY_ADAPTER_ID);
+        assert_eq!(game.default_profile_id, ASSETTO_CORSA_RALLY_PROFILE_ID);
+        assert_eq!(game.steam_app_ids, &[ASSETTO_CORSA_RALLY_STEAM_APP_ID]);
+        assert!(game
+            .process_names
+            .iter()
+            .any(|process| process.eq_ignore_ascii_case("acr.exe")));
+    }
+
+    #[test]
     fn process_detection_uses_game_module_metadata() {
         let detection = detect_running_game_from_processes(["ForzaHorizon5.exe"]);
 
@@ -290,6 +331,24 @@ mod tests {
         assert_eq!(
             detection.profile_id.as_deref(),
             Some(FORZA_HORIZON_IMMERSIVE_PROFILE_ID)
+        );
+    }
+
+    #[test]
+    fn process_detection_matches_assetto_corsa_rally() {
+        let detection = detect_running_game_from_processes(["acr.exe"]);
+
+        assert_eq!(
+            detection.active_game_id.as_deref(),
+            Some("assetto-corsa-rally")
+        );
+        assert_eq!(
+            detection.adapter_id.as_deref(),
+            Some(ASSETTO_SHARED_MEMORY_ADAPTER_ID)
+        );
+        assert_eq!(
+            detection.profile_id.as_deref(),
+            Some(ASSETTO_CORSA_RALLY_PROFILE_ID)
         );
     }
 }

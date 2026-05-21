@@ -862,10 +862,12 @@ function mapController(controller: ControllerDto): ControllerStatus {
 
 function mapProfile(profile: ProfileDto): ProfileSummary {
   const gameId = profile.game_id ?? profile.gameId ?? null;
+  const stockGlobal = profile.built_in && profile.id === 'global';
   return {
     id: profile.id,
     name: profile.name,
-    scope: profile.built_in ? 'Built-in' : gameId ? 'Game' : 'Global',
+    builtIn: profile.built_in,
+    scope: stockGlobal ? 'Global' : profile.built_in ? 'Built-in' : gameId ? 'Game' : 'Global',
     gameId: gameId ?? 'all',
     active: profile.active,
     rules: 0,

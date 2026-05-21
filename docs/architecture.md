@@ -28,10 +28,10 @@ The main local API router is `app(state)` in `dscc-agent/src/lib.rs`. It registe
 
 1. `dscc-cli serve` or `dscc-agent` resolves the loopback API address and starts the axum router.
 2. `hid_agent_state()` opens `HidApiTransport`, chooses the output mode, creates `DeviceManager` and `ControllerOutputManager`, and starts periodic device scanning.
-3. The generic UDP adapter runtime starts registered runnable UDP adapters, currently `forza-data-out`, parses packets through `dscc-adapters`, and applies normalized `SignalUpdate`s into the agent telemetry snapshot.
+3. Telemetry runtimes start registered sources: the generic UDP runtime handles adapters such as `forza-data-out`, while the Windows shared-memory runtime handles `assetto-shared-memory`. Both apply normalized `SignalUpdate`s into the agent telemetry snapshot.
 4. Profile resolution picks the active profile from controller/game override, game detection, game assignment, global override, or global default.
 5. `EffectEngine` evaluates a runtime `Profile` into a `ControllerOutputFrame`.
-6. Forza-specific enhancements add telemetry rumble, lightbar, and player LEDs when live driving telemetry is present.
+6. Racing telemetry enhancements add trigger overlays, rumble, lightbar, and player LEDs when live driving telemetry is present. A supported detected game may emit a lightbar-only frame before telemetry arrives; triggers and rumble remain gated on fresh telemetry.
 7. `ControllerOutputManager` encodes USB or Bluetooth reports and writes only when hardware output mode allows it.
 8. `/api/snapshot` and `/api/ws` carry normalized runtime state to the Svelte UI.
 
@@ -78,6 +78,7 @@ Forza Horizon 5, Forza Horizon 6, and Forza Motorsport should be separate game m
 `dscc-adapters` currently exposes these built-in adapter summaries:
 
 - `forza-data-out`: UDP, default port `5300`, active parser hosted by the generic UDP adapter runtime and shared by supported Forza game modules.
+- `assetto-shared-memory`: Windows shared-memory reader for Assetto Corsa Rally's public Assetto telemetry pages.
 - `ea-f1-udp`: UDP catalog entry for F1 telemetry.
 - `ea-wrc-udp`: UDP catalog entry for EA SPORTS WRC.
 - `beamng`: UDP catalog entry for BeamNG.drive protocols.

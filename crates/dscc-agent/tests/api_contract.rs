@@ -30,6 +30,9 @@ async fn agent_api_contract_serves_pre_hardware_runtime_state() {
         .any(|adapter| adapter.id == "forza-data-out"));
     assert!(adapters
         .iter()
+        .any(|adapter| adapter.id == "assetto-shared-memory"));
+    assert!(adapters
+        .iter()
         .any(|adapter| adapter.id == "forza-data-out" && adapter.setup_url.is_some()));
     assert_status(router.clone(), "/api/integrations", StatusCode::NOT_FOUND).await;
 
@@ -49,7 +52,12 @@ async fn agent_api_contract_serves_pre_hardware_runtime_state() {
         .collect();
     assert_eq!(
         profile_ids,
-        vec!["forza-horizon", "forza-horizon-immersive"]
+        vec![
+            "global",
+            "forza-horizon",
+            "forza-horizon-immersive",
+            "assetto-corsa-rally"
+        ]
     );
     assert!(snapshot
         .adapters

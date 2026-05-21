@@ -24,7 +24,7 @@ use axum::{
 use directories::ProjectDirs;
 use dscc_adapters::{
     built_in_adapters, built_in_udp_adapters, initial_detection, parse_udp_telemetry_packet,
-    UdpTelemetryAdapter,
+    AdapterProtocol, BuiltInAdapter, UdpTelemetryAdapter,
 };
 use dscc_core::{
     BatteryState, ComparableValue, ComparisonOp, ConnectionState, ControllerCapabilities,
@@ -80,12 +80,13 @@ use game_modules::detect_running_game_from_processes;
 use game_modules::{
     built_in_game_modules, detect_running_game_from_processes_with_user_games,
     game_executable_exists, game_module_summaries, no_game_detection, supported_game_summary,
-    GameModule, FORZA_DATA_OUT_ADAPTER_ID, FORZA_HORIZON_IMMERSIVE_PROFILE_ID,
-    FORZA_HORIZON_PROFILE_ID,
+    GameModule, ASSETTO_CORSA_RALLY_PROFILE_ID, ASSETTO_SHARED_MEMORY_ADAPTER_ID,
+    FORZA_DATA_OUT_ADAPTER_ID, FORZA_HORIZON_IMMERSIVE_PROFILE_ID, FORZA_HORIZON_PROFILE_ID,
 };
 pub(crate) use http_security::{reject_cross_origin_mutations, request_origin_matches_host};
 
-const DEFAULT_PROFILE_ID: &str = FORZA_HORIZON_PROFILE_ID;
+const GLOBAL_PROFILE_ID: &str = "global";
+const DEFAULT_PROFILE_ID: &str = GLOBAL_PROFILE_ID;
 const IMMERSIVE_PROFILE_ID: &str = FORZA_HORIZON_IMMERSIVE_PROFILE_ID;
 
 fn current_timestamp() -> String {
@@ -102,7 +103,9 @@ const MAX_EFFECT_TEST_DURATION_MS: u64 = 1_500;
 const DEFAULT_BASE_FEEL_TEST_DURATION_MS: u64 = 30_000;
 const MAX_BASE_FEEL_TEST_DURATION_MS: u64 = 60_000;
 const UDP_TELEMETRY_PROCESS_INTERVAL: Duration = Duration::from_millis(33);
-const FORZA_SHIFT_EVENT_HOLD: Duration = Duration::from_millis(130);
+const SHARED_MEMORY_TELEMETRY_PROCESS_INTERVAL: Duration = Duration::from_millis(33);
+const FORZA_SHIFT_EVENT_HOLD: Duration = Duration::from_millis(190);
+const FORZA_SUSPENSION_IMPACT_HOLD: Duration = Duration::from_millis(170);
 const GAME_DETECTION_CACHE_TTL: Duration = Duration::from_secs(5);
 const STEAM_INPUT_CACHE_TTL: Duration = Duration::from_secs(30);
 const STEAM_GAME_CATALOG_CACHE_TTL: Duration = Duration::from_secs(300);
@@ -131,14 +134,24 @@ const FORZA_ABS_PULSE_FREQUENCY_HZ: f64 = 10.0;
 const FORZA_BRAKE_CURVE: f64 = 1.35;
 const FORZA_THROTTLE_CURVE: f64 = 2.25;
 const FORZA_ENDSTOP_WALL_OFFSET: f64 = 0.03;
-const FORZA_SHIFT_THUMP_DEFAULT_INTENSITY: u8 = 180;
+const FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET: f64 = 0.10;
+const FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION: f64 = 0.80;
+const FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION: f64 = 0.95;
+const FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION: f64 = 0.80;
+const FORZA_BRAKE_ENDSTOP_FORCE_BOOST: f64 = 1.25;
+const FORZA_THROTTLE_ENDSTOP_FORCE_BOOST: f64 = 2.0;
+const FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH: f64 = 0.04;
+const FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE: f64 = 1.60;
+const FORZA_SHIFT_THUMP_DEFAULT_INTENSITY: u8 = 255;
 const TRIGGER_CURVE_SCALE: f64 = 100.0;
 const TRIGGER_CURVE_MIN: u16 = 50;
 const TRIGGER_CURVE_MAX: u16 = 350;
 const FORZA_REV_LIMIT_RATIO: f64 = 0.93;
 const FORZA_SHIFT_WALL_FORM_AT: f64 = 0.15;
-const FORZA_SHIFT_FREQUENCY_HZ: f64 = 20.0;
-const FORZA_SHIFT_WALL_ZONES: f64 = 2.0;
+const FORZA_SHIFT_FREQUENCY_HZ: f64 = 34.0;
+const FORZA_SHIFT_WALL_ZONES: f64 = 4.0;
+const FORZA_SUSPENSION_IMPACT_TRIGGER_AT: f64 = 0.42;
+const FORZA_SUSPENSION_IMPACT_RESET_AT: f64 = 0.22;
 
 /// Built-in Forza preset designed from first principles to be immersive
 /// without draining battery. The product owner directive is:
@@ -165,8 +178,9 @@ const FORZA_SHIFT_WALL_ZONES: f64 = 2.0;
 /// the controller config and the UI re-reads the new values.
 fn forza_preset_for_profile(profile_id: &str) -> Option<ForzaTelemetryConfig> {
     match profile_id {
-        DEFAULT_PROFILE_ID => Some(forza_horizon_preset()),
+        FORZA_HORIZON_PROFILE_ID => Some(forza_horizon_preset()),
         IMMERSIVE_PROFILE_ID => Some(forza_horizon_immersive_preset()),
+        ASSETTO_CORSA_RALLY_PROFILE_ID => Some(assetto_corsa_rally_preset()),
         _ => None,
     }
 }
@@ -218,18 +232,19 @@ fn forza_horizon_preset() -> ForzaTelemetryConfig {
     ForzaTelemetryConfig { effects }.normalized()
 }
 
-/// Richer "Immersive" preset. This keeps the same trigger
-/// language as the stock preset, then adds low-to-mid body layers for slip,
-/// curbs, puddles, and suspension. The continuous effects are deliberately
-/// conservative so road texture stays readable and shift/ABS cues can still
-/// cut through. Gear LEDs and the RPM bar stay off unless the user opts in.
+/// Richer "Immersive" preset. This keeps the same trigger language as the stock
+/// preset, then adds low-to-mid body layers for slip, curbs, puddles, and
+/// suspension. Sustained tire slip stays restrained so it does not blur the
+/// controller, while suspension impact is treated as a stronger event cue for
+/// landing thumps. Gear LEDs and the RPM bar stay off unless the user opts in.
 fn forza_horizon_immersive_preset() -> ForzaTelemetryConfig {
     // (id, enabled, intensity 0..=255, route)
     //
     // Body routing is intentionally spatial:
     //   - Tire slip -> right grip, so traction loss lives on the throttle side.
     //   - Puddle drag -> left grip, so water feels different from throttle load.
-    //   - Suspension / rumble strips -> both grips, but lower than shift thump.
+    //   - Suspension -> both grips with enough headroom to stand out on landings.
+    //   - Rumble strips -> both grips, but below shift and impact events.
     //   - RPM LEDs -> disabled; visual gear/RPM overlays should be opt-in.
     let entries: &[(&str, bool, u8, &str)] = &[
         ("brake_resistance", true, 100, "l2"),
@@ -245,9 +260,45 @@ fn forza_horizon_immersive_preset() -> ForzaTelemetryConfig {
         ),
         ("road_texture", true, 35, "body_both"),
         ("rumble_strip", true, 38, "body_both"),
-        ("tire_slip", true, 50, "body_right"),
+        ("tire_slip", true, 30, "body_right"),
         ("puddle_drag", true, 32, "body_left"),
-        ("suspension_impact", true, 55, "body_both"),
+        ("suspension_impact", true, 82, "body_both"),
+        ("rpm_leds", false, 100, "light_led"),
+    ];
+
+    let effects = entries
+        .iter()
+        .map(|(id, enabled, intensity, route)| ForzaEffectConfig {
+            id: (*id).to_string(),
+            enabled: *enabled,
+            intensity: *intensity,
+            route: (*route).to_string(),
+        })
+        .collect();
+
+    ForzaTelemetryConfig { effects }.normalized()
+}
+
+/// Rally preset for Assetto Corsa Rally. It reuses DSCC's normalized racing
+/// signal names, but tunes the surface and shift layers for a looser road feel.
+fn assetto_corsa_rally_preset() -> ForzaTelemetryConfig {
+    let entries: &[(&str, bool, u8, &str)] = &[
+        ("brake_resistance", true, 100, "l2"),
+        ("throttle_resistance", true, 92, "r2"),
+        ("abs_slip_pulse", true, 95, "l2"),
+        ("handbrake_wall", true, 115, "l2"),
+        ("rev_limiter_buzz", true, 58, "r2"),
+        (
+            "gear_shift_thump",
+            true,
+            FORZA_SHIFT_THUMP_DEFAULT_INTENSITY.saturating_add(22),
+            "r2_and_body",
+        ),
+        ("road_texture", true, 46, "body_both"),
+        ("rumble_strip", true, 35, "body_both"),
+        ("tire_slip", true, 62, "body_right"),
+        ("puddle_drag", false, 28, "body_left"),
+        ("suspension_impact", true, 64, "body_both"),
         ("rpm_leds", false, 100, "light_led"),
     ];
 
@@ -449,10 +500,11 @@ struct AgentStateInner {
     user_games: BTreeMap<String, UserGameConfig>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 struct AdapterRuntime {
     adapter_id: String,
     display_name: String,
+    protocol: AdapterProtocol,
     default_port: Option<u16>,
     bind_addr: Option<SocketAddr>,
     listener_bound: bool,
@@ -472,11 +524,41 @@ struct AdapterRuntime {
     last_parse_error_at: Option<Instant>,
 }
 
+impl Default for AdapterRuntime {
+    fn default() -> Self {
+        Self {
+            adapter_id: String::new(),
+            display_name: String::new(),
+            protocol: AdapterProtocol::Custom,
+            default_port: None,
+            bind_addr: None,
+            listener_bound: false,
+            listener_started_at: None,
+            last_error: None,
+            packet_count: 0,
+            packet_rate_hz: None,
+            rate_window_started_at: None,
+            rate_window_packet_count: 0,
+            first_packet_at: None,
+            last_packet_at: None,
+            last_packet_len: None,
+            last_packet_sequence: None,
+            parse_error_count: 0,
+            last_parse_error_len: None,
+            last_parse_error: None,
+            last_parse_error_at: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct ForzaEffectRuntime {
     prev_shift_gear: Option<u8>,
     latched_shift_event: Option<&'static str>,
     latched_shift_until: Option<Instant>,
+    prev_suspension_impact: f64,
+    latched_suspension_impact: f64,
+    latched_suspension_impact_until: Option<Instant>,
 }
 
 impl AdapterRuntime {
@@ -484,9 +566,26 @@ impl AdapterRuntime {
         Self {
             adapter_id: adapter.id.to_string(),
             display_name: adapter.display_name.to_string(),
+            protocol: AdapterProtocol::Udp,
             default_port: Some(adapter.default_port),
             ..Self::default()
         }
+    }
+
+    fn for_built_in_adapter(adapter: &BuiltInAdapter) -> Self {
+        Self {
+            adapter_id: adapter.id.to_string(),
+            display_name: adapter.display_name.to_string(),
+            protocol: adapter.protocol,
+            default_port: adapter.default_port,
+            ..Self::default()
+        }
+    }
+
+    fn mark_ready(&mut self) {
+        self.listener_bound = true;
+        self.listener_started_at.get_or_insert_with(Instant::now);
+        self.last_error = None;
     }
 
     fn mark_bound(&mut self, bind_addr: SocketAddr) {
@@ -584,6 +683,56 @@ impl ForzaEffectRuntime {
         self.latched_shift_event
             .filter(|_| self.latched_shift_until.is_some_and(|until| now < until))
     }
+
+    fn latch_suspension_impact(&mut self, strength: f64, now: Instant) {
+        self.latched_suspension_impact = clamp_unit(strength);
+        self.latched_suspension_impact_until = Some(now + FORZA_SUSPENSION_IMPACT_HOLD);
+    }
+
+    fn detect_suspension_impact(
+        &mut self,
+        suspension_travel: Option<f64>,
+        acceleration_magnitude: Option<f64>,
+        speed_kmh: Option<f64>,
+        telemetry_on: bool,
+        impact_enabled: bool,
+        now: Instant,
+    ) -> f64 {
+        if !telemetry_on || !impact_enabled {
+            self.prev_suspension_impact = 0.0;
+            self.latched_suspension_impact = 0.0;
+            self.latched_suspension_impact_until = None;
+            return 0.0;
+        }
+
+        let impact =
+            suspension_impact_strength(suspension_travel, acceleration_magnitude, speed_kmh);
+        let rising_impact = impact >= FORZA_SUSPENSION_IMPACT_TRIGGER_AT
+            && self.prev_suspension_impact <= FORZA_SUSPENSION_IMPACT_RESET_AT;
+        self.prev_suspension_impact = impact;
+
+        if rising_impact
+            || (self
+                .latched_suspension_impact_until
+                .is_some_and(|until| now < until)
+                && impact > self.latched_suspension_impact)
+        {
+            self.latch_suspension_impact(impact, now);
+        }
+
+        self.latched_suspension_impact(now)
+    }
+
+    fn latched_suspension_impact(&self, now: Instant) -> f64 {
+        if self
+            .latched_suspension_impact_until
+            .is_some_and(|until| now < until)
+        {
+            self.latched_suspension_impact
+        } else {
+            0.0
+        }
+    }
 }
 
 impl AgentStateInner {
@@ -603,12 +752,14 @@ impl AgentStateInner {
                     .unwrap_or_else(|| AdapterRuntime {
                         adapter_id: adapter_id.to_string(),
                         display_name: adapter_id.to_string(),
+                        protocol: AdapterProtocol::Custom,
                         default_port: None,
                         ..AdapterRuntime::default()
                     })
             })
     }
 
+    #[cfg(test)]
     fn require_adapter_runtime(&self, adapter_id: &str) -> &AdapterRuntime {
         self.adapter_runtime(adapter_id)
             .expect("built-in adapter runtime is initialized")
@@ -616,15 +767,22 @@ impl AgentStateInner {
 }
 
 fn default_adapter_runtimes() -> BTreeMap<String, AdapterRuntime> {
-    built_in_udp_adapters()
+    let mut runtimes: BTreeMap<String, AdapterRuntime> = built_in_adapters()
         .iter()
         .map(|adapter| {
             (
                 adapter.id.to_string(),
-                AdapterRuntime::for_udp_adapter(*adapter),
+                AdapterRuntime::for_built_in_adapter(adapter),
             )
         })
-        .collect()
+        .collect();
+    for adapter in built_in_udp_adapters() {
+        runtimes.insert(
+            adapter.id.to_string(),
+            AdapterRuntime::for_udp_adapter(*adapter),
+        );
+    }
+    runtimes
 }
 
 fn signal_gear_to_u8(value: f64) -> Option<u8> {
@@ -1818,9 +1976,16 @@ fn default_profiles() -> Vec<ProfileSummary> {
     vec![
         ProfileSummary {
             id: DEFAULT_PROFILE_ID.to_string(),
-            name: "Base".to_string(),
+            name: "Global".to_string(),
             built_in: true,
             active: true,
+            game_id: None,
+        },
+        ProfileSummary {
+            id: FORZA_HORIZON_PROFILE_ID.to_string(),
+            name: "Base".to_string(),
+            built_in: true,
+            active: false,
             game_id: None,
         },
         ProfileSummary {
@@ -1829,6 +1994,13 @@ fn default_profiles() -> Vec<ProfileSummary> {
             built_in: true,
             active: false,
             game_id: None,
+        },
+        ProfileSummary {
+            id: ASSETTO_CORSA_RALLY_PROFILE_ID.to_string(),
+            name: "Rally".to_string(),
+            built_in: true,
+            active: false,
+            game_id: Some("assetto-corsa-rally".to_string()),
         },
     ]
 }
@@ -1887,13 +2059,15 @@ fn selected_profile_config(
     inner: &AgentStateInner,
     profile_id: &str,
 ) -> Option<SelectedProfileConfig> {
-    if is_default_profile_id(profile_id) {
-        return forza_preset_for_profile(profile_id).map(|forza| {
-            SelectedProfileConfig::BuiltInPreset {
-                trigger: forza_trigger_preset_for_profile(profile_id),
-                forza,
-            }
+    if let Some(forza) = forza_preset_for_profile(profile_id) {
+        return Some(SelectedProfileConfig::BuiltInPreset {
+            trigger: forza_trigger_preset_for_profile(profile_id),
+            forza,
         });
+    }
+
+    if is_default_profile_id(profile_id) {
+        return None;
     }
 
     inner
@@ -1910,8 +2084,11 @@ fn selected_profile_config(
 }
 
 fn forza_trigger_preset_for_profile(profile_id: &str) -> Option<TriggerConfig> {
-    matches!(profile_id, DEFAULT_PROFILE_ID | IMMERSIVE_PROFILE_ID)
-        .then(forza_horizon_trigger_preset)
+    matches!(
+        profile_id,
+        FORZA_HORIZON_PROFILE_ID | IMMERSIVE_PROFILE_ID | ASSETTO_CORSA_RALLY_PROFILE_ID
+    )
+    .then(forza_horizon_trigger_preset)
 }
 
 fn apply_selected_profile_config(config: &mut ControllerConfig, selected: &SelectedProfileConfig) {
@@ -1975,7 +2152,7 @@ fn sync_auto_loaded_profile_for_detection(
     inner: &mut AgentStateInner,
     game_detection: &GameDetectionResponse,
 ) -> bool {
-    let target_profile_id = if game_detection.active_game_id.is_some() {
+    let target_profile_id = if game_detection.profile_id.is_some() {
         profile_resolution(inner, Some(game_detection)).selected_profile_id
     } else {
         None
@@ -4375,6 +4552,13 @@ impl AgentState {
             .active_profile_id
             .clone()
             .filter(|id| profile_exists_in_defaults_or_persisted(id, &persisted.profiles))
+            .map(|id| {
+                if id == FORZA_HORIZON_PROFILE_ID {
+                    DEFAULT_PROFILE_ID.to_string()
+                } else {
+                    id
+                }
+            })
             .or_else(|| Some(DEFAULT_PROFILE_ID.to_string()));
 
         Self {
@@ -4675,7 +4859,7 @@ impl AgentState {
     ) -> Result<Option<ControllerOutputWrite>, String> {
         let candidate = {
             let inner = self.inner.read().await;
-            if hardware_output_runtime_allowed(&inner, game_detection) {
+            if hardware_output_any_allowed(&inner, game_detection) {
                 self.output_frame_for_current_resolution_cached(
                     &inner,
                     game_detection,
@@ -4750,6 +4934,7 @@ impl AgentState {
             telemetry_live,
             &mut output,
         );
+        apply_detection_lightbar_preview(game_detection, telemetry_live, &mut output);
         current_effect_response_from_parts(
             resolution,
             profile,
@@ -4768,13 +4953,21 @@ impl AgentState {
         game_detection: Option<&GameDetectionResponse>,
         purpose: EffectEnginePurpose,
     ) -> Option<(String, ControllerOutputFrame)> {
+        let resolution = profile_resolution(inner, game_detection);
+        let controller_id = resolution.controller_id.clone()?;
         if purpose == EffectEnginePurpose::Hardware
             && !hardware_output_runtime_allowed(inner, game_detection)
         {
+            if hardware_output_detection_lightbar_allowed(inner, game_detection) {
+                let detection = game_detection?;
+                let output = ControllerOutputFrame {
+                    lightbar: detection_lightbar_output(detection),
+                    ..ControllerOutputFrame::default()
+                };
+                return Some((controller_id, output));
+            }
             return None;
         }
-        let resolution = profile_resolution(inner, game_detection);
-        let controller_id = resolution.controller_id.clone()?;
         let config = controller_config_for_resolution(inner, &resolution);
         let (snapshot, telemetry_live) = current_effect_snapshot(inner, game_detection);
         let profile_id = resolution
@@ -4799,6 +4992,7 @@ impl AgentState {
             telemetry_live,
             &mut output,
         );
+        apply_detection_lightbar_preview(game_detection, telemetry_live, &mut output);
         Some((controller_id, output))
     }
 
@@ -4815,10 +5009,15 @@ impl AgentState {
             let packet_rate_hz = inner
                 .adapter_runtime_mut(adapter_id)
                 .mark_packet(packet_len, sequence);
-            if adapter_id == FORZA_DATA_OUT_ADAPTER_ID {
+            if racing_shift_adapter(adapter_id) {
                 let current_gear = update_number(&updates, "drivetrain.gear");
                 let telemetry_on = update_text(&updates, "game.state") == Some("driving");
                 let shift_enabled = shift_thump_detection_enabled(&inner);
+                let suspension_impact_enabled = suspension_impact_detection_enabled(&inner);
+                let suspension_travel = update_number(&updates, "suspension.travel.max");
+                let acceleration_magnitude =
+                    update_number(&updates, "vehicle.acceleration.magnitude");
+                let speed_kmh = update_number(&updates, "vehicle.speed_kmh");
                 let now = Instant::now();
                 if let Some(shift_event) = inner.forza_effect_runtime.detect_shift_event(
                     current_gear,
@@ -4835,6 +5034,19 @@ impl AgentState {
                         .with_sequence(sequence),
                     )
                 }
+                let suspension_impact = inner.forza_effect_runtime.detect_suspension_impact(
+                    suspension_travel,
+                    acceleration_magnitude,
+                    speed_kmh,
+                    telemetry_on,
+                    suspension_impact_enabled,
+                    now,
+                );
+                updates.push(sequenced_signal_update(
+                    "suspension.impact_pulse",
+                    suspension_impact,
+                    sequence,
+                ));
             }
             updates.push(
                 SignalUpdate::new(
@@ -5078,22 +5290,22 @@ impl AgentState {
         game_detection: Option<&GameDetectionResponse>,
     ) -> StatusResponse {
         let resolution = profile_resolution(inner, game_detection);
-        let foreground_game_detected =
-            game_detection.is_some_and(|detection| detection.active_game_id.is_some());
+        let supported_foreground_game_detected =
+            game_detection.is_some_and(|detection| detection.profile_id.is_some());
         StatusResponse {
             product: "DualSense Command Center Agent".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             healthy: true,
             bind_address: self.bind_addr.to_string(),
             uptime_seconds: self.started_at.elapsed().as_secs(),
-            active_profile_id: if foreground_game_detected {
+            active_profile_id: if supported_foreground_game_detected {
                 resolution
                     .selected_profile_id
                     .or_else(|| inner.active_profile_id.clone())
             } else {
                 inner.active_profile_id.clone()
             },
-            active_adapter_id: if foreground_game_detected {
+            active_adapter_id: if supported_foreground_game_detected {
                 resolution
                     .active_adapter_id
                     .or_else(|| inner.active_adapter_id.clone())
@@ -5618,6 +5830,16 @@ fn normalize_hex_color_or(value: &str, fallback: &str) -> String {
     }
 }
 
+fn rgb_from_hex(value: &str) -> Option<RgbColor> {
+    let normalized = normalize_hex_color_or(value, "");
+    let value = normalized.strip_prefix('#')?;
+    Some(RgbColor {
+        red: u8::from_str_radix(&value[0..2], 16).ok()?,
+        green: u8::from_str_radix(&value[2..4], 16).ok()?,
+        blue: u8::from_str_radix(&value[4..6], 16).ok()?,
+    })
+}
+
 fn default_rpm_color() -> String {
     "#ff3a2e".to_string()
 }
@@ -5778,6 +6000,14 @@ fn default_profile_assignments(edge: bool) -> Vec<ProfileAssignmentConfig> {
             profile_name: "Immersive".to_string(),
             state: "ready".to_string(),
             detail: "Horizon 5-compatible Data Out signals".to_string(),
+        },
+        ProfileAssignmentConfig {
+            game_id: "assetto-corsa-rally".to_string(),
+            game_name: "Assetto Corsa Rally".to_string(),
+            profile_id: ASSETTO_CORSA_RALLY_PROFILE_ID.to_string(),
+            profile_name: "Rally".to_string(),
+            state: "ready".to_string(),
+            detail: "Shared-memory rally telemetry".to_string(),
         },
     ]
 }
@@ -7027,17 +7257,24 @@ fn apply_adapter_runtime_summary(
         .bind_addr
         .map(|addr| addr.to_string())
         .unwrap_or_else(|| default_adapter_bind_addr(runtime));
-    let detected_game = detected_forza_game_name(game_detection);
+    let detected_game = detected_adapter_game_name(game_detection, &runtime.adapter_id);
 
     if !runtime.listener_bound {
         if let Some(error) = runtime.last_error.as_ref() {
             adapter.enabled = true;
             adapter.state = "faulted".to_string();
             adapter.packet_rate_hz = None;
-            adapter.setup_hint = format!(
-                "DSCC could not bind the {} UDP listener on {bind_addr}: {error}",
-                runtime.display_name
-            );
+            adapter.setup_hint = if runtime.protocol == AdapterProtocol::SharedMemory {
+                format!(
+                    "DSCC could not start the {} reader: {error}",
+                    runtime.display_name
+                )
+            } else {
+                format!(
+                    "DSCC could not bind the {} UDP listener on {bind_addr}: {error}",
+                    runtime.display_name
+                )
+            };
         }
         return;
     }
@@ -7048,8 +7285,9 @@ fn apply_adapter_runtime_summary(
         adapter.packet_rate_hz = runtime.packet_rate_hz;
         let packet_len = runtime.last_packet_len.unwrap_or_default();
         adapter.setup_hint = format!(
-            "Receiving {} on {bind_addr}; last packet was {packet_len} bytes {}.",
+            "Receiving {} via {}; last packet was {packet_len} bytes {}.",
             runtime.display_name,
+            runtime_transport_label(runtime, &bind_addr),
             runtime
                 .last_packet_at
                 .map(|last| format_elapsed_brief(now.duration_since(last)))
@@ -7062,8 +7300,9 @@ fn apply_adapter_runtime_summary(
     if runtime.packet_count > 0 {
         adapter.state = "needs_setup".to_string();
         adapter.setup_hint = format!(
-            "{} is listening on {bind_addr}, but the stream is stale; last packet arrived {}.",
+            "{} is ready via {}, but the stream is stale; last packet arrived {}.",
             runtime.display_name,
+            runtime_transport_label(runtime, &bind_addr),
             runtime
                 .last_packet_at
                 .map(|last| format_elapsed_brief(now.duration_since(last)))
@@ -7081,6 +7320,16 @@ fn apply_adapter_runtime_summary(
                 "DSCC is listening on {bind_addr}; launch a supported Forza title and enable UDP Race Telemetry."
             );
         }
+    } else if runtime.adapter_id == ASSETTO_SHARED_MEMORY_ADAPTER_ID {
+        if let Some(game_name) = detected_game {
+            adapter.state = "needs_setup".to_string();
+            adapter.setup_hint = format!(
+                "{game_name} is running and DSCC is watching Assetto shared memory, but no live physics page is available yet. Load into a driving session and make sure the game is not paused."
+            );
+        } else {
+            adapter.state = "ready".to_string();
+            adapter.setup_hint = "DSCC is watching Assetto shared memory; launch Assetto Corsa Rally and enter a driving session.".to_string();
+        }
     } else {
         adapter.state = "needs_setup".to_string();
         adapter.setup_hint = format!(
@@ -7093,13 +7342,24 @@ fn apply_adapter_runtime_summary(
 fn default_adapter_bind_addr(runtime: &AdapterRuntime) -> String {
     match runtime.default_port {
         Some(port) => format!("127.0.0.1:{port}"),
+        None if runtime.protocol == AdapterProtocol::SharedMemory => "shared-memory".to_string(),
         None => "127.0.0.1".to_string(),
     }
 }
 
-fn detected_forza_game_name(game_detection: Option<&GameDetectionResponse>) -> Option<&str> {
+fn runtime_transport_label<'a>(runtime: &AdapterRuntime, bind_addr: &'a str) -> &'a str {
+    match runtime.protocol {
+        AdapterProtocol::SharedMemory => "shared memory",
+        _ => bind_addr,
+    }
+}
+
+fn detected_adapter_game_name<'a>(
+    game_detection: Option<&'a GameDetectionResponse>,
+    adapter_id: &str,
+) -> Option<&'a str> {
     game_detection.and_then(|detection| {
-        (detection.adapter_id.as_deref() == Some(FORZA_DATA_OUT_ADAPTER_ID))
+        (detection.adapter_id.as_deref() == Some(adapter_id))
             .then_some(detection.active_game_name.as_deref())
             .flatten()
     })
@@ -7155,22 +7415,28 @@ fn adapter_runtime_health_check(
         };
     }
 
-    let detected_game = (runtime.adapter_id == FORZA_DATA_OUT_ADAPTER_ID)
-        .then(|| detected_forza_game_name(game_detection))
-        .flatten();
+    let detected_game = detected_adapter_game_name(game_detection, &runtime.adapter_id);
     let status = if detected_game.is_some() {
         "warning"
     } else {
         "ok"
     };
     let mut detail = if let Some(game_name) = detected_game {
-        format!(
-            "{game_name} is running; listener is ready on {bind_addr}, but no live Data Out packets are arriving"
-        )
+        if runtime.protocol == AdapterProtocol::SharedMemory {
+            format!(
+                "{game_name} is running; shared-memory reader is ready, but no live physics page is available"
+            )
+        } else {
+            format!(
+                "{game_name} is running; listener is ready on {bind_addr}, but no live Data Out packets are arriving"
+            )
+        }
     } else if runtime.adapter_id == FORZA_DATA_OUT_ADAPTER_ID {
         format!(
             "Listener is ready on {bind_addr}; telemetry will activate when a supported Forza title is running"
         )
+    } else if runtime.adapter_id == ASSETTO_SHARED_MEMORY_ADAPTER_ID {
+        "Shared-memory reader is ready; telemetry will activate when Assetto Corsa Rally is running in a driving session".to_string()
     } else {
         format!(
             "Listener is ready on {bind_addr}; telemetry will activate when a supported source sends packets"
@@ -7373,7 +7639,7 @@ fn profile_resolution(
         selected_profile_id,
         reason: if override_profile.is_some() {
             "manual_override".to_string()
-        } else if game_detection.is_some_and(|detection| detection.active_game_id.is_some()) {
+        } else if game_detection.is_some_and(|detection| detection.profile_id.is_some()) {
             "foreground_game".to_string()
         } else if assigned_profile_id.is_some() {
             "telemetry_source".to_string()
@@ -7416,7 +7682,22 @@ fn update_text<'a>(updates: &'a [SignalUpdate], name: &str) -> Option<&'a str> {
         .and_then(|update| update.value.as_text())
 }
 
+fn racing_shift_adapter(adapter_id: &str) -> bool {
+    matches!(
+        adapter_id,
+        FORZA_DATA_OUT_ADAPTER_ID | ASSETTO_SHARED_MEMORY_ADAPTER_ID
+    )
+}
+
 fn shift_thump_detection_enabled(inner: &AgentStateInner) -> bool {
+    racing_effect_detection_enabled(inner, "gear_shift_thump")
+}
+
+fn suspension_impact_detection_enabled(inner: &AgentStateInner) -> bool {
+    racing_effect_detection_enabled(inner, "suspension_impact")
+}
+
+fn racing_effect_detection_enabled(inner: &AgentStateInner, effect_id: &str) -> bool {
     let connected = inner
         .controllers
         .summaries()
@@ -7438,19 +7719,19 @@ fn shift_thump_detection_enabled(inner: &AgentStateInner) -> bool {
                     .detail(&controller.id)
                     .map(|detail| ControllerConfig::default_for(&controller.id, detail.model))
             });
-        config.is_some_and(|config| forza_shift_thump_enabled(&config))
+        config.is_some_and(|config| forza_effect_enabled(&config, effect_id))
     })
 }
 
-fn forza_shift_thump_enabled(config: &ControllerConfig) -> bool {
+fn forza_effect_enabled(config: &ControllerConfig, effect_id: &str) -> bool {
     config
         .forza
         .effects
         .iter()
-        .find(|effect| effect.id == "gear_shift_thump")
+        .find(|effect| effect.id == effect_id)
         .cloned()
-        .unwrap_or_else(|| default_forza_effect("gear_shift_thump"))
-        .normalized_with_default(&default_forza_effect("gear_shift_thump"))
+        .unwrap_or_else(|| default_forza_effect(effect_id))
+        .normalized_with_default(&default_forza_effect(effect_id))
         .scalar()
         > 0.0
 }
@@ -7473,19 +7754,13 @@ fn materialized_telemetry_response(
     game_detection: Option<&GameDetectionResponse>,
 ) -> Vec<TelemetrySignalResponse> {
     let now = Instant::now();
-    if let Some((game_id, game_name)) = detected_forza_game(game_detection) {
+    if let Some((adapter_id, game_id, game_name)) = detected_telemetry_game(game_detection) {
         let source_id = inner.telemetry.text("source.id");
-        if source_id != Some(FORZA_DATA_OUT_ADAPTER_ID)
-            || !inner
-                .require_adapter_runtime(FORZA_DATA_OUT_ADAPTER_ID)
-                .has_recent_packet(now)
-        {
-            return forza_waiting_telemetry_response(
-                inner.require_adapter_runtime(FORZA_DATA_OUT_ADAPTER_ID),
-                game_id,
-                game_name,
-                now,
-            );
+        let Some(runtime) = inner.adapter_runtime(adapter_id) else {
+            return telemetry_response(&inner.telemetry);
+        };
+        if source_id != Some(adapter_id) || !runtime.has_recent_packet(now) {
+            return waiting_telemetry_response(runtime, adapter_id, game_id, game_name, now);
         }
         let mut response = telemetry_response(&inner.telemetry);
         upsert_telemetry_signal(&mut response, telemetry_signal("game.id", game_id, None, 0));
@@ -7499,13 +7774,14 @@ fn materialized_telemetry_response(
     telemetry_response(&inner.telemetry)
 }
 
-fn detected_forza_game(game_detection: Option<&GameDetectionResponse>) -> Option<(&str, &str)> {
+fn detected_telemetry_game(
+    game_detection: Option<&GameDetectionResponse>,
+) -> Option<(&str, &str, &str)> {
     let detection = game_detection?;
-    if detection.adapter_id.as_deref() != Some(FORZA_DATA_OUT_ADAPTER_ID) {
-        return None;
-    }
+    let adapter_id = detection.adapter_id.as_deref()?;
     let game_id = detection.active_game_id.as_deref()?;
     Some((
+        adapter_id,
         game_id,
         detection.active_game_name.as_deref().unwrap_or(game_id),
     ))
@@ -7538,6 +7814,50 @@ fn hardware_output_runtime_allowed(
         && inner.telemetry.text("source.id") == Some(adapter_id)
 }
 
+fn hardware_output_detection_lightbar_allowed(
+    inner: &AgentStateInner,
+    game_detection: Option<&GameDetectionResponse>,
+) -> bool {
+    let Some(detection) = game_detection else {
+        return false;
+    };
+    if detection.active_game_id.is_none()
+        || detection.adapter_id.is_none()
+        || detection.profile_id.is_none()
+    {
+        return false;
+    }
+    let resolution = profile_resolution(inner, Some(detection));
+    resolution.controller_id.is_some()
+        && resolution.selected_profile_id.is_some()
+        && resolution.validation == "valid"
+        && detection_game_module(detection).is_some()
+}
+
+fn hardware_output_any_allowed(
+    inner: &AgentStateInner,
+    game_detection: Option<&GameDetectionResponse>,
+) -> bool {
+    hardware_output_runtime_allowed(inner, game_detection)
+        || hardware_output_detection_lightbar_allowed(inner, game_detection)
+}
+
+fn detection_game_module(detection: &GameDetectionResponse) -> Option<&'static GameModule> {
+    let module_id = detection.module_id.as_deref()?;
+    built_in_game_modules()
+        .iter()
+        .find(|game| game.id == module_id)
+}
+
+fn detection_lightbar_output(detection: &GameDetectionResponse) -> Option<LightbarOutput> {
+    let game = detection_game_module(detection)?;
+    let color = rgb_from_hex(game.detection_lightbar_color)?;
+    Some(LightbarOutput {
+        color,
+        brightness: clamp_unit(f64::from(game.detection_lightbar_brightness.min(100)) / 100.0),
+    })
+}
+
 fn upsert_telemetry_signal(
     signals: &mut Vec<TelemetrySignalResponse>,
     signal: TelemetrySignalResponse,
@@ -7549,8 +7869,9 @@ fn upsert_telemetry_signal(
     }
 }
 
-fn forza_waiting_telemetry_response(
+fn waiting_telemetry_response(
     runtime: &AdapterRuntime,
+    adapter_id: &str,
     game_id: &str,
     game_name: &str,
     now: Instant,
@@ -7564,7 +7885,7 @@ fn forza_waiting_telemetry_response(
         })
         .unwrap_or_default();
     vec![
-        telemetry_signal("source.id", "forza-data-out", None, 0),
+        telemetry_signal("source.id", adapter_id, None, 0),
         telemetry_signal("source.connected", runtime.has_recent_packet(now), None, 0),
         telemetry_signal(
             "source.packet_rate_hz",
@@ -7588,6 +7909,8 @@ fn forza_waiting_telemetry_response(
             "game.state",
             if runtime.packet_count > 0 {
                 "telemetry_stale"
+            } else if adapter_id == ASSETTO_SHARED_MEMORY_ADAPTER_ID {
+                "awaiting_shared_memory"
             } else {
                 "awaiting_data_out"
             },
@@ -7607,20 +7930,22 @@ fn forza_waiting_telemetry_response(
         telemetry_signal("surface.rumble_strip.max", 0.0, None, age_ms),
         telemetry_signal("surface.puddle.max", 0.0, None, age_ms),
         telemetry_signal("suspension.travel.max", 0.0, None, age_ms),
+        telemetry_signal("suspension.impact_pulse", 0.0, None, age_ms),
         telemetry_signal("vehicle.acceleration.magnitude", 0.0, Some("m/s^2"), age_ms),
         telemetry_signal("drivetrain.shift_event", "none", None, age_ms),
         telemetry_signal("drivetrain.shift_pulse", 0.0, None, age_ms),
     ]
 }
 
-fn forza_waiting_signal_snapshot(
+fn waiting_signal_snapshot(
     runtime: &AdapterRuntime,
+    adapter_id: &str,
     game_id: &str,
     game_name: &str,
     now: Instant,
 ) -> SignalSnapshot {
     SignalSnapshot::from_updates([
-        signal_update("source.id", "forza-data-out"),
+        signal_update("source.id", adapter_id),
         signal_update("source.connected", runtime.has_recent_packet(now)),
         signal_update("source.packet_rate_hz", 0.0),
         signal_update(
@@ -7633,6 +7958,8 @@ fn forza_waiting_signal_snapshot(
             "game.state",
             if runtime.packet_count > 0 {
                 "telemetry_stale"
+            } else if adapter_id == ASSETTO_SHARED_MEMORY_ADAPTER_ID {
+                "awaiting_shared_memory"
             } else {
                 "awaiting_data_out"
             },
@@ -7650,6 +7977,7 @@ fn forza_waiting_signal_snapshot(
         signal_update("surface.rumble_strip.max", 0.0),
         signal_update("surface.puddle.max", 0.0),
         signal_update("suspension.travel.max", 0.0),
+        signal_update("suspension.impact_pulse", 0.0),
         signal_update("vehicle.acceleration.magnitude", 0.0),
         signal_update("drivetrain.shift_event", "none"),
         signal_update("drivetrain.shift_pulse", 0.0),
@@ -7696,20 +8024,14 @@ fn current_effect_snapshot(
     game_detection: Option<&GameDetectionResponse>,
 ) -> (SignalSnapshot, bool) {
     let now = Instant::now();
-    if let Some((game_id, game_name)) = detected_forza_game(game_detection) {
+    if let Some((adapter_id, game_id, game_name)) = detected_telemetry_game(game_detection) {
         let source_id = inner.telemetry.text("source.id");
-        if source_id != Some(FORZA_DATA_OUT_ADAPTER_ID)
-            || !inner
-                .require_adapter_runtime(FORZA_DATA_OUT_ADAPTER_ID)
-                .has_recent_packet(now)
-        {
+        let Some(runtime) = inner.adapter_runtime(adapter_id) else {
+            return (inner.telemetry.clone(), false);
+        };
+        if source_id != Some(adapter_id) || !runtime.has_recent_packet(now) {
             return (
-                forza_waiting_signal_snapshot(
-                    inner.require_adapter_runtime(FORZA_DATA_OUT_ADAPTER_ID),
-                    game_id,
-                    game_name,
-                    now,
-                ),
+                waiting_signal_snapshot(runtime, adapter_id, game_id, game_name, now),
                 false,
             );
         }
@@ -7722,23 +8044,28 @@ fn current_effect_snapshot(
             snapshot.apply_update(signal_update("drivetrain.shift_event", "none"));
             snapshot.apply_update(signal_update("drivetrain.shift_pulse", 0.0));
         }
+        snapshot.apply_update(signal_update(
+            "suspension.impact_pulse",
+            inner.forza_effect_runtime.latched_suspension_impact(now),
+        ));
         return (snapshot, true);
     }
 
-    if inner.telemetry.text("source.id") == Some(FORZA_DATA_OUT_ADAPTER_ID)
-        && !inner
-            .require_adapter_runtime(FORZA_DATA_OUT_ADAPTER_ID)
-            .has_recent_packet(now)
-    {
-        return (
-            forza_inactive_signal_snapshot(
-                inner.require_adapter_runtime(FORZA_DATA_OUT_ADAPTER_ID),
-                now,
-                inner.telemetry.text("game.id"),
-                inner.telemetry.text("game.name"),
-            ),
-            false,
-        );
+    if let Some(source_id) = inner.telemetry.text("source.id") {
+        if let Some(runtime) = inner
+            .adapter_runtime(source_id)
+            .filter(|runtime| !runtime.has_recent_packet(now))
+        {
+            return (
+                forza_inactive_signal_snapshot(
+                    runtime,
+                    now,
+                    inner.telemetry.text("game.id"),
+                    inner.telemetry.text("game.name"),
+                ),
+                false,
+            );
+        }
     }
 
     (inner.telemetry.clone(), true)
@@ -7810,6 +8137,7 @@ fn current_effect_response(
         telemetry_live,
         &mut output,
     );
+    apply_detection_lightbar_preview(game_detection, telemetry_live, &mut output);
     current_effect_response_from_parts(
         resolution,
         profile,
@@ -7857,14 +8185,20 @@ fn current_effect_response_from_parts(
         );
     }
     if is_forza_runtime_profile(&profile.id, &snapshot) && !telemetry_live {
-        if detected_forza_game(game_detection).is_some() {
+        if let Some((adapter_id, game_id, game_name)) = detected_telemetry_game(game_detection) {
+            let source_label = if adapter_id == ASSETTO_SHARED_MEMORY_ADAPTER_ID {
+                "shared-memory telemetry"
+            } else {
+                "Data Out telemetry"
+            };
             warnings.push(
-                "Forza telemetry is not live; trigger output stays neutral until fresh Data Out packets arrive."
-                    .to_string(),
+                format!(
+                    "{game_name} ({game_id}) is detected, but {source_label} is not live; trigger output stays neutral until fresh telemetry arrives."
+                ),
             );
         } else {
             warnings.push(
-                "Forza telemetry is stale and no Forza process is detected; trigger output is neutral."
+                "Racing telemetry is stale and no supported process is detected; trigger output is neutral."
                     .to_string(),
             );
         }
@@ -7892,6 +8226,25 @@ fn apply_runtime_output_enhancements(
 ) {
     if is_forza_runtime_profile(profile_id, snapshot) {
         apply_forza_output_enhancements(config, snapshot, telemetry_live, output);
+    }
+}
+
+fn apply_detection_lightbar_preview(
+    game_detection: Option<&GameDetectionResponse>,
+    telemetry_live: bool,
+    output: &mut ControllerOutputFrame,
+) {
+    if telemetry_live {
+        return;
+    }
+    let Some(detection) = game_detection else {
+        return;
+    };
+    if detection.profile_id.is_none() {
+        return;
+    }
+    if let Some(lightbar) = detection_lightbar_output(detection) {
+        output.lightbar = Some(lightbar);
     }
 }
 
@@ -7961,18 +8314,17 @@ fn forza_rumble_output(
     let front_slip = signal_scaled(snapshot, "wheel.slip.front_max", 0.14, 1.0);
     let rear_slip = signal_scaled(snapshot, "wheel.slip.rear_max", 0.14, 1.0);
     let slip_ratio = signal_scaled(snapshot, "tire.slip_ratio.max", 0.12, 1.0);
-    let slip_angle = signal_scaled(snapshot, "tire.slip_angle.max", 0.10, 0.85);
-    let suspension = signal_scaled(snapshot, "suspension.travel.max", 0.04, 0.28);
-    let acceleration = signal_scaled(snapshot, "vehicle.acceleration.magnitude", 10.0, 34.0);
+    let slip_angle = signal_scaled(snapshot, "tire.slip_angle.max", 0.22, 1.05);
     let shift = signal_unit_value(snapshot, "drivetrain.shift_pulse");
+    let suspension_impact = signal_unit_value(snapshot, "suspension.impact_pulse");
     let rev_limiter = signal_scaled(snapshot, "vehicle.rpm_ratio", 0.93, 1.0);
 
-    let road_texture =
-        surface.max(strip * 0.95).max(suspension * 0.55) * rolling_texture * (0.35 + speed * 0.65);
+    let road_texture = surface.max(strip * 0.95) * rolling_texture * (0.35 + speed * 0.65);
     let strip_feedback = strip * rolling_texture;
     let puddle_feedback = puddle * rolling_texture;
-    let suspension_feedback = acceleration.max(suspension) * rolling;
-    let tire_feedback = slip.max(slip_ratio * 0.85).max(slip_angle * 0.65);
+    let pedal_load = throttle.max(brake).max(handbrake);
+    let steering_slip_feedback = slip_angle * (0.12 + pedal_load * 0.38);
+    let tire_feedback = slip.max(slip_ratio * 0.85).max(steering_slip_feedback);
     let brake_feedback = if brake > 0.08 {
         front_slip.max(tire_feedback * brake)
     } else {
@@ -8023,9 +8375,9 @@ fn forza_rumble_output(
         &mut low,
         &mut high,
         &forza.effect("suspension_impact"),
-        suspension_feedback,
-        0.38,
-        0.44,
+        suspension_impact,
+        0.98,
+        0.42,
     );
     add_forza_rumble_component(
         &mut low,
@@ -8155,6 +8507,23 @@ fn signal_scaled(snapshot: &SignalSnapshot, name: &str, min: f64, max: f64) -> f
     clamp_unit((value - min) / (max - min))
 }
 
+fn suspension_impact_strength(
+    suspension_travel: Option<f64>,
+    acceleration_magnitude: Option<f64>,
+    speed_kmh: Option<f64>,
+) -> f64 {
+    let suspension = signal_scaled_value(suspension_travel.unwrap_or_default(), 0.10, 0.30);
+    let acceleration = signal_scaled_value(acceleration_magnitude.unwrap_or_default(), 18.0, 38.0);
+    let speed_gate = signal_scaled_value(speed_kmh.unwrap_or_default(), 8.0, 24.0);
+    let mut impact = (acceleration * 0.75 + suspension * 0.45).clamp(0.0, 1.0) * speed_gate;
+
+    if suspension < 0.18 {
+        impact *= 0.35;
+    }
+
+    clamp_unit(impact)
+}
+
 fn clamp_unit(value: f64) -> f64 {
     if value.is_finite() {
         value.clamp(0.0, 1.0)
@@ -8230,6 +8599,10 @@ fn runtime_profile_for(
     config: Option<&ControllerConfig>,
     snapshot: &SignalSnapshot,
 ) -> Profile {
+    if profile_id == GLOBAL_PROFILE_ID {
+        return global_runtime_profile(profile_id, profile_name, config);
+    }
+
     if is_forza_runtime_profile(profile_id, snapshot) {
         forza_runtime_profile(profile_id, profile_name, config)
     } else {
@@ -8239,12 +8612,30 @@ fn runtime_profile_for(
 
 fn is_forza_runtime_profile(profile_id: &str, snapshot: &SignalSnapshot) -> bool {
     profile_id.contains("forza")
-        || snapshot
-            .text("source.id")
-            .is_some_and(|source| source == "forza-data-out")
+        || profile_id == ASSETTO_CORSA_RALLY_PROFILE_ID
+        || snapshot.text("source.id").is_some_and(|source| {
+            matches!(
+                source,
+                FORZA_DATA_OUT_ADAPTER_ID | ASSETTO_SHARED_MEMORY_ADAPTER_ID
+            )
+        })
         || snapshot
             .text("game.id")
-            .is_some_and(|game| game.starts_with("forza"))
+            .is_some_and(|game| game.starts_with("forza") || game == "assetto-corsa-rally")
+}
+
+fn global_runtime_profile(
+    profile_id: &str,
+    profile_name: &str,
+    config: Option<&ControllerConfig>,
+) -> Profile {
+    Profile {
+        id: profile_id.to_string(),
+        name: profile_name.to_string(),
+        version: 1,
+        rumble_policy: RumblePolicy::Disabled,
+        rules: lightbar_rules(config.map(|config| &config.lightbar)),
+    }
 }
 
 fn forza_runtime_profile(
@@ -8279,8 +8670,10 @@ fn forza_runtime_profile(
     let r2_end = trigger.map_or(FORZA_THROTTLE_FULL_FORCE_AT, |trigger| {
         trigger_range_end_position(trigger.r2_from, trigger.r2_to)
     });
-    let l2_endstop_wall = endstop_wall_position(l2_start, l2_end);
-    let r2_endstop_wall = endstop_wall_position(r2_start, r2_end);
+    let l2_endstop_wall = brake_overtravel_wall_position(l2_start, l2_end);
+    let r2_has_overtravel_guard = throttle_overtravel_guard_active(r2_end);
+    let r2_endstop_wall = throttle_overtravel_wall_position(r2_start, r2_end);
+    let r2_overtravel_ramp_start = throttle_overtravel_ramp_start(r2_start, r2_endstop_wall);
     let abs_brake_threshold = abs_brake_threshold_for_range(l2_start, l2_end);
     let l2_curve = trigger.map_or(FORZA_BRAKE_CURVE, |trigger| trigger.l2_curve.as_f64());
     let r2_curve = trigger.map_or(FORZA_THROTTLE_CURVE, |trigger| trigger.r2_curve.as_f64());
@@ -8294,8 +8687,10 @@ fn forza_runtime_profile(
     let brake_baseline_force =
         scaled_unit(FORZA_BRAKE_BASELINE_FORCE, brake.scalar() * trigger_scalar);
     let brake_normal_force = scaled_unit(FORZA_BRAKE_NORMAL_FORCE, brake.scalar() * trigger_scalar);
-    let brake_endstop_force =
-        scaled_unit(FORZA_BRAKE_ENDSTOP_FORCE, brake.scalar() * trigger_scalar);
+    let brake_endstop_force = scaled_unit(
+        FORZA_BRAKE_ENDSTOP_FORCE,
+        brake.scalar() * trigger_scalar * FORZA_BRAKE_ENDSTOP_FORCE_BOOST,
+    );
     let throttle_baseline_force = scaled_unit(
         FORZA_THROTTLE_BASELINE_FORCE,
         throttle.scalar() * trigger_scalar,
@@ -8304,10 +8699,14 @@ fn forza_runtime_profile(
         FORZA_THROTTLE_NORMAL_FORCE,
         throttle.scalar() * trigger_scalar,
     );
-    let throttle_endstop_force = scaled_unit(
-        FORZA_THROTTLE_ENDSTOP_FORCE,
-        throttle.scalar() * trigger_scalar,
-    );
+    let throttle_endstop_scalar = throttle.scalar()
+        * trigger_scalar
+        * if r2_has_overtravel_guard {
+            FORZA_THROTTLE_ENDSTOP_FORCE_BOOST
+        } else {
+            1.0
+        };
+    let throttle_endstop_force = scaled_unit(FORZA_THROTTLE_ENDSTOP_FORCE, throttle_endstop_scalar);
     let abs_amplitude = scaled_unit(FORZA_ABS_PULSE_AMPLITUDE, abs.scalar());
     let rev_amplitude = scaled_unit(10.0 / 63.0, rev.scalar() * trigger_scalar);
     let shift_amplitude = scaled_unit(1.0, shift.scalar());
@@ -8450,6 +8849,32 @@ fn forza_runtime_profile(
                 strength: ValueSource::constant(throttle_endstop_force),
             },
         });
+        if r2_has_overtravel_guard && r2_overtravel_ramp_start < r2_endstop_wall {
+            rules.push(EffectRule {
+                id: "forza-r2-throttle-overtravel-ramp".to_string(),
+                smoothing: None,
+                hysteresis: None,
+                timeout: None,
+                target: EffectTarget::R2,
+                priority: 11,
+                condition: number_condition(
+                    "input.throttle",
+                    ComparisonOp::GreaterOrEqual,
+                    r2_overtravel_ramp_start,
+                ),
+                effect: EffectTemplate::AdaptiveResistance {
+                    start_position: ValueSource::constant(r2_overtravel_ramp_start),
+                    strength: ValueSource::signal_curve(
+                        "input.throttle",
+                        r2_overtravel_ramp_start,
+                        r2_endstop_wall,
+                        throttle_normal_force,
+                        throttle_endstop_force,
+                        FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE,
+                    ),
+                },
+            });
+        }
         rules.push(EffectRule {
             id: "forza-r2-throttle-resistance".to_string(),
             smoothing: None,
@@ -8788,8 +9213,8 @@ fn effect_mapping_statuses(
         .number("surface.rumble_strip.max")
         .unwrap_or_default();
     let puddle = snapshot.number("surface.puddle.max").unwrap_or_default();
-    let acceleration = snapshot
-        .number("vehicle.acceleration.magnitude")
+    let suspension_impact = snapshot
+        .number("suspension.impact_pulse")
         .unwrap_or_default();
     vec![
         mapping_status(
@@ -8876,8 +9301,8 @@ fn effect_mapping_statuses(
             "suspension_impact",
             "HD",
             "Suspension / impact thump",
-            "vehicle.acceleration.magnitude",
-            moving && acceleration > 12.0,
+            "suspension.impact_pulse",
+            moving && suspension_impact > 0.05,
             &forza,
         ),
         mapping_status(
@@ -9013,6 +9438,38 @@ fn trigger_range_end_position(from: u8, to: u8) -> f64 {
 
 fn endstop_wall_position(start: f64, end: f64) -> f64 {
     (end - FORZA_ENDSTOP_WALL_OFFSET).clamp(start, end)
+}
+
+fn brake_overtravel_guard_active(end: f64) -> bool {
+    end >= FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION
+}
+
+fn brake_overtravel_wall_position(start: f64, end: f64) -> f64 {
+    if brake_overtravel_guard_active(end) {
+        return (end - FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET)
+            .max(FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION)
+            .clamp(start, end);
+    }
+
+    endstop_wall_position(start, end)
+}
+
+fn throttle_overtravel_guard_active(end: f64) -> bool {
+    end >= FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION
+}
+
+fn throttle_overtravel_wall_position(start: f64, end: f64) -> f64 {
+    if throttle_overtravel_guard_active(end) {
+        return end
+            .min(FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION)
+            .clamp(start, end);
+    }
+
+    endstop_wall_position(start, end)
+}
+
+fn throttle_overtravel_ramp_start(start: f64, wall: f64) -> f64 {
+    (wall - FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH).clamp(start, wall)
 }
 
 fn abs_brake_threshold_for_range(start: f64, end: f64) -> f64 {
@@ -9299,6 +9756,10 @@ pub async fn serve(addr: SocketAddr) -> anyhow::Result<()> {
             bind_addr,
         ));
     }
+    #[cfg(target_os = "windows")]
+    tokio::spawn(assetto_shared_memory_adapter_loop(state.clone()));
+    #[cfg(not(target_os = "windows"))]
+    mark_assetto_shared_memory_unavailable(&state).await;
     tokio::spawn(output_watchdog_loop(
         state.clone(),
         Duration::from_millis(250),
@@ -9401,7 +9862,7 @@ async fn output_watchdog_loop(state: AgentState, interval_duration: Duration) {
         let game_detection = state.cached_hardware_game_detection().await;
         let should_neutralize = {
             let inner = state.inner.read().await;
-            !hardware_output_runtime_allowed(&inner, Some(&game_detection))
+            !hardware_output_any_allowed(&inner, Some(&game_detection))
         };
 
         if should_neutralize {
@@ -9447,6 +9908,365 @@ fn udp_adapter_bind_addr(adapter: &UdpTelemetryAdapter) -> SocketAddr {
         FORZA_DATA_OUT_ADAPTER_ID => resolve_forza_bind_addr(),
         _ => SocketAddr::from(([127, 0, 0, 1], adapter.default_port)),
     }
+}
+
+const ASSETTO_PHYSICS_MIN_LEN: usize = 120;
+const ASSETTO_GRAPHICS_MIN_LEN: usize = 12;
+const ASSETTO_STATIC_MAX_RPM_OFFSET: usize = 412;
+const ASSETTO_STATIC_MIN_LEN: usize = ASSETTO_STATIC_MAX_RPM_OFFSET + 4;
+const ASSETTO_AC_LIVE: i32 = 2;
+const ASSETTO_AC_PAUSE: i32 = 3;
+const ASSETTO_DEFAULT_MAX_RPM: f64 = 8_000.0;
+const STANDARD_GRAVITY_MS2: f64 = 9.80665;
+
+#[derive(Clone, Copy)]
+struct AssettoSharedMemoryPages<'a> {
+    physics: &'a [u8],
+    graphics: Option<&'a [u8]>,
+    static_page: Option<&'a [u8]>,
+}
+
+fn parse_assetto_shared_memory_pages(
+    pages: AssettoSharedMemoryPages<'_>,
+    sequence: u64,
+) -> Option<(usize, Vec<SignalUpdate>)> {
+    if pages.physics.len() < ASSETTO_PHYSICS_MIN_LEN {
+        return None;
+    }
+
+    let packet_id = read_le_i32(pages.physics, 0)?;
+    let throttle = finite_unit(read_le_f32(pages.physics, 4)?);
+    let brake = finite_unit(read_le_f32(pages.physics, 8)?);
+    let raw_gear = read_le_i32(pages.physics, 16)?;
+    let rpm = finite_non_negative(f64::from(read_le_i32(pages.physics, 20)?));
+    let steer_angle = finite_f64(f64::from(read_le_f32(pages.physics, 24)?));
+    let speed_kmh = finite_non_negative(read_le_f32_f64(pages.physics, 28)?);
+    let acceleration_x = finite_f64(read_le_f32_f64(pages.physics, 44)? * STANDARD_GRAVITY_MS2);
+    let acceleration_y = finite_f64(read_le_f32_f64(pages.physics, 48)? * STANDARD_GRAVITY_MS2);
+    let acceleration_z = finite_f64(read_le_f32_f64(pages.physics, 52)? * STANDARD_GRAVITY_MS2);
+    let acceleration_magnitude = finite_f64(
+        acceleration_x
+            .mul_add(
+                acceleration_x,
+                acceleration_y.mul_add(acceleration_y, acceleration_z * acceleration_z),
+            )
+            .sqrt(),
+    );
+    let wheel_slip = read_f32_array_abs(pages.physics, 56, 4)?;
+    let front_slip = wheel_slip[0].max(wheel_slip[1]);
+    let rear_slip = wheel_slip[2].max(wheel_slip[3]);
+    let wheel_slip_max = front_slip.max(rear_slip);
+    let suspension_signal = signal_scaled_value(acceleration_magnitude, 2.0, 16.0);
+    let surface_grip = read_le_f32(pages.physics, 116)
+        .map(finite_unit)
+        .filter(|value| *value > 0.0);
+    let loose_surface = surface_grip.map_or(0.0, |grip| (1.0 - grip).clamp(0.0, 1.0));
+    let surface_rumble = loose_surface
+        .max(signal_scaled_value(acceleration_magnitude, 3.0, 22.0) * 0.55)
+        .max((wheel_slip_max - 0.12).clamp(0.0, 1.0) * 0.35)
+        .clamp(0.0, 1.0);
+    let max_rpm = pages
+        .static_page
+        .and_then(|static_page| read_le_i32(static_page, ASSETTO_STATIC_MAX_RPM_OFFSET))
+        .map(f64::from)
+        .filter(|value| value.is_finite() && *value >= 1_000.0)
+        .unwrap_or(ASSETTO_DEFAULT_MAX_RPM);
+    let rpm_ratio = if max_rpm > 0.0 {
+        (rpm / max_rpm).clamp(0.0, 1.25)
+    } else {
+        0.0
+    };
+    let graphics_status = pages.graphics.and_then(|graphics| read_le_i32(graphics, 4));
+    let game_state =
+        assetto_game_state(graphics_status, speed_kmh, rpm, throttle, brake, packet_id);
+
+    let updates = vec![
+        sequenced_signal_update("source.id", ASSETTO_SHARED_MEMORY_ADAPTER_ID, sequence),
+        sequenced_signal_update("source.connected", true, sequence),
+        sequenced_signal_update("source.packet_size", pages.physics.len() as f64, sequence),
+        sequenced_signal_update("game.state", game_state, sequence),
+        sequenced_signal_update("vehicle.max_rpm", max_rpm, sequence),
+        sequenced_signal_update("vehicle.rpm", rpm, sequence),
+        sequenced_signal_update("vehicle.rpm_ratio", rpm_ratio, sequence),
+        sequenced_signal_update("vehicle.speed_kmh", speed_kmh, sequence),
+        sequenced_signal_update("vehicle.acceleration.x", acceleration_x, sequence),
+        sequenced_signal_update("vehicle.acceleration.y", acceleration_y, sequence),
+        sequenced_signal_update("vehicle.acceleration.z", acceleration_z, sequence),
+        sequenced_signal_update(
+            "vehicle.acceleration.magnitude",
+            acceleration_magnitude,
+            sequence,
+        ),
+        sequenced_signal_update("input.throttle", throttle, sequence),
+        sequenced_signal_update("input.brake", brake, sequence),
+        sequenced_signal_update("input.clutch", 0.0, sequence),
+        sequenced_signal_update("input.handbrake", 0.0, sequence),
+        sequenced_signal_update("input.steer", assetto_steer_unit(steer_angle), sequence),
+        sequenced_signal_update("drivetrain.gear", assetto_display_gear(raw_gear), sequence),
+        sequenced_signal_update("wheel.slip.front_left", wheel_slip[0], sequence),
+        sequenced_signal_update("wheel.slip.front_right", wheel_slip[1], sequence),
+        sequenced_signal_update("wheel.slip.rear_left", wheel_slip[2], sequence),
+        sequenced_signal_update("wheel.slip.rear_right", wheel_slip[3], sequence),
+        sequenced_signal_update("wheel.slip.front_max", front_slip, sequence),
+        sequenced_signal_update("wheel.slip.rear_max", rear_slip, sequence),
+        sequenced_signal_update("wheel.slip.max", wheel_slip_max, sequence),
+        sequenced_signal_update("tire.slip_ratio.max", wheel_slip_max, sequence),
+        sequenced_signal_update("tire.slip_angle.max", wheel_slip_max * 0.65, sequence),
+        sequenced_signal_update("surface.rumble.max", surface_rumble, sequence),
+        sequenced_signal_update("surface.rumble_strip.max", surface_rumble * 0.35, sequence),
+        sequenced_signal_update("surface.puddle.max", 0.0, sequence),
+        sequenced_signal_update("suspension.travel.max", suspension_signal, sequence),
+    ];
+
+    Some((pages.physics.len(), updates))
+}
+
+fn assetto_game_state(
+    graphics_status: Option<i32>,
+    speed_kmh: f64,
+    rpm: f64,
+    throttle: f64,
+    brake: f64,
+    packet_id: i32,
+) -> &'static str {
+    match graphics_status {
+        Some(ASSETTO_AC_LIVE) => "driving",
+        Some(ASSETTO_AC_PAUSE) => "paused",
+        Some(_) => "menu",
+        None if speed_kmh > 1.0 || rpm > 500.0 || throttle > 0.01 || brake > 0.01 => "driving",
+        None if packet_id > 0 => "menu",
+        None => "menu",
+    }
+}
+
+fn assetto_display_gear(raw_gear: i32) -> f64 {
+    f64::from(raw_gear.saturating_sub(1).max(0))
+}
+
+fn assetto_steer_unit(steer_angle: f64) -> f64 {
+    (steer_angle / 0.75).clamp(-1.0, 1.0)
+}
+
+fn read_f32_array_abs(packet: &[u8], offset: usize, count: usize) -> Option<Vec<f64>> {
+    (0..count)
+        .map(|index| read_le_f32_f64(packet, offset + index * 4).map(|value| value.abs()))
+        .collect()
+}
+
+fn signal_scaled_value(value: f64, input_min: f64, input_max: f64) -> f64 {
+    if input_min >= input_max {
+        return 0.0;
+    }
+    ((value - input_min) / (input_max - input_min)).clamp(0.0, 1.0)
+}
+
+fn finite_unit(value: f32) -> f64 {
+    finite_f64(f64::from(value)).clamp(0.0, 1.0)
+}
+
+fn finite_non_negative(value: f64) -> f64 {
+    finite_f64(value).max(0.0)
+}
+
+fn finite_f64(value: f64) -> f64 {
+    if value.is_finite() {
+        value
+    } else {
+        0.0
+    }
+}
+
+fn read_le_bytes<const N: usize>(packet: &[u8], offset: usize) -> Option<[u8; N]> {
+    packet.get(offset..offset + N)?.try_into().ok()
+}
+
+fn read_le_i32(packet: &[u8], offset: usize) -> Option<i32> {
+    Some(i32::from_le_bytes(read_le_bytes(packet, offset)?))
+}
+
+fn read_le_f32(packet: &[u8], offset: usize) -> Option<f32> {
+    Some(f32::from_le_bytes(read_le_bytes(packet, offset)?))
+}
+
+fn read_le_f32_f64(packet: &[u8], offset: usize) -> Option<f64> {
+    Some(finite_f64(f64::from(read_le_f32(packet, offset)?)))
+}
+
+fn sequenced_signal_update(
+    name: &str,
+    value: impl Into<SignalValue>,
+    sequence: u64,
+) -> SignalUpdate {
+    signal_update(name, value).with_sequence(sequence)
+}
+
+#[cfg(target_os = "windows")]
+type AssettoSharedMemoryPageBuffers = (Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>);
+
+#[cfg(target_os = "windows")]
+fn read_assetto_shared_memory_snapshot(
+    sequence: u64,
+) -> io::Result<Option<(usize, Vec<SignalUpdate>)>> {
+    let Some((physics, graphics, static_page)) = read_assetto_shared_memory_pages()? else {
+        return Ok(None);
+    };
+    Ok(parse_assetto_shared_memory_pages(
+        AssettoSharedMemoryPages {
+            physics: &physics,
+            graphics: graphics.as_deref(),
+            static_page: static_page.as_deref(),
+        },
+        sequence,
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn read_assetto_shared_memory_pages() -> io::Result<Option<AssettoSharedMemoryPageBuffers>> {
+    let page_sets = [
+        (
+            "Local\\acpmf_physics",
+            "Local\\acpmf_graphics",
+            "Local\\acpmf_static",
+        ),
+        (
+            "Local\\acevo_pmf_physics",
+            "Local\\acevo_pmf_graphics",
+            "Local\\acevo_pmf_static",
+        ),
+    ];
+
+    for (physics_name, graphics_name, static_name) in page_sets {
+        let Some(physics) = read_windows_shared_memory_page(physics_name, ASSETTO_PHYSICS_MIN_LEN)?
+        else {
+            continue;
+        };
+        let graphics = read_windows_shared_memory_page(graphics_name, ASSETTO_GRAPHICS_MIN_LEN)?;
+        let static_page = read_windows_shared_memory_page(static_name, ASSETTO_STATIC_MIN_LEN)?;
+        return Ok(Some((physics, graphics, static_page)));
+    }
+
+    Ok(None)
+}
+
+#[cfg(target_os = "windows")]
+fn read_windows_shared_memory_page(
+    name: &str,
+    bytes_to_read: usize,
+) -> io::Result<Option<Vec<u8>>> {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, GetLastError, ERROR_FILE_NOT_FOUND, HANDLE},
+        System::Memory::{
+            MapViewOfFile, OpenFileMappingW, UnmapViewOfFile, FILE_MAP_READ,
+            MEMORY_MAPPED_VIEW_ADDRESS,
+        },
+    };
+
+    struct MappingHandle(HANDLE);
+
+    impl Drop for MappingHandle {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = CloseHandle(self.0);
+            }
+        }
+    }
+
+    struct MappingView(MEMORY_MAPPED_VIEW_ADDRESS);
+
+    impl Drop for MappingView {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = UnmapViewOfFile(self.0);
+            }
+        }
+    }
+
+    let mut wide = name.encode_utf16().collect::<Vec<_>>();
+    wide.push(0);
+
+    let handle = unsafe { OpenFileMappingW(FILE_MAP_READ, 0, wide.as_ptr()) };
+    if handle.is_null() {
+        let error = unsafe { GetLastError() };
+        if error == ERROR_FILE_NOT_FOUND {
+            return Ok(None);
+        }
+        return Err(io::Error::from_raw_os_error(error as i32));
+    }
+    let handle = MappingHandle(handle);
+
+    let view = unsafe { MapViewOfFile(handle.0, FILE_MAP_READ, 0, 0, bytes_to_read) };
+    if view.Value.is_null() {
+        let error = unsafe { GetLastError() };
+        return Err(io::Error::from_raw_os_error(error as i32));
+    }
+    let view = MappingView(view);
+
+    let bytes = unsafe { std::slice::from_raw_parts(view.0.Value.cast::<u8>(), bytes_to_read) };
+    let mut owned = vec![0_u8; bytes_to_read];
+    owned.copy_from_slice(bytes);
+    Ok(Some(owned))
+}
+
+#[cfg(target_os = "windows")]
+async fn assetto_shared_memory_adapter_loop(state: AgentState) {
+    {
+        let mut inner = state.inner.write().await;
+        inner
+            .adapter_runtime_mut(ASSETTO_SHARED_MEMORY_ADAPTER_ID)
+            .mark_ready();
+        inner.logs.push(LogEntry {
+            level: "info".to_string(),
+            message: "Assetto shared-memory reader ready".to_string(),
+            timestamp: current_timestamp(),
+        });
+    }
+
+    let mut interval = tokio::time::interval(SHARED_MEMORY_TELEMETRY_PROCESS_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut sequence = 0_u64;
+    loop {
+        interval.tick().await;
+        sequence = sequence.saturating_add(1);
+        let result =
+            tokio::task::spawn_blocking(move || read_assetto_shared_memory_snapshot(sequence))
+                .await;
+        match result {
+            Ok(Ok(Some((packet_len, updates)))) => {
+                state
+                    .apply_adapter_packet(
+                        ASSETTO_SHARED_MEMORY_ADAPTER_ID,
+                        packet_len,
+                        sequence,
+                        updates,
+                    )
+                    .await;
+            }
+            Ok(Ok(None)) => {}
+            Ok(Err(error)) => {
+                let mut inner = state.inner.write().await;
+                inner
+                    .adapter_runtime_mut(ASSETTO_SHARED_MEMORY_ADAPTER_ID)
+                    .last_error = Some(error.to_string());
+            }
+            Err(error) => {
+                let mut inner = state.inner.write().await;
+                inner
+                    .adapter_runtime_mut(ASSETTO_SHARED_MEMORY_ADAPTER_ID)
+                    .last_error = Some(error.to_string());
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn mark_assetto_shared_memory_unavailable(state: &AgentState) {
+    let mut inner = state.inner.write().await;
+    inner
+        .adapter_runtime_mut(ASSETTO_SHARED_MEMORY_ADAPTER_ID)
+        .mark_bind_error(
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            "Assetto shared-memory telemetry is currently available on Windows only.",
+        );
 }
 
 async fn udp_telemetry_adapter_loop(
@@ -11698,7 +12518,7 @@ mod tests {
 
         let exported: ExportedProfile = get_json(
             router.clone(),
-            "/api/profiles/forza-horizon/export",
+            "/api/profiles/global/export",
             StatusCode::OK,
         )
         .await;
@@ -12595,6 +13415,40 @@ mod tests {
     }
 
     #[test]
+    fn steam_appmanifest_matches_assetto_corsa_rally_supported_game() {
+        let secondary = FsPath::new("D:/SteamLibrary");
+        let acr_manifest = parse_steam_app_manifest(
+            secondary,
+            r#""AppState"
+{
+    "appid"     "3917090"
+    "name"      "Assetto Corsa Rally"
+    "StateFlags"    "4"
+    "installdir"    "Assetto Corsa Rally"
+}"#,
+        )
+        .expect("ACR manifest parses");
+
+        let catalog = build_supported_steam_game_catalog(
+            secondary,
+            &[secondary.to_path_buf()],
+            &[acr_manifest],
+        );
+
+        let acr = catalog
+            .supported_games
+            .iter()
+            .find(|game| game.game_id == "assetto-corsa-rally")
+            .expect("Assetto Corsa Rally is discovered from Steam appmanifest");
+        assert_eq!(acr.app_id.as_deref(), Some("3917090"));
+        assert!(acr.install_path.as_deref().is_some_and(|path| {
+            path.ends_with("steamapps\\common\\Assetto Corsa Rally")
+                || path.ends_with("steamapps/common/Assetto Corsa Rally")
+        }));
+        assert_eq!(acr.support_level, "telemetry");
+    }
+
+    #[test]
     fn built_in_game_modules_have_unique_game_ids_and_non_empty_core_ids() {
         let mut game_ids = std::collections::BTreeSet::new();
         let built_in_module_ids: std::collections::BTreeSet<_> =
@@ -13007,7 +13861,7 @@ mod tests {
                     .uri("/api/profile-resolution/override")
                     .header("content-type", "application/json")
                     .body(Body::from(
-                        r#"{"controllerId":null,"gameId":null,"profileId":"forza-horizon"}"#,
+                        r#"{"controllerId":null,"gameId":null,"profileId":"global"}"#,
                     ))
                     .unwrap(),
             )
@@ -13199,6 +14053,158 @@ mod tests {
         assert!(telemetry.iter().any(|signal| {
             signal.name == "game.state" && signal.value == serde_json::json!("awaiting_data_out")
         }));
+    }
+
+    #[tokio::test]
+    async fn detected_assetto_game_materializes_shared_memory_and_profile_resolution() {
+        let state = AgentState::from_controller_events([attach_event(
+            "edge-assetto",
+            ControllerFamily::DualSenseEdge,
+            ControllerTransportKind::Bluetooth,
+            Some(84),
+        )]);
+        let detection = detect_running_game_from_processes(["acr.exe"]);
+        {
+            let mut inner = state.inner.write().await;
+            inner
+                .adapter_runtime_mut(ASSETTO_SHARED_MEMORY_ADAPTER_ID)
+                .mark_ready();
+        }
+
+        let inner = state.inner.read().await;
+        let adapters = materialized_adapters(&inner, Some(&detection));
+        let assetto = adapters
+            .iter()
+            .find(|adapter| adapter.id == ASSETTO_SHARED_MEMORY_ADAPTER_ID)
+            .expect("Assetto shared-memory adapter exists");
+        assert!(assetto.enabled);
+        assert_eq!(assetto.state, "needs_setup");
+        assert!(assetto.setup_hint.contains("shared memory"));
+
+        let resolution = profile_resolution(&inner, Some(&detection));
+        assert_eq!(
+            resolution.active_adapter_id.as_deref(),
+            Some(ASSETTO_SHARED_MEMORY_ADAPTER_ID)
+        );
+        assert_eq!(
+            resolution.selected_profile_id.as_deref(),
+            Some(ASSETTO_CORSA_RALLY_PROFILE_ID)
+        );
+        assert_eq!(resolution.reason, "foreground_game");
+
+        let telemetry = materialized_telemetry_response(&inner, Some(&detection));
+        assert!(telemetry.iter().any(|signal| {
+            signal.name == "game.state"
+                && signal.value == serde_json::json!("awaiting_shared_memory")
+        }));
+    }
+
+    #[tokio::test]
+    async fn supported_game_detection_writes_only_lightbar_until_telemetry_is_live() {
+        let state = AgentState::from_controller_events([attach_event(
+            "edge-assetto",
+            ControllerFamily::DualSenseEdge,
+            ControllerTransportKind::Bluetooth,
+            Some(84),
+        )]);
+        let detection = detect_running_game_from_processes(["acr.exe"]);
+        {
+            let mut inner = state.inner.write().await;
+            inner
+                .adapter_runtime_mut(ASSETTO_SHARED_MEMORY_ADAPTER_ID)
+                .mark_ready();
+        }
+
+        let inner = state.inner.read().await;
+        assert!(!hardware_output_runtime_allowed(&inner, Some(&detection)));
+        assert!(hardware_output_detection_lightbar_allowed(
+            &inner,
+            Some(&detection)
+        ));
+
+        let (controller_id, frame) = state
+            .output_frame_for_current_resolution_cached(
+                &inner,
+                Some(&detection),
+                EffectEnginePurpose::Hardware,
+            )
+            .expect("detection lightbar frame is produced");
+
+        assert_eq!(controller_id, "edge-assetto");
+        assert_eq!(frame.l2, TriggerOutput::Off);
+        assert_eq!(frame.r2, TriggerOutput::Off);
+        assert!(frame.rumble.is_none());
+        assert!(frame.player_leds.is_none());
+        assert_eq!(
+            frame.lightbar,
+            Some(LightbarOutput {
+                color: RgbColor {
+                    red: 0xff,
+                    green: 0x3b,
+                    blue: 0x30
+                },
+                brightness: 0.62,
+            })
+        );
+
+        let preview = current_effect_response(&inner, Some(&detection), false);
+        assert_eq!(preview.output.l2, TriggerOutput::Off);
+        assert_eq!(preview.output.r2, TriggerOutput::Off);
+        assert!(preview.output.rumble.is_none());
+        assert_eq!(preview.output.lightbar, frame.lightbar);
+    }
+
+    #[test]
+    fn assetto_shared_memory_prefix_normalizes_racing_signals() {
+        let mut physics = vec![0_u8; ASSETTO_PHYSICS_MIN_LEN];
+        write_i32(&mut physics, 0, 27);
+        write_f32(&mut physics, 4, 0.65);
+        write_f32(&mut physics, 8, 0.25);
+        write_i32(&mut physics, 16, 4);
+        write_i32(&mut physics, 20, 6_300);
+        write_f32(&mut physics, 24, 0.30);
+        write_f32(&mut physics, 28, 102.0);
+        write_f32(&mut physics, 44, 0.20);
+        write_f32(&mut physics, 48, 0.35);
+        write_f32(&mut physics, 52, 0.10);
+        write_f32(&mut physics, 56, 0.11);
+        write_f32(&mut physics, 60, 0.18);
+        write_f32(&mut physics, 64, 0.42);
+        write_f32(&mut physics, 68, 0.36);
+
+        let mut graphics = vec![0_u8; ASSETTO_GRAPHICS_MIN_LEN];
+        write_i32(&mut graphics, 4, ASSETTO_AC_LIVE);
+
+        let mut static_page = vec![0_u8; ASSETTO_STATIC_MIN_LEN];
+        write_i32(&mut static_page, ASSETTO_STATIC_MAX_RPM_OFFSET, 9_000);
+
+        let (_, updates) = parse_assetto_shared_memory_pages(
+            AssettoSharedMemoryPages {
+                physics: &physics,
+                graphics: Some(&graphics),
+                static_page: Some(&static_page),
+            },
+            42,
+        )
+        .expect("Assetto shared-memory prefix parses");
+        let snapshot = SignalSnapshot::from_updates(updates);
+
+        assert_eq!(
+            snapshot.text("source.id"),
+            Some(ASSETTO_SHARED_MEMORY_ADAPTER_ID)
+        );
+        assert_eq!(snapshot.text("game.state"), Some("driving"));
+        assert_eq!(snapshot.number("vehicle.speed_kmh"), Some(102.0));
+        assert_eq!(snapshot.number("drivetrain.gear"), Some(3.0));
+        assert!(snapshot
+            .number("input.throttle")
+            .is_some_and(|value| (value - 0.65).abs() < 0.000_001));
+        assert!(snapshot
+            .number("vehicle.rpm_ratio")
+            .is_some_and(|value| (value - 0.7).abs() < 0.000_001));
+        assert!(snapshot
+            .number("wheel.slip.max")
+            .is_some_and(|value| (value - 0.42).abs() < 0.000_001));
     }
 
     #[test]
@@ -13478,7 +14484,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hardware_output_frame_waits_for_supported_game_and_live_packets() {
+    async fn hardware_output_frame_allows_lightbar_but_waits_for_live_packets() {
         let state = AgentState::from_controller_events([attach_event(
             "edge-forza",
             ControllerFamily::DualSenseEdge,
@@ -13505,7 +14511,13 @@ mod tests {
                 EffectEnginePurpose::Hardware,
             )
         };
-        assert!(without_packets.is_none());
+        let (_, detection_frame) =
+            without_packets.expect("supported-game detection emits a lightbar-only frame");
+        assert_eq!(detection_frame.l2, TriggerOutput::Off);
+        assert_eq!(detection_frame.r2, TriggerOutput::Off);
+        assert!(detection_frame.lightbar.is_some());
+        assert!(detection_frame.rumble.is_none());
+        assert!(detection_frame.player_leds.is_none());
 
         {
             let mut inner = state.inner.write().await;
@@ -13764,8 +14776,16 @@ mod tests {
         let rumble =
             forza_rumble_output(&forza, &snapshot, 1.0, "Balanced").expect("shift should rumble");
 
-        assert!(rumble.low_frequency > 0.85);
-        assert!(rumble.high_frequency < 0.40);
+        assert!(
+            rumble.low_frequency > 0.95,
+            "max shift thump should saturate the routed low motor, got {}",
+            rumble.low_frequency
+        );
+        assert!(
+            rumble.high_frequency < 0.65,
+            "left-body route should still keep high motor secondary, got {}",
+            rumble.high_frequency
+        );
     }
 
     #[test]
@@ -14013,23 +15033,144 @@ mod tests {
 
         match frame.r2 {
             TriggerOutput::Wall { position, strength } => {
-                assert!((position - 0.97).abs() < f64::EPSILON);
+                assert!((position - 0.95).abs() < f64::EPSILON);
                 assert!(
-                    (0.33..0.39).contains(&strength),
-                    "full throttle should feel firm without becoming a brake pedal, got {strength}"
+                    (0.70..0.75).contains(&strength),
+                    "full throttle should create a firm overtravel guard, got {strength}"
                 );
             }
             other => panic!("expected full throttle force, got {other:?}"),
         }
         match frame.l2 {
             TriggerOutput::Wall { position, strength } => {
-                assert!((position - 0.97).abs() < f64::EPSILON);
+                assert!((position - 0.90).abs() < f64::EPSILON);
                 assert!(
-                    (0.78..0.83).contains(&strength),
-                    "full brake should be firm but controlled, got {strength}"
+                    strength > 0.98 && strength <= 1.0,
+                    "full brake should create a hard lock-warning wall, got {strength}"
                 );
             }
             other => panic!("expected full brake force, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn forza_throttle_endstop_progressively_hardens_near_high_end_point() {
+        let mut config = forza_horizon_controller_config();
+        config.trigger.r2_to = 90;
+        let profile = forza_runtime_profile("forza-horizon", "Forza", Some(&config));
+
+        let snapshot = |throttle| {
+            SignalSnapshot::from_updates([
+                signal_update("game.state", "driving"),
+                signal_update("input.throttle", throttle),
+                signal_update("input.brake", 0.0),
+                signal_update("input.handbrake", 0.0),
+                signal_update("vehicle.rpm_ratio", 0.40),
+                signal_update("vehicle.speed_kmh", 90.0),
+                signal_update("tire.slip_ratio.max", 0.0),
+                signal_update("wheel.slip.max", 0.0),
+                signal_update("drivetrain.shift_event", "none"),
+            ])
+        };
+
+        let below = EffectEngine::new().evaluate(&profile, &snapshot(0.85));
+        match below.r2 {
+            TriggerOutput::AdaptiveResistance {
+                start_position,
+                strength,
+            } => {
+                assert!((start_position - 0.04).abs() < f64::EPSILON);
+                assert!(
+                    strength < 0.24,
+                    "throttle should stay light before the end-stop ramp, got {strength}"
+                );
+            }
+            other => panic!("expected light throttle ramp before guard, got {other:?}"),
+        }
+
+        let ramp_start = EffectEngine::new().evaluate(&profile, &snapshot(0.86));
+        match ramp_start.r2 {
+            TriggerOutput::AdaptiveResistance {
+                start_position,
+                strength,
+            } => {
+                assert!((start_position - 0.86).abs() < f64::EPSILON);
+                assert!(
+                    (0.23..0.27).contains(&strength),
+                    "throttle guard should begin with a controlled ramp, got {strength}"
+                );
+            }
+            other => panic!("expected throttle overtravel ramp to arm, got {other:?}"),
+        }
+
+        let near_wall = EffectEngine::new().evaluate(&profile, &snapshot(0.89));
+        match near_wall.r2 {
+            TriggerOutput::AdaptiveResistance {
+                start_position,
+                strength,
+            } => {
+                assert!((start_position - 0.86).abs() < f64::EPSILON);
+                assert!(
+                    (0.50..0.70).contains(&strength),
+                    "throttle should get significantly harder near the wall, got {strength}"
+                );
+            }
+            other => panic!("expected progressive throttle guard near the wall, got {other:?}"),
+        }
+
+        for throttle in [0.90, 1.0] {
+            let frame = EffectEngine::new().evaluate(&profile, &snapshot(throttle));
+            match frame.r2 {
+                TriggerOutput::Wall { position, strength } => {
+                    assert!((position - 0.90).abs() < f64::EPSILON);
+                    assert!(
+                        (0.70..0.75).contains(&strength),
+                        "throttle wall should preserve shift-thump travel, got {strength}"
+                    );
+                }
+                other => panic!("expected throttle guard wall at {throttle}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn forza_brake_endstop_warns_before_high_end_point() {
+        let mut config = forza_horizon_controller_config();
+        config.trigger.l2_to = 90;
+        let profile = forza_runtime_profile("forza-horizon", "Forza", Some(&config));
+
+        let snapshot = |brake| {
+            SignalSnapshot::from_updates([
+                signal_update("game.state", "driving"),
+                signal_update("input.throttle", 0.0),
+                signal_update("input.brake", brake),
+                signal_update("input.handbrake", 0.0),
+                signal_update("vehicle.rpm_ratio", 0.40),
+                signal_update("vehicle.speed_kmh", 90.0),
+                signal_update("tire.slip_ratio.max", 0.0),
+                signal_update("wheel.slip.max", 0.0),
+                signal_update("drivetrain.shift_event", "none"),
+            ])
+        };
+
+        let below = EffectEngine::new().evaluate(&profile, &snapshot(0.79));
+        match below.l2 {
+            TriggerOutput::AdaptiveResistance { .. } => {}
+            other => panic!("brake wall should wait until the warning point, got {other:?}"),
+        }
+
+        for brake in [0.80, 1.0] {
+            let frame = EffectEngine::new().evaluate(&profile, &snapshot(brake));
+            match frame.l2 {
+                TriggerOutput::Wall { position, strength } => {
+                    assert!((position - 0.80).abs() < f64::EPSILON);
+                    assert!(
+                        strength > 0.98 && strength <= 1.0,
+                        "brake wall should stay strong after the warning point, got {strength}"
+                    );
+                }
+                other => panic!("expected hard brake warning wall at {brake}, got {other:?}"),
+            }
         }
     }
 
@@ -14059,7 +15200,7 @@ mod tests {
             TriggerOutput::Wall { position, strength } => {
                 assert!((position - 0.57).abs() < f64::EPSILON);
                 assert!(
-                    (0.78..0.83).contains(&strength),
+                    strength > 0.98 && strength <= 1.0,
                     "custom brake end point should arm full force at 60%, got {strength}"
                 );
             }
@@ -14225,11 +15366,11 @@ mod tests {
             Some("shift")
         );
         assert_eq!(
-            runtime.latched_shift_event(now + Duration::from_millis(129)),
+            runtime.latched_shift_event(now + Duration::from_millis(189)),
             Some("shift")
         );
         assert_eq!(
-            runtime.latched_shift_event(now + Duration::from_millis(130)),
+            runtime.latched_shift_event(now + Duration::from_millis(190)),
             None
         );
     }
@@ -14253,11 +15394,11 @@ mod tests {
             Some("shift")
         );
         assert_eq!(
-            runtime.latched_shift_event(now + Duration::from_millis(179)),
+            runtime.latched_shift_event(second_shift + Duration::from_millis(189)),
             Some("shift")
         );
         assert_eq!(
-            runtime.latched_shift_event(now + Duration::from_millis(180)),
+            runtime.latched_shift_event(second_shift + Duration::from_millis(190)),
             None
         );
     }
@@ -14295,6 +15436,46 @@ mod tests {
     }
 
     #[test]
+    fn forza_suspension_impact_latches_landing_body_thump() {
+        let mut runtime = test_forza_effect_runtime();
+        let now = Instant::now();
+
+        assert_eq!(
+            runtime.detect_suspension_impact(Some(0.06), Some(12.0), Some(80.0), true, true, now),
+            0.0
+        );
+
+        let landing =
+            runtime.detect_suspension_impact(Some(0.28), Some(34.0), Some(80.0), true, true, now);
+        assert!(
+            landing > 0.95,
+            "hard landings should latch a full body thump, got {landing}"
+        );
+        assert!(
+            runtime.latched_suspension_impact(now + Duration::from_millis(169)) > 0.95,
+            "landing thump should hold briefly"
+        );
+        assert_eq!(
+            runtime.latched_suspension_impact(now + Duration::from_millis(170)),
+            0.0
+        );
+    }
+
+    #[test]
+    fn forza_suspension_impact_ignores_steering_acceleration_without_compression() {
+        let mut runtime = test_forza_effect_runtime();
+        let now = Instant::now();
+
+        let steering =
+            runtime.detect_suspension_impact(Some(0.03), Some(34.0), Some(96.0), true, true, now);
+        assert_eq!(
+            steering, 0.0,
+            "lateral acceleration without suspension compression should not thump"
+        );
+        assert_eq!(runtime.latched_suspension_impact(now), 0.0);
+    }
+
+    #[test]
     fn forza_shift_thump_wins_over_rev_limiter_on_r2() {
         let config = ControllerConfig::default_for("edge-forza", "DualSense Edge");
         let snapshot = SignalSnapshot::from_updates([
@@ -14317,8 +15498,8 @@ mod tests {
                 frequency_hz,
                 wall_zones,
             } => {
-                assert!((frequency_hz - 20.0).abs() < f64::EPSILON);
-                assert_eq!(wall_zones, 2);
+                assert!((frequency_hz - FORZA_SHIFT_FREQUENCY_HZ).abs() < f64::EPSILON);
+                assert_eq!(wall_zones, 4);
                 assert!(
                     strength > 0.95,
                     "floored shift thump should use the full configured wall-form kick, got {strength}"
@@ -14350,7 +15531,7 @@ mod tests {
                 amplitude,
                 frequency_hz,
             } => {
-                assert!((frequency_hz - 20.0).abs() < f64::EPSILON);
+                assert!((frequency_hz - FORZA_SHIFT_FREQUENCY_HZ).abs() < f64::EPSILON);
                 assert!(
                     amplitude > 0.95,
                     "default shift thump should use the full configured kick, got {amplitude}"
@@ -14696,9 +15877,9 @@ mod tests {
         for (id, intensity, route) in [
             ("road_texture", 35, "body_both"),
             ("rumble_strip", 38, "body_both"),
-            ("tire_slip", 50, "body_right"),
+            ("tire_slip", 30, "body_right"),
             ("puddle_drag", 32, "body_left"),
-            ("suspension_impact", 55, "body_both"),
+            ("suspension_impact", 82, "body_both"),
         ] {
             let tuning = effect(id);
             assert!(tuning.enabled, "immersive layer '{id}' should be enabled");
@@ -14706,7 +15887,7 @@ mod tests {
             assert_eq!(tuning.route, route, "route for '{id}'");
             assert!(
                 tuning.intensity < shift.intensity,
-                "continuous layer '{id}' should stay below the shift thump"
+                "immersive layer '{id}' should stay below the shift thump"
             );
         }
 
@@ -14717,6 +15898,97 @@ mod tests {
         );
         assert_eq!(rpm_leds.intensity, 100);
         assert_eq!(rpm_leds.route, "light_led");
+    }
+
+    #[test]
+    fn forza_immersive_preset_keeps_slip_below_landing_thumps() {
+        let preset = forza_preset_for_profile(IMMERSIVE_PROFILE_ID)
+            .expect("immersive Horizon is a built-in preset");
+
+        let heavy_slip = SignalSnapshot::from_updates([
+            signal_update("input.throttle", 0.85),
+            signal_update("input.brake", 0.0),
+            signal_update("input.handbrake", 0.0),
+            signal_update("vehicle.rpm_ratio", 0.55),
+            signal_update("vehicle.speed_kmh", 96.0),
+            signal_update("wheel.slip.max", 1.10),
+            signal_update("wheel.slip.front_max", 0.0),
+            signal_update("wheel.slip.rear_max", 1.10),
+            signal_update("tire.slip_ratio.max", 1.0),
+            signal_update("tire.slip_angle.max", 0.85),
+            signal_update("surface.rumble.max", 0.0),
+            signal_update("surface.rumble_strip.max", 0.0),
+            signal_update("surface.puddle.max", 0.0),
+            signal_update("suspension.travel.max", 0.0),
+            signal_update("vehicle.acceleration.magnitude", 0.0),
+            signal_update("drivetrain.shift_pulse", 0.0),
+        ]);
+        let slip = forza_rumble_output(&preset, &heavy_slip, 1.0, "Balanced")
+            .expect("heavy slip should still produce readable feedback");
+        assert!(
+            slip.high_frequency < 0.19,
+            "immersive slip should be readable without becoming constant buzz, got {slip:?}"
+        );
+
+        let landing = SignalSnapshot::from_updates([
+            signal_update("input.throttle", 0.20),
+            signal_update("input.brake", 0.0),
+            signal_update("input.handbrake", 0.0),
+            signal_update("vehicle.rpm_ratio", 0.35),
+            signal_update("vehicle.speed_kmh", 96.0),
+            signal_update("wheel.slip.max", 0.0),
+            signal_update("wheel.slip.front_max", 0.0),
+            signal_update("wheel.slip.rear_max", 0.0),
+            signal_update("tire.slip_ratio.max", 0.0),
+            signal_update("tire.slip_angle.max", 0.0),
+            signal_update("surface.rumble.max", 0.0),
+            signal_update("surface.rumble_strip.max", 0.0),
+            signal_update("surface.puddle.max", 0.0),
+            signal_update("suspension.travel.max", 0.28),
+            signal_update("suspension.impact_pulse", 1.0),
+            signal_update("vehicle.acceleration.magnitude", 34.0),
+            signal_update("drivetrain.shift_pulse", 0.0),
+        ]);
+        let landing = forza_rumble_output(&preset, &landing, 1.0, "Balanced")
+            .expect("hard landing should produce a body thump");
+        assert!(
+            landing.low_frequency > 0.75,
+            "hard landings should have real low-frequency thump, got {landing:?}"
+        );
+        assert!(
+            landing.high_frequency > slip.high_frequency * 1.5,
+            "landing thumps should stand above sustained tire slip, slip={slip:?}, landing={landing:?}"
+        );
+    }
+
+    #[test]
+    fn forza_immersive_preset_filters_gentle_steering_slip_angle_feedback() {
+        let preset = forza_preset_for_profile(IMMERSIVE_PROFILE_ID)
+            .expect("immersive Horizon is a built-in preset");
+        let lane_change = SignalSnapshot::from_updates([
+            signal_update("input.throttle", 0.20),
+            signal_update("input.brake", 0.0),
+            signal_update("input.handbrake", 0.0),
+            signal_update("vehicle.rpm_ratio", 0.35),
+            signal_update("vehicle.speed_kmh", 96.0),
+            signal_update("wheel.slip.max", 0.0),
+            signal_update("wheel.slip.front_max", 0.0),
+            signal_update("wheel.slip.rear_max", 0.0),
+            signal_update("tire.slip_ratio.max", 0.0),
+            signal_update("tire.slip_angle.max", 0.45),
+            signal_update("surface.rumble.max", 0.0),
+            signal_update("surface.rumble_strip.max", 0.0),
+            signal_update("surface.puddle.max", 0.0),
+            signal_update("suspension.travel.max", 0.0),
+            signal_update("vehicle.acceleration.magnitude", 0.0),
+            signal_update("drivetrain.shift_pulse", 0.0),
+        ]);
+
+        assert_eq!(
+            forza_rumble_output(&preset, &lane_change, 1.0, "Balanced"),
+            None,
+            "gentle lane-change slip angle should not create noticeable body vibration"
+        );
     }
 
     #[tokio::test]
@@ -14901,10 +16173,10 @@ mod tests {
         };
 
         assert!(effect("tire_slip").enabled);
-        assert_eq!(effect("tire_slip").intensity, 50);
+        assert_eq!(effect("tire_slip").intensity, 30);
         assert_eq!(effect("tire_slip").route, "body_right");
         assert!(effect("suspension_impact").enabled);
-        assert_eq!(effect("suspension_impact").intensity, 55);
+        assert_eq!(effect("suspension_impact").intensity, 82);
         assert_eq!(effect("suspension_impact").route, "body_both");
         assert!(effect("puddle_drag").enabled);
         assert_eq!(effect("puddle_drag").route, "body_left");
@@ -15395,8 +16667,8 @@ mod tests {
                 frequency_hz,
                 wall_zones,
             } => {
-                assert!((frequency_hz - 20.0).abs() < f64::EPSILON);
-                assert_eq!(wall_zones, 2);
+                assert!((frequency_hz - FORZA_SHIFT_FREQUENCY_HZ).abs() < f64::EPSILON);
+                assert_eq!(wall_zones, 4);
                 assert!(
                     strength > 0.95,
                     "shift thump should use the full configured wall-form kick, got {strength}"
@@ -16528,6 +17800,53 @@ mod tests {
         assert!(detection.adapter_id.is_none());
         assert!(detection.profile_id.is_none());
         assert_eq!(detection.candidates.len(), 1);
+    }
+
+    #[test]
+    fn user_game_detection_keeps_global_profile_until_supported_module_matches() {
+        let mut user_games = BTreeMap::new();
+        user_games.insert(
+            "custom-99887".to_string(),
+            make_user_game(
+                "99887",
+                "Round Trip Racer",
+                "C:/dscc/round-trip",
+                &["RoundTrip.exe"],
+            ),
+        );
+        let detection =
+            detect_running_game_from_processes_with_user_games(["RoundTrip.exe"], &user_games);
+        let mut state = AgentStateInner {
+            controllers: ControllerRegistry::default(),
+            controller_names: BTreeMap::new(),
+            profiles: profiles_with_active(
+                default_profiles(),
+                &Some(DEFAULT_PROFILE_ID.to_string()),
+            ),
+            adapters: default_adapters(),
+            telemetry: SignalSnapshot::default(),
+            logs: Vec::new(),
+            device_backend: DeviceBackendSummary::mock(),
+            storage: None,
+            controller_configs: BTreeMap::new(),
+            profile_configs: BTreeMap::new(),
+            profile_overrides: BTreeMap::new(),
+            edge_profiles: BTreeMap::new(),
+            app_settings: AppSettings::default(),
+            active_profile_id: Some(DEFAULT_PROFILE_ID.to_string()),
+            active_adapter_id: None,
+            auto_loaded_profile_id: None,
+            adapter_runtimes: default_adapter_runtimes(),
+            forza_effect_runtime: ForzaEffectRuntime::default(),
+            effect_revision: 0,
+            user_games,
+        };
+
+        assert!(!sync_auto_loaded_profile_for_detection(
+            &mut state, &detection
+        ));
+        assert_eq!(state.active_profile_id.as_deref(), Some(DEFAULT_PROFILE_ID));
+        assert_eq!(state.auto_loaded_profile_id, None);
     }
 
     async fn get_json<T>(router: Router, uri: &str, expected_status: StatusCode) -> T

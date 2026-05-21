@@ -147,6 +147,8 @@ Keep module ownership explicit:
 - Forza Horizon 5, Forza Horizon 6, and Forza Motorsport should remain separate game modules even when they share the `forza-data-out` adapter.
 - Community modules are currently data-only manifest packs. They may contribute metadata and profile templates, but not native parsers, executable code, process scanners, filesystem writers, or runtime hooks.
 
+See `docs/game-module-contribution-guide.md` for the contribution checklist and the built-in Assetto Corsa Rally reference module.
+
 Choose the contribution path before editing:
 
 1. Use a data-only profile pack when the game can use an existing built-in adapter and the contribution is profiles, metadata, or licensed assets. The loader is not implemented yet, so validate by importing each included `dev.dscc.profile.v1` profile through the profile import API/UI.

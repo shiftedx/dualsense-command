@@ -94,6 +94,8 @@ Current API mapping:
 - Propose a built-in Rust adapter when a game needs new packet parsing, shared-memory access, filesystem access, process logic, or runtime behavior.
 - Propose a built-in Rust game module when the game needs first-party detection logic, bundled presets, glyph helpers, or adapter binding before the community loader exists.
 
+For a concrete built-in reference, see `docs/game-module-contribution-guide.md`. Assetto Corsa Rally demonstrates the current end-to-end path: a game module, a trusted shared-memory adapter, a built-in profile, process detection, detection-only lightbar output, normalized telemetry signals, and tests.
+
 ## Native Built-In Modules
 
 Built-in adapter modules can contain Rust parser code and richer platform support. Built-in game modules bind one game id to detection hints, profiles, UI metadata, optional glyph helpers, and one or more adapter dependencies. Both expose manifest-like summaries through `/api/modules`; future installed modules should use the same shape, with source/trust labels derived by DSCC rather than authored by the manifest.

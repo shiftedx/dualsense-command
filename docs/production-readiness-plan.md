@@ -147,7 +147,7 @@ Expected: `403`.
 - [ ] Build release binaries:
   `cargo +stable-x86_64-pc-windows-gnu build -p dscc-agent -p dscc-tray --release --target x86_64-pc-windows-gnu`
 - [ ] Build unsigned MSI:
-  `powershell -NoProfile -ExecutionPolicy Bypass -File packaging\package-msi.ps1 -Version 0.2.0 -TargetTriple x86_64-pc-windows-gnu`
+  `powershell -NoProfile -ExecutionPolicy Bypass -File packaging\package-msi.ps1 -Version 0.2.1 -TargetTriple x86_64-pc-windows-gnu`
 - [x] Tag-triggered release workflow builds unsigned Windows beta artifacts
   without requiring signing secrets.
 - [x] Linux release artifact is labeled experimental when published as raw
@@ -162,7 +162,7 @@ Expected: `403`.
 Installer smoke commands:
 
 ```powershell
-$msi = Resolve-Path target\installer\DualSenseCommandCenter-0.2.0.msi
+$msi = Resolve-Path target\installer\DualSenseCommandCenter-0.2.1.msi
 Get-FileHash $msi -Algorithm SHA256
 Get-AuthenticodeSignature $msi
 msiexec.exe /i $msi /qn /L*v "$env:TEMP\dscc-install.log"

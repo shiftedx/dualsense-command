@@ -293,20 +293,20 @@
     { value: 'r2_and_body', label: 'R2 + body' },
     { value: 'light_led', label: 'Light / LEDs' }
   ];
-  const FORZA_SHIFT_THUMP_DEFAULT_INTENSITY = 180;
+  const FORZA_SHIFT_THUMP_DEFAULT_INTENSITY = 255;
 
   const shiftThumpPresets = [
     { label: 'Soft', intensity: 35 },
     { label: 'Medium', intensity: 65 },
-    { label: 'Strong', intensity: FORZA_SHIFT_THUMP_DEFAULT_INTENSITY },
-    { label: 'Max', intensity: 255 }
+    { label: 'Strong', intensity: 180 },
+    { label: 'Max', intensity: FORZA_SHIFT_THUMP_DEFAULT_INTENSITY }
   ];
 
   const shiftThumpPresetHelp: Record<string, string> = {
     Soft: 'A lighter mechanical cue for users who want shift feedback without a big kick through the controller.',
     Medium: 'A moderate shift kick that is easy to feel but less abrupt than the stock strong profile.',
-    Strong: 'The Base shift thump: a firmer R2 kick with reduced body feedback for a more physical gear change.',
-    Max: 'The strongest shift cue. Uses the full 255 effect ceiling for users who want every gear change to punch through road texture and engine cues.'
+    Strong: 'A firmer R2 kick with reduced body feedback for a more physical gear change.',
+    Max: 'The Base shift thump: the strongest cue, using the full 255 effect ceiling so gear changes punch through road texture and engine cues.'
   };
 
   const routeTooltips: Record<ForzaEffectRoute, string> = {
@@ -457,11 +457,11 @@
     {
       id: 'suspension_impact',
       label: 'Suspension / impact',
-      signal: 'vehicle.acceleration.magnitude',
+      signal: 'suspension.impact_pulse',
       group: 'Body',
       defaultIntensity: 115,
       defaultRoute: 'body_both',
-      help: 'Uses acceleration spikes and suspension travel to create impact thumps. It is best for jumps, crashes, and hard landings, but can be noisy on rough terrain.'
+      help: 'Latches hard suspension and acceleration spikes into a short body thump through the grip motors. Best for jumps, crashes, and hard landings.'
     },
     {
       id: 'rpm_leds',
@@ -789,8 +789,8 @@
     profiles.find((profile) => profile.id === (selectedOverrideProfileId || activeProfileId)) ??
     activeProfile ??
     null;
-  $: canDeleteSelectedProfile = Boolean(selectedActionProfile && selectedActionProfile.scope !== 'Built-in');
-  $: canRenameSelectedProfile = Boolean(selectedActionProfile && selectedActionProfile.scope !== 'Built-in');
+  $: canDeleteSelectedProfile = Boolean(selectedActionProfile && !selectedActionProfile.builtIn);
+  $: canRenameSelectedProfile = Boolean(selectedActionProfile && !selectedActionProfile.builtIn);
   $: controllerHeaderName = controllerModelText(controller);
   $: controllerHeaderMeta = controllerConnectionText(controller);
   $: controllerHeaderBatteryReadable = controllerBatteryReadable(controller);
@@ -883,8 +883,10 @@
   $: activeProfileHeaderName = activeProfileHeader?.name ?? activeProfileName ?? 'None';
   $: activeProfileHeaderMeta = (() => {
     if (!activeProfileHeader) return profiles.length ? 'No profile resolved' : 'Profiles loading';
-    const scope = activeProfileHeader.scope === 'Built-in'
+    const scope = activeProfileHeader.builtIn && activeProfileHeader.scope === 'Built-in'
       ? 'Built-in template'
+      : activeProfileHeader.builtIn
+        ? 'Stock / Global'
       : activeProfileHeader.scope === 'Game'
         ? `Custom / ${steamContextGame?.name ?? 'game'}`
         : 'Custom / Global';
@@ -1017,9 +1019,9 @@
             ['gear_shift_thump', true, FORZA_SHIFT_THUMP_DEFAULT_INTENSITY, 'r2_and_body'],
             ['road_texture', true, 35, 'body_both'],
             ['rumble_strip', true, 38, 'body_both'],
-            ['tire_slip', true, 50, 'body_right'],
+            ['tire_slip', true, 30, 'body_right'],
             ['puddle_drag', true, 32, 'body_left'],
-            ['suspension_impact', true, 55, 'body_both'],
+            ['suspension_impact', true, 82, 'body_both'],
             ['rpm_leds', false, 100, 'light_led']
           ]
         : [
@@ -1408,8 +1410,18 @@
     return game.artwork.capsuleUrl ?? game.artwork.bannerUrl ?? game.artwork.heroUrl ?? null;
   };
 
-  const isForzaHorizonGame = (game: SupportedGame | null | undefined) =>
-    Boolean(game?.gameId.toLowerCase().startsWith('forza-horizon'));
+  const builtInProfileIdForGame = (game: SupportedGame | null | undefined): string | null => {
+    const gameId = game?.gameId.toLowerCase() ?? '';
+    if (gameId === 'assetto-corsa-rally') return 'assetto-corsa-rally';
+    if (gameId.startsWith('forza-horizon')) {
+      return (
+        profiles.find((profile) => profile.id === 'forza-horizon-immersive')?.id ??
+        profiles.find((profile) => profile.id === 'forza-horizon')?.id ??
+        null
+      );
+    }
+    return null;
+  };
 
   const profileAssignmentMatchesGame = (assignment: ProfileAssignmentConfiguration, game: SupportedGame) => {
     const assignmentGameId = assignment.gameId.trim().toLowerCase();
@@ -1425,22 +1437,23 @@
   };
 
   const defaultProfileIdForGame = (game: SupportedGame | null | undefined) => {
-    if (!game) return activeProfileId || profiles.find((profile) => profile.id === 'forza-horizon')?.id || profiles[0]?.id || '';
+    if (!game) {
+      return (
+        profiles.find((profile) => profile.id === 'global')?.id ??
+        profiles.find((profile) => profile.scope === 'Global')?.id ??
+        profiles.find((profile) => profile.id === activeProfileId && profile.scope !== 'Game')?.id ??
+        profiles[0]?.id ??
+        ''
+      );
+    }
     const scopedProfile = profiles.find((profile) => profile.scope === 'Game' && profile.gameId === game.gameId);
     if (scopedProfile) return scopedProfile.id;
     const assignment = assignmentForGame(game);
     if (assignment?.profileId && profiles.some((profile) => profile.id === assignment.profileId)) {
       return assignment.profileId;
     }
-    if (isForzaHorizonGame(game)) {
-      return (
-        profiles.find((profile) => profile.id === 'forza-horizon-immersive')?.id ??
-        profiles.find((profile) => profile.id === 'forza-horizon')?.id ??
-        activeProfileId ??
-        profiles[0]?.id ??
-        ''
-      );
-    }
+    const builtInProfileId = builtInProfileIdForGame(game);
+    if (builtInProfileId) return builtInProfileId;
     return activeProfileId || profiles[0]?.id || '';
   };
 
@@ -1476,7 +1489,7 @@
     if (profile.scope === 'Game') return 'game';
     if (profileContextGame && profile.id === profileContextDefaultProfileId) return 'recommended';
     if (profile.id === activeProfileId) return 'active';
-    return profile.scope === 'Built-in' ? 'built-in' : profile.scope.toLowerCase();
+    return profile.builtIn ? (profile.scope === 'Global' ? 'stock global' : 'built-in') : profile.scope.toLowerCase();
   };
 
   const gameLauncherLabel = (game: SupportedGame) =>
@@ -1653,9 +1666,9 @@
     selectedTuningScope = 'global';
     selectedTuningGameId = '';
     const profileId =
-      profiles.find((profile) => profile.scope !== 'Game' && profile.id === activeProfileId)?.id ??
+      profiles.find((profile) => profile.id === 'global')?.id ??
       profiles.find((profile) => profile.scope === 'Global')?.id ??
-      profiles.find((profile) => profile.id === 'forza-horizon')?.id ??
+      profiles.find((profile) => profile.scope !== 'Game' && profile.id === activeProfileId)?.id ??
       profiles[0]?.id ??
       '';
     selectedOverrideProfileId = profileId;
@@ -1913,10 +1926,17 @@
 
   const routeTooltip = (route: ForzaEffectRoute) => routeTooltips[route] ?? 'Selects where DSCC sends this telemetry effect.';
 
+  const brakeOvertravelGuardPoint = (end: number) =>
+    end >= 80 ? Math.min(end, Math.max(80, end - 10)) : Math.max(0, end - 3);
+  const throttleOvertravelGuardPoint = (end: number) =>
+    end >= 80 ? Math.min(end, 95) : Math.max(0, end - 3);
+
   const triggerRangeTooltip = (side: 'L2' | 'R2', edge: 'from' | 'to', value: number) =>
     edge === 'from'
       ? `${side} starts building force at ${value}% trigger travel. Raising this creates more free travel before resistance begins.`
-      : `${side} reaches full configured force at ${value}% trigger travel. Lowering this makes the force curve finish earlier.`;
+      : side === 'L2'
+        ? `${side} reaches full configured force at ${value}% trigger travel. Brake lock warning arms near ${brakeOvertravelGuardPoint(value)}% when the end point is high.`
+        : `${side} reaches full configured force at ${value}% trigger travel. Throttle overtravel guard ramps hard near ${throttleOvertravelGuardPoint(value)}% when the end point is high so shift thumps keep travel to punch through.`;
 
   const triggerCurveTooltip = (side: 'L2' | 'R2', value: number) =>
     `${side} curve is ${value.toFixed(2)}. 1.00 is linear; lower values bring resistance in earlier, while higher values keep the pedal lighter at first and ramp harder near the end.`;
@@ -2062,6 +2082,13 @@
 
   const builtInProfileConfig = (profileId: string): EditableControllerConfig => {
     const base = buildDefaultControllerConfig();
+    if (profileId === 'global') {
+      return {
+        ...base,
+        profileAssignments: currentControllerConfig?.profileAssignments ?? []
+      };
+    }
+
     return {
       ...base,
       trigger: baseForzaTriggerDefaults(),
@@ -2085,7 +2112,7 @@
 
   const loadProfileConfigForEditor = async (profile: ProfileSummary) => {
     let config: EditableControllerConfig | null = null;
-    if (profile.scope === 'Built-in') {
+    if (profile.builtIn) {
       config = builtInProfileConfig(profile.id);
     } else {
       const exported = await exportProfile(profile.id);
@@ -2127,7 +2154,7 @@
     applyTriggerConfig(baseForzaTriggerDefaults());
     scheduleBaseFeelTestRefresh();
     scheduleLiveControllerConfigSync();
-    const profileLabel = activeProfile?.scope === 'Built-in' ? activeProfile.name : 'Base';
+    const profileLabel = activeProfile?.builtIn ? activeProfile.name : 'Base';
     setApplyMessage(`Reset trigger curves to ${profileLabel} defaults`);
   };
 
@@ -2236,8 +2263,8 @@
   };
   const restoreDefaults = async () => {
     const selectedProfile = profiles.find((profile) => profile.id === (selectedOverrideProfileId || activeProfileId));
-    const profileId = selectedProfile && selectedProfile.scope !== 'Built-in'
-      ? 'forza-horizon'
+    const profileId = selectedProfile && !selectedProfile.builtIn
+      ? defaultProfileIdForGame(profileContextGame) || 'global'
       : selectedProfile?.id ?? defaultProfileIdForGame(profileContextGame);
     if (!profileId) {
       setApplyMessage('No active profile selected');
@@ -2391,7 +2418,7 @@
   };
 
   const beginRenameSelectedProfile = () => {
-    if (!selectedActionProfile || selectedActionProfile.scope === 'Built-in') return;
+    if (!selectedActionProfile || selectedActionProfile.builtIn) return;
     saveAsProfileOpen = false;
     saveAsProfileName = '';
     renameProfileId = selectedActionProfile.id;
@@ -2406,7 +2433,7 @@
   const submitRenameProfile = async () => {
     const profile = profiles.find((item) => item.id === renameProfileId);
     const name = renameProfileName.trim();
-    if (!profile || profile.scope === 'Built-in') {
+    if (!profile || profile.builtIn) {
       cancelRenameProfile();
       return;
     }
@@ -2525,7 +2552,7 @@
 
   const deleteProfileById = async (id: string, name: string) => {
     const fallbackProfileId =
-      profiles.find((profile) => profile.id === 'forza-horizon')?.id ??
+      profiles.find((profile) => profile.id === 'global')?.id ??
       profiles.find((profile) => profile.id !== id && profile.scope === 'Built-in')?.id ??
       profiles.find((profile) => profile.id !== id)?.id ??
       '';
@@ -2969,7 +2996,7 @@
       const sourceProfileName = selectedActionProfile.name;
       let targetProfile = selectedActionProfile;
       let preservingStockProfile = false;
-      if (targetProfile?.scope === 'Built-in') {
+      if (targetProfile?.builtIn) {
         const name = uniqueProfileName(
           profileContextGame ? `${profileContextGame.name} ${targetProfile.name} custom` : `${targetProfile.name} custom`
         );
@@ -3424,7 +3451,7 @@
                     </span>
                     <span class="dm-ribbon-picker-copy">
                       <strong>{profile.name}</strong>
-                      <small>{profile.scope === 'Built-in' ? 'Built-in template' : profile.scope === 'Game' ? `Custom / ${steamContextGame?.name ?? 'game'}` : 'Custom / Global'}{profile.id === activeProfileId ? ' · live' : ''}</small>
+                      <small>{profile.builtIn ? (profile.scope === 'Global' ? 'Stock / Global' : 'Built-in template') : profile.scope === 'Game' ? `Custom / ${steamContextGame?.name ?? 'game'}` : 'Custom / Global'}{profile.id === activeProfileId ? ' · live' : ''}</small>
                     </span>
                   </button>
                 {/each}
@@ -3955,14 +3982,14 @@
                 class="dm-mini-button"
                 type="button"
                 disabled={!canRenameSelectedProfile || profileRenameBusy || !selectedActionProfile}
-                title={canRenameSelectedProfile ? 'Rename selected custom profile' : 'Built-in profiles cannot be renamed'}
+                title={canRenameSelectedProfile ? 'Rename selected custom profile' : 'Stock profiles cannot be renamed'}
                 onclick={beginRenameSelectedProfile}
               >Rename</button>
               <button
                 class="dm-mini-button"
                 type="button"
                 disabled={!canDeleteSelectedProfile || profileFileBusy || !selectedActionProfile}
-                title={canDeleteSelectedProfile ? 'Delete selected custom profile' : 'Built-in profiles cannot be deleted'}
+                title={canDeleteSelectedProfile ? 'Delete selected custom profile' : 'Stock profiles cannot be deleted'}
                 onclick={() => selectedActionProfile && void deleteProfileById(selectedActionProfile.id, selectedActionProfile.name)}
               >Delete</button>
               <button class="dm-mini-button" type="button" onclick={restoreDefaults}><RotateCcw size={14} /> Reset</button>
