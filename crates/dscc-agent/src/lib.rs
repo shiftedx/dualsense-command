@@ -11,19 +11,21 @@ use std::{
 };
 
 use axum::{
-    body::Body,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Path, Query, State,
     },
-    http::{header, HeaderMap, Method, Request, StatusCode},
-    middleware::{self, Next},
-    response::{IntoResponse, Response},
-    routing::{get, post, put},
+    http::{header, HeaderMap, StatusCode},
+    middleware,
+    response::IntoResponse,
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use directories::ProjectDirs;
-use dscc_adapters::{built_in_integrations, initial_detection, parse_forza_data_out_packet};
+use dscc_adapters::{
+    built_in_adapters, built_in_udp_adapters, initial_detection, parse_udp_telemetry_packet,
+    UdpTelemetryAdapter,
+};
 use dscc_core::{
     BatteryState, ComparableValue, ComparisonOp, ConnectionState, ControllerCapabilities,
     ControllerFamily, ControllerId, ControllerInfo, ControllerOutputFrame, ControllerState,
@@ -49,95 +51,48 @@ use tokio::{
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 
-pub const DEFAULT_BIND_ADDR: &str = "127.0.0.1:43473";
-pub const DEFAULT_FORZA_BIND_ADDR: &str = "127.0.0.1:5300";
-pub const FORZA_BIND_ADDR_ENV: &str = "DSCC_FORZA_BIND_ADDR";
-const FORZA_HORIZON6_DEFAULT_INSTALL_PATH: &str =
-    r"C:\Program Files (x86)\Steam\steamapps\common\ForzaHorizon6";
-const FORZA_HORIZON5_STEAM_APP_ID: &str = "1551360";
-const FORZA_HORIZON6_STEAM_APP_ID: &str = "2483190";
-const FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP: &[u8] =
-    include_bytes!("../assets/forza/ControllerIcons.zip");
-const DEFAULT_PROFILE_ID: &str = "forza-horizon";
-const IMMERSIVE_PROFILE_ID: &str = "forza-horizon-immersive";
+mod bind_addr;
+mod env_policy;
+mod forza_glyphs;
+mod game_modules;
+mod http_security;
 
-fn default_agent_bind_addr() -> SocketAddr {
-    DEFAULT_BIND_ADDR
-        .parse()
-        .expect("static DSCC bind address is valid")
-}
+pub use bind_addr::{
+    resolve_agent_bind_addr, DEFAULT_BIND_ADDR, DEFAULT_FORZA_BIND_ADDR, FORZA_BIND_ADDR_ENV,
+    FORZA_LAN_ENABLE_ENV, LAN_API_ENABLE_ENV,
+};
 
-fn all_interfaces_agent_bind_addr(port: u16) -> SocketAddr {
-    SocketAddr::from(([0, 0, 0, 0], port))
-}
+pub(crate) use bind_addr::{
+    default_agent_bind_addr, desired_agent_bind_addr, lan_api_enabled, resolve_forza_bind_addr,
+};
+pub(crate) use env_policy::configured_output_mode;
+#[cfg(test)]
+pub(crate) use forza_glyphs::{
+    ensure_forza_icon_target_is_safe, forza_controller_icon_backup_path,
+    forza_controller_icon_targets, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP,
+};
+pub(crate) use forza_glyphs::{
+    install_forza_playstation_glyphs, resolve_forza_horizon6_install_path,
+    restore_forza_original_glyphs, trusted_forza_horizon6_install_path,
+};
+#[cfg(test)]
+use game_modules::detect_running_game_from_processes;
+use game_modules::{
+    built_in_game_modules, detect_running_game_from_processes_with_user_games,
+    game_executable_exists, game_module_summaries, no_game_detection, supported_game_summary,
+    GameModule, FORZA_DATA_OUT_ADAPTER_ID, FORZA_HORIZON_IMMERSIVE_PROFILE_ID,
+    FORZA_HORIZON_PROFILE_ID,
+};
+pub(crate) use http_security::{reject_cross_origin_mutations, request_origin_matches_host};
 
-fn desired_agent_bind_addr(settings: &AppSettings, port: u16) -> SocketAddr {
-    if settings.listen_on_all_interfaces {
-        all_interfaces_agent_bind_addr(port)
-    } else {
-        SocketAddr::from(([127, 0, 0, 1], port))
-    }
-}
-
-pub fn resolve_agent_bind_addr() -> SocketAddr {
-    if let Ok(value) = std::env::var("DSCC_AGENT_ADDR") {
-        if let Ok(addr) = value.trim().parse::<SocketAddr>() {
-            return addr;
-        }
-    }
-
-    let default = default_agent_bind_addr();
-    let Some(store) = PersistenceStore::default() else {
-        return default;
-    };
-    match store.load().map(PersistedAgentState::normalized) {
-        Ok(state) if state.app_settings.listen_on_all_interfaces => {
-            all_interfaces_agent_bind_addr(default.port())
-        }
-        _ => default,
-    }
-}
+const DEFAULT_PROFILE_ID: &str = FORZA_HORIZON_PROFILE_ID;
+const IMMERSIVE_PROFILE_ID: &str = FORZA_HORIZON_IMMERSIVE_PROFILE_ID;
 
 fn current_timestamp() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
-fn resolve_forza_bind_addr() -> SocketAddr {
-    let default: SocketAddr = DEFAULT_FORZA_BIND_ADDR
-        .parse()
-        .expect("static Forza loopback bind address is valid");
-    match std::env::var(FORZA_BIND_ADDR_ENV) {
-        Ok(value) => {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                return default;
-            }
-            match trimmed.parse::<SocketAddr>() {
-                Ok(addr) => {
-                    if !addr.ip().is_loopback() {
-                        tracing::warn!(
-                            bind_addr = %addr,
-                            "Forza Data Out listener is bound to a non-loopback address; ensure your firewall is configured intentionally"
-                        );
-                    }
-                    addr
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        env = FORZA_BIND_ADDR_ENV,
-                        value = trimmed,
-                        %error,
-                        "Could not parse Forza bind override; falling back to default loopback bind"
-                    );
-                    default
-                }
-            }
-        }
-        Err(_) => default,
-    }
-}
-
-const FORZA_PACKET_STALE_AFTER: Duration = Duration::from_secs(2);
+const TELEMETRY_PACKET_STALE_AFTER: Duration = Duration::from_secs(2);
 const HARDWARE_OUTPUT_INTERVAL: Duration = Duration::from_millis(33);
 const HARDWARE_OUTPUT_KEEPALIVE_INTERVAL: Duration = Duration::from_millis(750);
 const MANUAL_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
@@ -146,7 +101,7 @@ const DEFAULT_EFFECT_TEST_DURATION_MS: u64 = 650;
 const MAX_EFFECT_TEST_DURATION_MS: u64 = 1_500;
 const DEFAULT_BASE_FEEL_TEST_DURATION_MS: u64 = 30_000;
 const MAX_BASE_FEEL_TEST_DURATION_MS: u64 = 60_000;
-const FORZA_TELEMETRY_PROCESS_INTERVAL: Duration = Duration::from_millis(33);
+const UDP_TELEMETRY_PROCESS_INTERVAL: Duration = Duration::from_millis(33);
 const FORZA_SHIFT_EVENT_HOLD: Duration = Duration::from_millis(100);
 const GAME_DETECTION_CACHE_TTL: Duration = Duration::from_secs(5);
 const STEAM_INPUT_CACHE_TTL: Duration = Duration::from_secs(30);
@@ -210,8 +165,8 @@ fn forza_preset_for_profile(profile_id: &str) -> Option<ForzaTelemetryConfig> {
     }
 }
 
-/// Battery-conscious "Forza Horizon" preset. Adaptive triggers do most of
-/// the work, with road texture enabled as the default surface cue.
+/// Battery-conscious "Base" preset. Adaptive triggers do most of the work,
+/// with road texture enabled as the default surface cue.
 fn forza_horizon_preset() -> ForzaTelemetryConfig {
     // (id, enabled, intensity 0..=255, route)
     //
@@ -252,11 +207,11 @@ fn forza_horizon_preset() -> ForzaTelemetryConfig {
     ForzaTelemetryConfig { effects }.normalized()
 }
 
-/// Richer "Forza Horizon / Immersive" preset. This keeps the same trigger
+/// Richer "Immersive" preset. This keeps the same trigger
 /// language as the stock preset, then adds low-to-mid body layers for slip,
-/// curbs, puddles, suspension, and RPM LEDs. The continuous effects are
-/// deliberately conservative so road texture stays readable and shift/ABS
-/// cues can still cut through.
+/// curbs, puddles, and suspension. The continuous effects are deliberately
+/// conservative so road texture stays readable and shift/ABS cues can still
+/// cut through. Gear LEDs and the RPM bar stay off unless the user opts in.
 fn forza_horizon_immersive_preset() -> ForzaTelemetryConfig {
     // (id, enabled, intensity 0..=255, route)
     //
@@ -264,7 +219,7 @@ fn forza_horizon_immersive_preset() -> ForzaTelemetryConfig {
     //   - Tire slip -> right grip, so traction loss lives on the throttle side.
     //   - Puddle drag -> left grip, so water feels different from throttle load.
     //   - Suspension / rumble strips -> both grips, but lower than shift thump.
-    //   - RPM LEDs -> enabled for a richer visual layer without touching triggers.
+    //   - RPM LEDs -> disabled; visual gear/RPM overlays should be opt-in.
     let entries: &[(&str, bool, u8, &str)] = &[
         ("brake_resistance", true, 100, "l2"),
         ("throttle_resistance", true, 100, "r2"),
@@ -277,7 +232,7 @@ fn forza_horizon_immersive_preset() -> ForzaTelemetryConfig {
         ("tire_slip", true, 50, "body_right"),
         ("puddle_drag", true, 32, "body_left"),
         ("suspension_impact", true, 55, "body_both"),
-        ("rpm_leds", true, 100, "light_led"),
+        ("rpm_leds", false, 100, "light_led"),
     ];
 
     let effects = entries
@@ -305,6 +260,7 @@ fn forza_horizon_trigger_preset() -> TriggerConfig {
         effect: "Adaptive resistance".to_string(),
         intensity: "Strong (Standard)".to_string(),
         vibration: "Medium".to_string(),
+        vibration_mode: "Balanced".to_string(),
     }
     .normalized()
 }
@@ -439,8 +395,9 @@ impl EffectRuntimeCache {
 #[derive(Debug)]
 struct AgentStateInner {
     controllers: ControllerRegistry,
+    controller_names: BTreeMap<String, String>,
     profiles: Vec<ProfileSummary>,
-    integrations: Vec<IntegrationSummary>,
+    adapters: Vec<AdapterSummary>,
     telemetry: SignalSnapshot,
     logs: Vec<LogEntry>,
     device_backend: DeviceBackendSummary,
@@ -451,14 +408,19 @@ struct AgentStateInner {
     edge_profiles: BTreeMap<String, EdgeProfileStore>,
     app_settings: AppSettings,
     active_profile_id: Option<String>,
-    active_integration_id: Option<String>,
+    active_adapter_id: Option<String>,
     auto_loaded_profile_id: Option<String>,
-    forza_runtime: ForzaDataOutRuntime,
+    adapter_runtimes: BTreeMap<String, AdapterRuntime>,
+    forza_effect_runtime: ForzaEffectRuntime,
     effect_revision: u64,
+    user_games: BTreeMap<String, UserGameConfig>,
 }
 
 #[derive(Debug, Clone, Default)]
-struct ForzaDataOutRuntime {
+struct AdapterRuntime {
+    adapter_id: String,
+    display_name: String,
+    default_port: Option<u16>,
     bind_addr: Option<SocketAddr>,
     listener_bound: bool,
     listener_started_at: Option<Instant>,
@@ -475,12 +437,25 @@ struct ForzaDataOutRuntime {
     last_parse_error_len: Option<usize>,
     last_parse_error: Option<String>,
     last_parse_error_at: Option<Instant>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ForzaEffectRuntime {
     prev_shift_gear: Option<u8>,
     latched_shift_event: Option<&'static str>,
     latched_shift_until: Option<Instant>,
 }
 
-impl ForzaDataOutRuntime {
+impl AdapterRuntime {
+    fn for_udp_adapter(adapter: UdpTelemetryAdapter) -> Self {
+        Self {
+            adapter_id: adapter.id.to_string(),
+            display_name: adapter.display_name.to_string(),
+            default_port: Some(adapter.default_port),
+            ..Self::default()
+        }
+    }
+
     fn mark_bound(&mut self, bind_addr: SocketAddr) {
         self.bind_addr = Some(bind_addr);
         self.listener_bound = true;
@@ -524,7 +499,8 @@ impl ForzaDataOutRuntime {
         self.parse_error_count = self.parse_error_count.saturating_add(1);
         if self.last_parse_error_len != Some(packet_len) {
             self.last_parse_error = Some(format!(
-                "unsupported Forza Data Out packet length {packet_len}"
+                "unsupported {} packet length {packet_len}",
+                self.display_name
             ));
             self.last_parse_error_len = Some(packet_len);
         }
@@ -534,10 +510,12 @@ impl ForzaDataOutRuntime {
 
     fn has_recent_packet(&self, now: Instant) -> bool {
         self.last_packet_at.is_some_and(|last_packet_at| {
-            now.duration_since(last_packet_at) <= FORZA_PACKET_STALE_AFTER
+            now.duration_since(last_packet_at) <= TELEMETRY_PACKET_STALE_AFTER
         })
     }
+}
 
+impl ForzaEffectRuntime {
     fn latch_shift_event(&mut self, event: &'static str, now: Instant) {
         if event == "none" {
             return;
@@ -575,6 +553,47 @@ impl ForzaDataOutRuntime {
     }
 }
 
+impl AgentStateInner {
+    fn adapter_runtime(&self, adapter_id: &str) -> Option<&AdapterRuntime> {
+        self.adapter_runtimes.get(adapter_id)
+    }
+
+    fn adapter_runtime_mut(&mut self, adapter_id: &str) -> &mut AdapterRuntime {
+        self.adapter_runtimes
+            .entry(adapter_id.to_string())
+            .or_insert_with(|| {
+                built_in_udp_adapters()
+                    .iter()
+                    .find(|adapter| adapter.id == adapter_id)
+                    .copied()
+                    .map(AdapterRuntime::for_udp_adapter)
+                    .unwrap_or_else(|| AdapterRuntime {
+                        adapter_id: adapter_id.to_string(),
+                        display_name: adapter_id.to_string(),
+                        default_port: None,
+                        ..AdapterRuntime::default()
+                    })
+            })
+    }
+
+    fn require_adapter_runtime(&self, adapter_id: &str) -> &AdapterRuntime {
+        self.adapter_runtime(adapter_id)
+            .expect("built-in adapter runtime is initialized")
+    }
+}
+
+fn default_adapter_runtimes() -> BTreeMap<String, AdapterRuntime> {
+    built_in_udp_adapters()
+        .iter()
+        .map(|adapter| {
+            (
+                adapter.id.to_string(),
+                AdapterRuntime::for_udp_adapter(*adapter),
+            )
+        })
+        .collect()
+}
+
 fn signal_gear_to_u8(value: f64) -> Option<u8> {
     value
         .is_finite()
@@ -589,7 +608,7 @@ pub struct StatusResponse {
     pub bind_address: String,
     pub uptime_seconds: u64,
     pub active_profile_id: Option<String>,
-    pub active_integration_id: Option<String>,
+    pub active_adapter_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -664,6 +683,11 @@ pub struct ControllerDetail {
     pub product_id: u16,
     pub capabilities: ControllerCapabilities,
     pub diagnostics: Vec<ControllerDiagnostic>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateControllerRequest {
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -798,6 +822,8 @@ pub struct ProfileSummary {
     pub name: String,
     pub built_in: bool,
     pub active: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -835,7 +861,7 @@ pub struct ProfileConfig {
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ControllerInputMode {
-    #[serde(rename = "native_dualsense", alias = "native_dual_sense")]
+    #[serde(rename = "native_dualsense")]
     #[default]
     NativeDualSense,
     SteamInputCompanion,
@@ -895,6 +921,10 @@ fn default_r2_trigger_curve() -> TriggerCurve {
     TriggerCurve::default_r2()
 }
 
+fn default_vibration_mode() -> String {
+    "Balanced".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TriggerConfig {
@@ -910,6 +940,8 @@ pub struct TriggerConfig {
     pub effect: String,
     pub intensity: String,
     pub vibration: String,
+    #[serde(default = "default_vibration_mode")]
+    pub vibration_mode: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -975,6 +1007,7 @@ pub struct ProfileAssignmentConfig {
 pub struct ModuleSummary {
     pub id: String,
     pub name: String,
+    pub kind: String,
     pub version: String,
     pub source: String,
     pub trusted: bool,
@@ -985,7 +1018,7 @@ pub struct ModuleSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct IntegrationSummary {
+pub struct AdapterSummary {
     pub id: String,
     pub name: String,
     pub enabled: bool,
@@ -1088,7 +1121,7 @@ pub struct AgentSnapshotResponse {
     pub app_settings: AppSettingsResponse,
     pub controllers: Vec<ControllerSummary>,
     pub profiles: Vec<ProfileSummary>,
-    pub integrations: Vec<IntegrationSummary>,
+    pub adapters: Vec<AdapterSummary>,
     pub modules: Vec<ModuleSummary>,
     pub steam_input: SteamInputStatus,
     pub game_detection: GameDetectionResponse,
@@ -1121,8 +1154,11 @@ pub struct AppPaths {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateProfileRequest {
     pub name: String,
+    #[serde(default, alias = "game_id")]
+    pub game_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1138,13 +1174,18 @@ pub struct ExportedProfile {
     pub built_in: bool,
     pub active: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub game_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config: Option<ProfileConfig>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ImportProfileRequest {
+    pub schema: String,
     pub id: Option<String>,
     pub name: String,
+    #[serde(default, alias = "gameId")]
+    pub game_id: Option<String>,
     #[serde(default)]
     pub config: Option<ProfileConfig>,
 }
@@ -1199,7 +1240,7 @@ pub struct UpdateEdgeProfileRequest {
 pub struct ProfileResolutionResponse {
     pub controller_id: Option<String>,
     pub detected_game_id: Option<String>,
-    pub active_integration_id: Option<String>,
+    pub active_adapter_id: Option<String>,
     pub selected_profile_id: Option<String>,
     pub reason: String,
     pub override_profile_id: Option<String>,
@@ -1230,6 +1271,7 @@ pub struct GameDetectionResponse {
     pub confidence: u8,
     pub process_name: Option<String>,
     pub module_id: Option<String>,
+    pub adapter_id: Option<String>,
     pub profile_id: Option<String>,
     pub candidates: Vec<GameDetectionCandidate>,
     #[serde(default)]
@@ -1245,6 +1287,7 @@ pub struct GameDetectionCandidate {
     pub name: String,
     pub process_name: String,
     pub module_id: String,
+    pub adapter_id: String,
     pub profile_id: String,
     pub confidence: u8,
 }
@@ -1298,8 +1341,91 @@ pub struct SupportedGameSummary {
     pub stats: SteamGameStats,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UserGameConfig {
+    pub game_id: String,
+    pub app_id: String,
+    pub name: String,
+    pub install_dir: String,
+    pub install_path: String,
+    #[serde(default)]
+    pub process_names: Vec<String>,
+    pub added_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SteamLibraryEntry {
+    pub app_id: String,
+    pub name: String,
+    pub install_dir: String,
+    pub install_path: String,
+    pub artwork: GameArtwork,
+    pub stats: SteamGameStats,
+    pub already_in_catalog: bool,
+    pub suggested_game_id: String,
+    pub process_candidates: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SteamLibraryListResponse {
+    pub games: Vec<SteamLibraryEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddUserGameRequest {
+    pub app_id: String,
+    /// Optional override for the .exe process names DSCC will watch for to
+    /// auto-load this game's profile. When omitted/empty, the agent uses the
+    /// candidates it discovered by scanning the install directory. Useful for
+    /// games whose .exe lives in a subfolder or isn't named obviously.
+    #[serde(default)]
+    pub process_names: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddUserGameResponse {
+    pub game: SupportedGameSummary,
+}
+
 #[derive(Debug, Deserialize)]
-pub struct UpdateIntegrationRequest {
+#[serde(rename_all = "camelCase")]
+pub struct BrowseSteamLibraryParams {
+    pub app_id: String,
+    #[serde(default)]
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SteamLibraryBrowseEntry {
+    pub name: String,
+    /// `"dir"` or `"exe"`. Kept as a string so the wire shape is forward
+    /// compatible if we ever surface other kinds (data files, configs, ...).
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SteamLibraryBrowseResponse {
+    pub app_id: String,
+    pub install_path: String,
+    /// Path relative to `install_path`, using forward slashes and never
+    /// containing `..` segments. Empty string means the install root.
+    pub relative_path: String,
+    pub entries: Vec<SteamLibraryBrowseEntry>,
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateAdapterRequest {
     pub enabled: bool,
 }
 
@@ -1401,13 +1527,15 @@ struct PersistenceStore {
     state_file: PathBuf,
 }
 
-const PERSISTED_STATE_VERSION: u32 = 6;
+const PERSISTED_STATE_VERSION: u32 = 7;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PersistedAgentState {
     version: u32,
     profiles: Vec<ProfileSummary>,
+    #[serde(default)]
+    controller_names: BTreeMap<String, String>,
     controller_configs: BTreeMap<String, ControllerConfig>,
     #[serde(default)]
     profile_configs: BTreeMap<String, ProfileConfig>,
@@ -1415,6 +1543,8 @@ struct PersistedAgentState {
     edge_profiles: BTreeMap<String, EdgeProfileStore>,
     app_settings: AppSettings,
     active_profile_id: Option<String>,
+    #[serde(default)]
+    user_games: BTreeMap<String, UserGameConfig>,
 }
 
 impl DeviceBackendSummary {
@@ -1489,7 +1619,6 @@ impl PersistenceStore {
 
 impl PersistedAgentState {
     fn normalized(mut self) -> Self {
-        let legacy_placeholders = self.version < 2;
         self.profiles = self
             .profiles
             .into_iter()
@@ -1505,16 +1634,20 @@ impl PersistedAgentState {
             })
             .collect();
         let persisted_profiles = self.profiles.clone();
+        self.controller_names = self
+            .controller_names
+            .into_iter()
+            .filter_map(|(id, name)| {
+                let id = id.trim().chars().take(160).collect::<String>();
+                let name = normalize_controller_display_name(&name)?;
+                (!id.is_empty()).then_some((id, name))
+            })
+            .collect();
         self.controller_configs = self
             .controller_configs
             .into_iter()
             .map(|(id, config)| {
-                let config = config.normalized();
-                let mut config = if legacy_placeholders {
-                    config.reset_legacy_placeholder_actions()
-                } else {
-                    config
-                };
+                let mut config = config.normalized();
                 config.profile_assignments = normalize_existing_profile_assignments(
                     config.profile_assignments,
                     &persisted_profiles,
@@ -1533,26 +1666,13 @@ impl PersistedAgentState {
             })
             .map(|(id, config)| {
                 let config = config.normalized_for_model("DualSense");
-                let config = if legacy_placeholders {
-                    config.reset_legacy_placeholder_actions()
-                } else {
-                    config
-                };
                 (id, config)
             })
             .collect();
         self.edge_profiles = self
             .edge_profiles
             .into_iter()
-            .map(|(id, store)| {
-                let store = store.normalized();
-                let store = if legacy_placeholders {
-                    store.reset_legacy_placeholder_actions()
-                } else {
-                    store
-                };
-                (id, store)
-            })
+            .map(|(id, store)| (id, store.normalized()))
             .collect();
         self.profile_overrides = self
             .profile_overrides
@@ -1578,6 +1698,39 @@ impl PersistedAgentState {
             .forza_playstation_glyphs
             .install_path
             .and_then(|path| (!path.trim().is_empty()).then_some(path));
+        self.user_games = self
+            .user_games
+            .into_iter()
+            .filter_map(|(id, config)| {
+                let game_id = config.game_id.trim().to_string();
+                if game_id.is_empty()
+                    || game_id != id.trim()
+                    || built_in_game_modules()
+                        .iter()
+                        .any(|module| module.id == game_id)
+                {
+                    return None;
+                }
+                let mut config = config;
+                config.game_id = game_id.clone();
+                config.app_id = config.app_id.trim().to_string();
+                config.name = config.name.trim().to_string();
+                config.install_dir = config.install_dir.trim().to_string();
+                config.install_path = config.install_path.trim().to_string();
+                config.process_names = config
+                    .process_names
+                    .into_iter()
+                    .filter_map(|name| {
+                        let trimmed = name.trim();
+                        (!trimmed.is_empty()).then(|| trimmed.to_string())
+                    })
+                    .collect();
+                if config.app_id.is_empty() || config.name.is_empty() {
+                    return None;
+                }
+                Some((game_id, config))
+            })
+            .collect();
         self.version = PERSISTED_STATE_VERSION;
         self
     }
@@ -1591,6 +1744,7 @@ impl PersistedAgentState {
                 .filter(|profile| !profile.built_in)
                 .cloned()
                 .collect(),
+            controller_names: inner.controller_names.clone(),
             controller_configs: inner.controller_configs.clone(),
             profile_configs: inner
                 .profile_configs
@@ -1602,6 +1756,7 @@ impl PersistedAgentState {
             edge_profiles: inner.edge_profiles.clone(),
             app_settings: inner.app_settings.clone(),
             active_profile_id: inner.active_profile_id.clone(),
+            user_games: inner.user_games.clone(),
         }
     }
 }
@@ -1616,15 +1771,17 @@ fn default_profiles() -> Vec<ProfileSummary> {
     vec![
         ProfileSummary {
             id: DEFAULT_PROFILE_ID.to_string(),
-            name: "Forza Horizon".to_string(),
+            name: "Base".to_string(),
             built_in: true,
             active: true,
+            game_id: None,
         },
         ProfileSummary {
             id: IMMERSIVE_PROFILE_ID.to_string(),
-            name: "Forza Horizon / Immersive".to_string(),
+            name: "Immersive".to_string(),
             built_in: true,
             active: false,
+            game_id: None,
         },
     ]
 }
@@ -1634,11 +1791,18 @@ fn merge_profiles(persisted_profiles: Vec<ProfileSummary>) -> Vec<ProfileSummary
     for mut profile in persisted_profiles {
         profile.built_in = false;
         profile.active = false;
+        profile.game_id = normalize_optional_profile_game_id(profile.game_id);
         if !profile.id.trim().is_empty() && !profiles.iter().any(|item| item.id == profile.id) {
             profiles.push(profile);
         }
     }
     profiles
+}
+
+fn normalize_optional_profile_game_id(game_id: Option<String>) -> Option<String> {
+    game_id
+        .map(|id| id.trim().chars().take(96).collect::<String>())
+        .filter(|id| !id.is_empty() && id != "all" && id != "global")
 }
 
 fn profiles_with_active(
@@ -1918,7 +2082,7 @@ fn discover_steam_game_catalog() -> SteamGameCatalog {
 
 fn unsupported_steam_game_catalog() -> SteamGameCatalog {
     SteamGameCatalog {
-        supported_games: KNOWN_GAMES
+        supported_games: built_in_game_modules()
             .iter()
             .filter(|game| game.steam_catalog)
             .map(|game| {
@@ -1944,7 +2108,10 @@ fn build_supported_steam_game_catalog(
     let mut artwork_paths = BTreeMap::new();
     let steam_stats = discover_steam_game_stats(steam_root);
 
-    for game in KNOWN_GAMES.iter().filter(|game| game.steam_catalog) {
+    for game in built_in_game_modules()
+        .iter()
+        .filter(|game| game.steam_catalog)
+    {
         let manifest = manifests
             .iter()
             .find(|manifest| steam_manifest_matches_game(manifest, game));
@@ -1962,13 +2129,13 @@ fn build_supported_steam_game_catalog(
 
         if let Some(app_id) = app_id.as_deref() {
             for (kind, path) in discover_steam_artwork_paths(steam_root, app_id) {
-                let key = (game.game_id.to_string(), kind);
+                let key = (game.id.to_string(), kind);
                 artwork_paths.insert(key.clone(), path);
                 match key.1.as_str() {
-                    "icon" => artwork.icon_url = Some(game_art_url(game.game_id, "icon")),
-                    "banner" => artwork.banner_url = Some(game_art_url(game.game_id, "banner")),
-                    "hero" => artwork.hero_url = Some(game_art_url(game.game_id, "hero")),
-                    "capsule" => artwork.capsule_url = Some(game_art_url(game.game_id, "capsule")),
+                    "icon" => artwork.icon_url = Some(game_art_url(game.id, "icon")),
+                    "banner" => artwork.banner_url = Some(game_art_url(game.id, "banner")),
+                    "hero" => artwork.hero_url = Some(game_art_url(game.id, "hero")),
+                    "capsule" => artwork.capsule_url = Some(game_art_url(game.id, "capsule")),
                     _ => {}
                 }
             }
@@ -1995,29 +2162,6 @@ fn build_supported_steam_game_catalog(
     SteamGameCatalog {
         supported_games,
         artwork_paths,
-    }
-}
-
-fn supported_game_summary(
-    game: &KnownGame,
-    app_id: Option<String>,
-    install_path: Option<PathBuf>,
-    artwork: GameArtwork,
-    stats: SteamGameStats,
-) -> SupportedGameSummary {
-    let installed = install_path
-        .as_ref()
-        .is_some_and(|path| path.is_dir() || game_executable_exists(path, game));
-    SupportedGameSummary {
-        game_id: game.game_id.to_string(),
-        name: game.name.to_string(),
-        app_id,
-        install_path: install_path.map(|path| path.display().to_string()),
-        installed,
-        running: false,
-        support_level: "telemetry".to_string(),
-        artwork,
-        stats,
     }
 }
 
@@ -2136,7 +2280,7 @@ fn merge_steam_game_achievement_cache(
         }
     }
 
-    for app_id in KNOWN_GAMES
+    for app_id in built_in_game_modules()
         .iter()
         .filter(|game| game.steam_catalog)
         .flat_map(|game| game.steam_app_ids)
@@ -2225,12 +2369,6 @@ fn achievement_stats_from_json(value: &serde_json::Value) -> Option<SteamAchieve
         return None;
     }
     Some(SteamAchievementStats { unlocked, total })
-}
-
-fn game_executable_exists(root: &FsPath, game: &KnownGame) -> bool {
-    game.process_names
-        .iter()
-        .any(|process| root.join(process).is_file())
 }
 
 fn steam_library_dirs(steam_root: &FsPath) -> Vec<PathBuf> {
@@ -2353,18 +2491,18 @@ fn parse_steam_app_manifest(library: &FsPath, contents: &str) -> Option<SteamApp
     })
 }
 
-fn steam_manifest_matches_game(manifest: &SteamAppManifest, game: &KnownGame) -> bool {
+fn steam_manifest_matches_game(manifest: &SteamAppManifest, game: &GameModule) -> bool {
     game.steam_app_ids
         .iter()
         .any(|app_id| manifest.app_id == *app_id)
-        || manifest.name.eq_ignore_ascii_case(game.name)
+        || manifest.name.eq_ignore_ascii_case(game.display_name)
         || game
             .steam_install_dirs
             .iter()
             .any(|dir| manifest.install_dir.eq_ignore_ascii_case(dir))
 }
 
-fn find_steam_common_install_dir(libraries: &[PathBuf], game: &KnownGame) -> Option<PathBuf> {
+fn find_steam_common_install_dir(libraries: &[PathBuf], game: &GameModule) -> Option<PathBuf> {
     for library in libraries {
         for install_dir in game.steam_install_dirs {
             let candidate = library.join("steamapps").join("common").join(install_dir);
@@ -2559,6 +2697,10 @@ fn game_art_url(game_id: &str, kind: &str) -> String {
     format!("/api/games/art/{game_id}/{kind}")
 }
 
+fn steam_art_url_by_app(app_id: &str, kind: &str) -> String {
+    format!("/api/games/steam-art/{app_id}/{kind}")
+}
+
 fn apply_steam_cdn_artwork_fallback(artwork: &mut GameArtwork, app_id: &str) {
     let base = format!("https://cdn.cloudflare.steamstatic.com/steam/apps/{app_id}");
     if artwork.banner_url.is_none() {
@@ -2597,6 +2739,274 @@ fn enrich_game_detection(
     });
     detection.supported_games = supported_games;
     detection
+}
+
+/// Append every registered user game to the detection's `supported_games`
+/// list. Built-in modules sort first; user games sort alphabetically after.
+fn append_user_games_to_detection(
+    detection: &mut GameDetectionResponse,
+    user_games: &BTreeMap<String, UserGameConfig>,
+    steam_root: Option<&FsPath>,
+    steam_stats: &BTreeMap<String, SteamGameStats>,
+) {
+    if user_games.is_empty() {
+        return;
+    }
+
+    let active_game_id = detection.active_game_id.clone();
+    let mut user_entries: Vec<SupportedGameSummary> = user_games
+        .values()
+        .map(|game| {
+            let stats = steam_stats.get(&game.app_id).cloned().unwrap_or_default();
+            let mut summary = user_game_to_supported_summary(game, steam_root, stats);
+            summary.running = active_game_id.as_deref() == Some(summary.game_id.as_str());
+            summary
+        })
+        .collect();
+    user_entries.sort_by_key(|game| game.name.to_ascii_lowercase());
+
+    detection.supported_games.extend(user_entries);
+
+    if let Some(active_id) = active_game_id.as_deref() {
+        if detection
+            .selected_game
+            .as_ref()
+            .is_none_or(|game| game.game_id != active_id)
+        {
+            detection.selected_game = detection
+                .supported_games
+                .iter()
+                .find(|game| game.game_id == active_id)
+                .cloned();
+        }
+    }
+}
+
+const USER_GAME_PROCESS_CANDIDATE_LIMIT: usize = 8;
+const USER_GAME_PROCESS_SCAN_LIMIT: usize = 256;
+
+/// Build the synthesized user-game id for a Steam app.
+fn user_game_id_for_app_id(app_id: &str) -> String {
+    format!("custom-{}", app_id.trim())
+}
+
+/// Scan the top level of a Steam game's install path for plausible launcher
+/// executables. Recursive scans are intentionally avoided so we don't walk
+/// large game directories during a snapshot/library call.
+/// Normalise an incoming list of process-name overrides. Trims whitespace,
+/// strips any path separators (user might paste a full path), drops empty
+/// entries, enforces a .exe suffix, deduplicates case-insensitively, and caps
+/// the list at `USER_GAME_PROCESS_CANDIDATE_LIMIT` entries.
+fn sanitize_user_game_process_names(raw: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for value in raw {
+        // Strip any directory components — only the file name is meaningful for
+        // process matching.
+        let name = std::path::Path::new(value.trim())
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if name.is_empty() {
+            continue;
+        }
+        if !name.to_ascii_lowercase().ends_with(".exe") {
+            continue;
+        }
+        if out.iter().any(|existing| existing.eq_ignore_ascii_case(&name)) {
+            continue;
+        }
+        out.push(name);
+        if out.len() >= USER_GAME_PROCESS_CANDIDATE_LIMIT {
+            break;
+        }
+    }
+    out
+}
+
+fn discover_user_game_process_candidates(install_path: &FsPath) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(install_path) else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    for entry in entries.flatten().take(USER_GAME_PROCESS_SCAN_LIMIT) {
+        let path = entry.path();
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !file_name.to_ascii_lowercase().ends_with(".exe") {
+            continue;
+        }
+        if is_excluded_user_game_process(file_name) {
+            continue;
+        }
+        // Confirm it's a real file rather than a directory entry that happens
+        // to end in .exe.
+        let is_file = entry
+            .file_type()
+            .map(|file_type| file_type.is_file())
+            .unwrap_or(false);
+        if !is_file {
+            continue;
+        }
+        names.push(file_name.to_string());
+        if names.len() >= USER_GAME_PROCESS_CANDIDATE_LIMIT {
+            break;
+        }
+    }
+    names.sort_by_key(|name| name.to_ascii_lowercase());
+    names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    names
+}
+
+fn is_excluded_user_game_process(file_name: &str) -> bool {
+    let lower = file_name.to_ascii_lowercase();
+    lower.starts_with("uninst")
+        || lower.starts_with("setup")
+        || lower.starts_with("unitycrashhandler")
+        || lower.starts_with("ueprereqsetup")
+        || lower.contains("crash")
+        || lower.starts_with("vc_redist")
+        || lower.starts_with("vcredist")
+        || lower.starts_with("dotnetfx")
+        || lower.starts_with("eossdk")
+        || lower.starts_with("eacrash")
+        || lower.starts_with("easetup")
+        || lower.starts_with("easyanticheat")
+        || lower.starts_with("redist")
+        || lower.contains("installer")
+        || lower.contains("launcher_setup")
+}
+
+fn user_game_artwork_for_app(steam_root: &FsPath, app_id: &str) -> GameArtwork {
+    let mut artwork = GameArtwork::default();
+    // Prefer the local Steam librarycache (what Steam actually shows in-client).
+    // Routes back through /api/games/steam-art/:app_id/:kind which streams the
+    // file from disk on demand. Many Steam apps lack public CDN capsules, so the
+    // local cache is the most reliable source for the user's actual library.
+    for kind in discover_steam_artwork_paths(steam_root, app_id).keys() {
+        let url = steam_art_url_by_app(app_id, kind);
+        match kind.as_str() {
+            "icon" => artwork.icon_url = Some(url),
+            "banner" => artwork.banner_url = Some(url),
+            "hero" => artwork.hero_url = Some(url),
+            "capsule" => artwork.capsule_url = Some(url),
+            _ => {}
+        }
+    }
+    // Fill remaining slots from Steam's CDN. apply_steam_cdn_artwork_fallback
+    // only writes is_none() fields, so this preserves the local-cache choices.
+    apply_steam_cdn_artwork_fallback(&mut artwork, app_id);
+    artwork
+}
+
+/// Locate the configured Steam root (if any) and read per-app stats. Designed
+/// to be run inside `spawn_blocking` so it does not block the async runtime.
+fn steam_root_and_stats_for_user_games() -> (Option<PathBuf>, BTreeMap<String, SteamGameStats>) {
+    let Some(steam_root) = steam_root_candidates()
+        .into_iter()
+        .find(|path| path.join("steamapps").is_dir() || path.join("steam.exe").is_file())
+    else {
+        return (None, BTreeMap::new());
+    };
+    let stats = discover_steam_game_stats(&steam_root);
+    (Some(steam_root), stats)
+}
+
+/// Look up a Steam app manifest by app_id across the entire library set.
+/// Returns `None` if Steam isn't installed or the manifest can't be found.
+fn locate_steam_manifest(app_id: &str) -> Option<SteamAppManifest> {
+    let steam_root = steam_root_candidates()
+        .into_iter()
+        .find(|path| path.join("steamapps").is_dir() || path.join("steam.exe").is_file())?;
+    let libraries = steam_library_dirs(&steam_root);
+    let manifests = collect_steam_app_manifests(&libraries);
+    manifests
+        .into_iter()
+        .find(|manifest| manifest.app_id == app_id)
+}
+
+/// Returns every Steam library entry that the agent can see on disk, with a
+/// flag marking entries that are already represented by a built-in module or
+/// a previously-added user game.
+fn discover_steam_library_entries(
+    user_games: &BTreeMap<String, UserGameConfig>,
+) -> Vec<SteamLibraryEntry> {
+    let Some(steam_root) = steam_root_candidates()
+        .into_iter()
+        .find(|path| path.join("steamapps").is_dir() || path.join("steam.exe").is_file())
+    else {
+        return Vec::new();
+    };
+
+    let libraries = steam_library_dirs(&steam_root);
+    let manifests = collect_steam_app_manifests(&libraries);
+    let steam_stats = discover_steam_game_stats(&steam_root);
+    let built_in_app_ids: std::collections::BTreeSet<&str> = built_in_game_modules()
+        .iter()
+        .flat_map(|game| game.steam_app_ids.iter().copied())
+        .collect();
+
+    let mut entries = Vec::with_capacity(manifests.len());
+    for manifest in manifests {
+        let suggested_game_id = user_game_id_for_app_id(&manifest.app_id);
+        let already_in_catalog = built_in_app_ids.contains(manifest.app_id.as_str())
+            || user_games.contains_key(&suggested_game_id);
+        let artwork = user_game_artwork_for_app(&steam_root, &manifest.app_id);
+        let stats = steam_stats
+            .get(manifest.app_id.as_str())
+            .cloned()
+            .unwrap_or_default();
+        let process_candidates = discover_user_game_process_candidates(&manifest.install_path);
+        entries.push(SteamLibraryEntry {
+            app_id: manifest.app_id.clone(),
+            name: manifest.name.clone(),
+            install_dir: manifest.install_dir.clone(),
+            install_path: manifest.install_path.display().to_string(),
+            artwork,
+            stats,
+            already_in_catalog,
+            suggested_game_id,
+            process_candidates,
+        });
+    }
+    entries.sort_by(|a, b| {
+        a.name
+            .to_ascii_lowercase()
+            .cmp(&b.name.to_ascii_lowercase())
+    });
+    entries
+}
+
+/// Build a `SupportedGameSummary` entry for a user-registered game, suitable
+/// for appending to the snapshot's `supported_games` list.
+fn user_game_to_supported_summary(
+    game: &UserGameConfig,
+    steam_root: Option<&FsPath>,
+    stats: SteamGameStats,
+) -> SupportedGameSummary {
+    let install_path = PathBuf::from(&game.install_path);
+    let installed = !game.install_path.is_empty() && install_path.is_dir();
+    let artwork = match steam_root {
+        Some(root) => user_game_artwork_for_app(root, &game.app_id),
+        None => {
+            let mut artwork = GameArtwork::default();
+            apply_steam_cdn_artwork_fallback(&mut artwork, &game.app_id);
+            artwork
+        }
+    };
+    SupportedGameSummary {
+        game_id: game.game_id.clone(),
+        name: game.name.clone(),
+        app_id: (!game.app_id.is_empty()).then(|| game.app_id.clone()),
+        install_path: (!game.install_path.is_empty()).then(|| game.install_path.clone()),
+        installed,
+        running: false,
+        support_level: "custom".to_string(),
+        artwork,
+        stats,
+    }
 }
 
 fn supported_game_install_path(catalog: &SteamGameCatalog, game_id: &str) -> Option<PathBuf> {
@@ -3516,6 +3926,11 @@ fn steam_input_from_stack(stack: &[String]) -> Option<String> {
                     | "english"
                     | "Full_Press"
                     | "Soft_Press"
+                    | "Long_Press"
+                    | "Double_Press"
+                    | "Start_Press"
+                    | "Release_Press"
+                    | "Chord_Press"
             )
         })
         .cloned()
@@ -3543,12 +3958,24 @@ fn friendly_steam_input(input: &str, source: Option<&str>) -> String {
         "button_b" => "Circle".to_string(),
         "button_x" => "Square".to_string(),
         "button_y" => "Triangle".to_string(),
+        "dpad_north" if source.is_some_and(|source| source.contains("trackpad")) => {
+            "Swipe Up".to_string()
+        }
+        "dpad_south" if source.is_some_and(|source| source.contains("trackpad")) => {
+            "Swipe Down".to_string()
+        }
+        "dpad_east" if source.is_some_and(|source| source.contains("trackpad")) => {
+            "Swipe Right".to_string()
+        }
+        "dpad_west" if source.is_some_and(|source| source.contains("trackpad")) => {
+            "Swipe Left".to_string()
+        }
         "dpad_north" => "D-Pad Up".to_string(),
         "dpad_south" => "D-Pad Down".to_string(),
         "dpad_east" => "D-Pad Right".to_string(),
         "dpad_west" => "D-Pad Left".to_string(),
-        "button_escape" => "Create".to_string(),
-        "button_menu" => "Options".to_string(),
+        "button_escape" => "Options".to_string(),
+        "button_menu" => "Create".to_string(),
         "button_back_left" => "Back Left".to_string(),
         "button_back_right" => "Back Right".to_string(),
         "button_back_left_upper" => "Fn Left".to_string(),
@@ -3647,6 +4074,7 @@ fn friendly_steam_source_mode(mode: &str) -> String {
         "relative_mouse" => "Mouse".to_string(),
         "mouse_joystick" => "Mouse Joystick".to_string(),
         "scrollwheel" => "Scroll Wheel".to_string(),
+        "2dscroll" => "Directional Swipe".to_string(),
         "single_button" => "Single Button".to_string(),
         "trigger" => "Analog Trigger".to_string(),
         "switches" => "Switches".to_string(),
@@ -3910,11 +4338,12 @@ impl AgentState {
             effect_runtime: Arc::new(Mutex::new(EffectRuntimeCache::default())),
             inner: Arc::new(RwLock::new(AgentStateInner {
                 controllers,
+                controller_names: persisted.controller_names,
                 profiles: profiles_with_active(
                     merge_profiles(persisted.profiles),
                     &active_profile_id,
                 ),
-                integrations: default_integrations(),
+                adapters: default_adapters(),
                 telemetry: SignalSnapshot::default(),
                 logs: vec![LogEntry {
                     level: "info".to_string(),
@@ -3929,10 +4358,12 @@ impl AgentState {
                 edge_profiles: persisted.edge_profiles,
                 app_settings: persisted.app_settings,
                 active_profile_id,
-                active_integration_id: None,
+                active_adapter_id: None,
                 auto_loaded_profile_id: None,
-                forza_runtime: ForzaDataOutRuntime::default(),
+                adapter_runtimes: default_adapter_runtimes(),
+                forza_effect_runtime: ForzaEffectRuntime::default(),
                 effect_revision: 0,
+                user_games: persisted.user_games,
             })),
         }
     }
@@ -3975,9 +4406,13 @@ impl AgentState {
     }
 
     fn app_settings_response(&self, settings: &AppSettings) -> AppSettingsResponse {
-        let desired = desired_agent_bind_addr(settings, self.bind_addr.port());
+        let mut settings = settings.clone();
+        if settings.listen_on_all_interfaces && !lan_api_enabled() {
+            settings.listen_on_all_interfaces = false;
+        }
+        let desired = desired_agent_bind_addr(&settings, self.bind_addr.port());
         AppSettingsResponse {
-            settings: settings.clone(),
+            settings,
             effective_bind_address: self.bind_addr.to_string(),
             desired_bind_address: desired.to_string(),
             restart_required: desired != self.bind_addr,
@@ -4253,8 +4688,9 @@ impl AgentState {
         Some((controller_id, output))
     }
 
-    async fn apply_forza_packet(
+    async fn apply_adapter_packet(
         &self,
+        adapter_id: &'static str,
         packet_len: usize,
         sequence: u64,
         updates: Vec<SignalUpdate>,
@@ -4262,24 +4698,29 @@ impl AgentState {
         let realtime = {
             let mut inner = self.inner.write().await;
             let mut updates = updates;
-            let packet_rate_hz = inner.forza_runtime.mark_packet(packet_len, sequence);
-            let current_gear = update_number(&updates, "drivetrain.gear");
-            let telemetry_on = update_text(&updates, "game.state") == Some("driving");
-            let shift_enabled = shift_thump_detection_enabled(&inner);
-            let now = Instant::now();
-            if let Some(shift_event) = inner.forza_runtime.detect_shift_event(
-                current_gear,
-                telemetry_on,
-                shift_enabled,
-                now,
-            ) {
-                updates.push(
-                    SignalUpdate::new(
-                        SignalName::new("drivetrain.shift_event").expect("signal name is valid"),
-                        shift_event,
+            let packet_rate_hz = inner
+                .adapter_runtime_mut(adapter_id)
+                .mark_packet(packet_len, sequence);
+            if adapter_id == FORZA_DATA_OUT_ADAPTER_ID {
+                let current_gear = update_number(&updates, "drivetrain.gear");
+                let telemetry_on = update_text(&updates, "game.state") == Some("driving");
+                let shift_enabled = shift_thump_detection_enabled(&inner);
+                let now = Instant::now();
+                if let Some(shift_event) = inner.forza_effect_runtime.detect_shift_event(
+                    current_gear,
+                    telemetry_on,
+                    shift_enabled,
+                    now,
+                ) {
+                    updates.push(
+                        SignalUpdate::new(
+                            SignalName::new("drivetrain.shift_event")
+                                .expect("signal name is valid"),
+                            shift_event,
+                        )
+                        .with_sequence(sequence),
                     )
-                    .with_sequence(sequence),
-                );
+                }
             }
             updates.push(
                 SignalUpdate::new(
@@ -4288,22 +4729,34 @@ impl AgentState {
                 )
                 .with_sequence(sequence),
             );
-            if inner.telemetry.text("source.id") == Some("forza-data-out") {
+            if inner.telemetry.text("source.id") == Some(adapter_id) {
                 inner.telemetry.apply_updates(updates);
             } else {
                 inner.telemetry = SignalSnapshot::from_updates(updates);
             }
-            if inner.active_integration_id.as_deref() != Some("forza-data-out") {
-                inner.active_integration_id = Some("forza-data-out".to_string());
+            if inner.active_adapter_id.as_deref() != Some(adapter_id) {
+                inner.active_adapter_id = Some(adapter_id.to_string());
             }
-            let was_forza_running = inner.integrations.iter().any(|integration| {
-                integration.id == "forza-data-out" && integration.state == "connected"
-            });
-            set_integration_running(&mut inner.integrations, "forza-data-out", true);
-            if !was_forza_running {
+            let was_running = inner
+                .adapters
+                .iter()
+                .any(|adapter| adapter.id == adapter_id && adapter.state == "connected");
+            set_adapter_running(&mut inner.adapters, adapter_id, true);
+            if !was_running {
+                let display_name = inner
+                    .adapters
+                    .iter()
+                    .find(|adapter| adapter.id == adapter_id)
+                    .map(|adapter| adapter.name.clone())
+                    .unwrap_or_else(|| {
+                        inner
+                            .adapter_runtime(adapter_id)
+                            .map(|runtime| runtime.display_name.clone())
+                            .unwrap_or_else(|| adapter_id.to_string())
+                    });
                 inner.logs.push(LogEntry {
                     level: "info".to_string(),
-                    message: format!("Forza Data Out stream connected ({packet_len} byte packets)"),
+                    message: format!("{display_name} stream connected ({packet_len} byte packets)"),
                     timestamp: current_timestamp(),
                 });
             }
@@ -4311,7 +4764,7 @@ impl AgentState {
                 .then(|| RealtimeMessage {
                     kind: "snapshot_invalidated".to_string(),
                     controller: inner.controllers.summaries().into_iter().next(),
-                    message: Some("forza-data-out".to_string()),
+                    message: Some(adapter_id.to_string()),
                 })
         };
         if let Some(realtime) = realtime {
@@ -4331,9 +4784,26 @@ impl AgentState {
                 return value;
             }
         }
-        let detection = detect_running_game().await;
+        let user_games = {
+            let inner = self.inner.read().await;
+            inner.user_games.clone()
+        };
+        let detection = detect_running_game(&user_games).await;
         let catalog = self.cached_steam_game_catalog().await;
-        let detection = enrich_game_detection(detection, &catalog);
+        let mut detection = enrich_game_detection(detection, &catalog);
+        let (steam_root, steam_stats) =
+            tokio::task::spawn_blocking(steam_root_and_stats_for_user_games)
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::warn!(%error, "Steam root/stats lookup task failed");
+                    (None, BTreeMap::new())
+                });
+        append_user_games_to_detection(
+            &mut detection,
+            &user_games,
+            steam_root.as_deref(),
+            &steam_stats,
+        );
         {
             let mut inner = self.inner.write().await;
             sync_auto_loaded_profile_for_detection(&mut inner, &detection);
@@ -4470,12 +4940,12 @@ impl AgentState {
             } else {
                 inner.active_profile_id.clone()
             },
-            active_integration_id: if foreground_game_detected {
+            active_adapter_id: if foreground_game_detected {
                 resolution
-                    .active_integration_id
-                    .or_else(|| inner.active_integration_id.clone())
+                    .active_adapter_id
+                    .or_else(|| inner.active_adapter_id.clone())
             } else {
-                inner.active_integration_id.clone()
+                inner.active_adapter_id.clone()
             },
         }
     }
@@ -4561,10 +5031,9 @@ impl AgentState {
                 "Steam install not found in standard locations".to_string()
             },
         });
-        checks.push(forza_runtime_health_check(
-            &inner.forza_runtime,
-            Some(game_detection),
-        ));
+        for runtime in inner.adapter_runtimes.values() {
+            checks.push(adapter_runtime_health_check(runtime, Some(game_detection)));
+        }
         checks.extend(inner.controllers.health_checks());
 
         DiagnosticsResponse {
@@ -4593,9 +5062,12 @@ impl AgentState {
         AgentSnapshotResponse {
             status,
             app_settings: self.app_settings_response(&inner.app_settings),
-            controllers: inner.controllers.summaries(),
+            controllers: apply_controller_names(
+                inner.controllers.summaries(),
+                &inner.controller_names,
+            ),
             profiles: inner.profiles.clone(),
-            integrations: materialized_integrations(&inner, Some(&game_detection)),
+            adapters: materialized_adapters(&inner, Some(&game_detection)),
             modules: module_summaries(),
             steam_input,
             game_detection: game_detection.clone(),
@@ -4707,11 +5179,6 @@ impl ControllerConfig {
         self.profile_assignments = normalize_profile_assignments(self.profile_assignments);
         self
     }
-
-    fn reset_legacy_placeholder_actions(mut self) -> Self {
-        reset_legacy_placeholder_actions(&mut self.buttons);
-        self
-    }
 }
 
 impl Default for ProfileConfig {
@@ -4756,11 +5223,6 @@ impl ProfileConfig {
         config.sticks = profile_config.sticks;
         config.buttons = profile_config.buttons;
     }
-
-    fn reset_legacy_placeholder_actions(mut self) -> Self {
-        reset_legacy_placeholder_actions(&mut self.buttons);
-        self
-    }
 }
 
 impl Default for TriggerConfig {
@@ -4776,6 +5238,7 @@ impl Default for TriggerConfig {
             effect: "Adaptive resistance".to_string(),
             intensity: "Strong (Standard)".to_string(),
             vibration: "Medium".to_string(),
+            vibration_mode: "Balanced".to_string(),
         }
     }
 }
@@ -4792,7 +5255,9 @@ impl TriggerConfig {
         }
         self.l2_curve = self.l2_curve.normalized();
         self.r2_curve = self.r2_curve.normalized();
-        if !["Adaptive resistance", "Pulse", "Wall", "Off"].contains(&self.effect.as_str()) {
+        if !["Adaptive resistance", "Pulse", "Wall", "Wall pulse", "Off"]
+            .contains(&self.effect.as_str())
+        {
             self.effect = "Adaptive resistance".to_string();
         }
         if !["Off", "Weak", "Medium", "Strong (Standard)"].contains(&self.intensity.as_str()) {
@@ -4800,6 +5265,9 @@ impl TriggerConfig {
         }
         if !["Off", "Low", "Medium", "High"].contains(&self.vibration.as_str()) {
             self.vibration = "Medium".to_string();
+        }
+        if !["Balanced", "Deep thump", "Fine buzz"].contains(&self.vibration_mode.as_str()) {
+            self.vibration_mode = "Balanced".to_string();
         }
         self
     }
@@ -5047,15 +5515,6 @@ impl EdgeProfileStore {
             .collect();
         self
     }
-
-    fn reset_legacy_placeholder_actions(mut self) -> Self {
-        self.slots = self
-            .slots
-            .into_iter()
-            .map(|(slot, config)| (slot, config.reset_legacy_placeholder_actions()))
-            .collect();
-        self
-    }
 }
 
 impl EdgeProfileSlotConfig {
@@ -5064,11 +5523,6 @@ impl EdgeProfileSlotConfig {
         self.lightbar = self.lightbar.normalized();
         self.sticks = self.sticks.normalized();
         self.buttons = normalize_controller_button_assignments(self.buttons, true);
-        self
-    }
-
-    fn reset_legacy_placeholder_actions(mut self) -> Self {
-        reset_legacy_placeholder_actions(&mut self.buttons);
         self
     }
 }
@@ -5150,8 +5604,8 @@ fn default_profile_assignments(edge: bool) -> Vec<ProfileAssignmentConfig> {
         ProfileAssignmentConfig {
             game_id: "forza-horizon-6".to_string(),
             game_name: "Forza Horizon 6".to_string(),
-            profile_id: DEFAULT_PROFILE_ID.to_string(),
-            profile_name: "Forza Horizon".to_string(),
+            profile_id: IMMERSIVE_PROFILE_ID.to_string(),
+            profile_name: "Immersive".to_string(),
             state: "ready".to_string(),
             detail: if edge {
                 "Throttle, brake, slip, road texture (Edge)"
@@ -5163,8 +5617,8 @@ fn default_profile_assignments(edge: bool) -> Vec<ProfileAssignmentConfig> {
         ProfileAssignmentConfig {
             game_id: "forza-horizon-5".to_string(),
             game_name: "Forza Horizon 5".to_string(),
-            profile_id: DEFAULT_PROFILE_ID.to_string(),
-            profile_name: "Forza Horizon".to_string(),
+            profile_id: IMMERSIVE_PROFILE_ID.to_string(),
+            profile_name: "Immersive".to_string(),
             state: "ready".to_string(),
             detail: "Horizon 5-compatible Data Out signals".to_string(),
         },
@@ -5254,20 +5708,8 @@ fn normalize_button_assignment(button: ButtonAssignmentConfig) -> ButtonAssignme
     ButtonAssignmentConfig { key, label }
 }
 
-fn reset_legacy_placeholder_actions(buttons: &mut [ButtonAssignmentConfig]) {
-    for button in buttons {
-        if matches!(
-            button.label.as_str(),
-            "Toggle Telemetry Overlay" | "Toggle Effect Preview"
-        ) {
-            button.label = default_assignment_for_key(&button.key);
-        }
-    }
-}
-
 fn normalize_button_key(key: &str) -> String {
     match key.trim() {
-        "Face" => "Cross".to_string(),
         "" => "Unassigned".to_string(),
         other => other.chars().take(24).collect(),
     }
@@ -5275,19 +5717,14 @@ fn normalize_button_key(key: &str) -> String {
 
 fn normalize_button_label(key: &str, label: &str) -> String {
     let trimmed = label.trim();
-    let migrated = match trimmed {
-        "" => default_assignment_for_key(key),
-        "Brake resistance" | "Throttle resistance" | "Shift down" | "Shift up" | "Clutch pulse" => {
-            default_assignment_for_key(key)
-        }
-        "Telemetry mode" | "Launch overlay" | "Profile actions" => default_assignment_for_key(key),
-        "Previous profile" => "Previous DSCC Profile".to_string(),
-        "Next profile" => "Next DSCC Profile".to_string(),
-        other => other.to_string(),
+    let normalized = if trimmed.is_empty() {
+        default_assignment_for_key(key)
+    } else {
+        trimmed.to_string()
     };
 
-    if is_supported_assignment_label(&migrated) {
-        migrated
+    if is_supported_assignment_label(&normalized) {
+        normalized
     } else {
         default_assignment_for_key(key)
     }
@@ -5382,6 +5819,33 @@ fn profile_override_key(controller_id: Option<&str>, game_id: Option<&str>) -> S
         controller_id.unwrap_or("*"),
         game_id.unwrap_or("*")
     )
+}
+
+fn normalize_controller_display_name(name: &str) -> Option<String> {
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.chars().take(64).collect())
+}
+
+fn apply_controller_names(
+    mut controllers: Vec<ControllerSummary>,
+    names: &BTreeMap<String, String>,
+) -> Vec<ControllerSummary> {
+    for controller in &mut controllers {
+        if let Some(name) = names.get(&controller.id) {
+            controller.name = name.clone();
+        }
+    }
+    controllers
+}
+
+fn apply_controller_name(
+    mut detail: ControllerDetail,
+    names: &BTreeMap<String, String>,
+) -> ControllerDetail {
+    if let Some(name) = names.get(&detail.id) {
+        detail.name = name.clone();
+    }
+    detail
 }
 
 impl ControllerDiagnostic {
@@ -6341,101 +6805,94 @@ fn severity_status(severity: DiagnosticSeverity) -> &'static str {
     }
 }
 
-fn default_integrations() -> Vec<IntegrationSummary> {
-    built_in_integrations()
+fn default_adapters() -> Vec<AdapterSummary> {
+    built_in_adapters()
         .iter()
-        .map(|integration| {
-            let enabled = integration.enabled_by_default;
-            IntegrationSummary {
-                id: integration.id.to_string(),
-                name: integration.display_name.to_string(),
+        .map(|adapter| {
+            let enabled = adapter.enabled_by_default;
+            AdapterSummary {
+                id: adapter.id.to_string(),
+                name: adapter.display_name.to_string(),
                 enabled,
-                state: integration_state_label(&initial_detection(integration, enabled))
-                    .to_string(),
+                state: adapter_state_label(&initial_detection(adapter, enabled)).to_string(),
                 packet_rate_hz: None,
-                protocol: format!("{:?}", integration.protocol).to_ascii_lowercase(),
-                setup_hint: integration.setup_hint.to_string(),
-                setup_url: integration.setup_url.map(str::to_string),
+                protocol: format!("{:?}", adapter.protocol).to_ascii_lowercase(),
+                setup_hint: adapter.setup_hint.to_string(),
+                setup_url: adapter.setup_url.map(str::to_string),
             }
         })
         .collect()
 }
 
-fn set_integration_running(
-    integrations: &mut [IntegrationSummary],
-    integration_id: &str,
-    running: bool,
-) {
-    if let Some(integration) = integrations
-        .iter_mut()
-        .find(|integration| integration.id == integration_id)
-    {
-        if running && !integration.enabled {
-            integration.enabled = true;
+fn set_adapter_running(adapters: &mut [AdapterSummary], adapter_id: &str, running: bool) {
+    if let Some(adapter) = adapters.iter_mut().find(|adapter| adapter.id == adapter_id) {
+        if running && !adapter.enabled {
+            adapter.enabled = true;
         }
         let state = if running {
             "connected"
-        } else if integration.enabled {
+        } else if adapter.enabled {
             "ready"
         } else {
             "disabled"
         };
-        if integration.state != state {
-            integration.state = state.to_string();
+        if adapter.state != state {
+            adapter.state = state.to_string();
         }
         let packet_rate_hz = running.then_some(60);
-        if integration.packet_rate_hz != packet_rate_hz {
-            integration.packet_rate_hz = packet_rate_hz;
+        if adapter.packet_rate_hz != packet_rate_hz {
+            adapter.packet_rate_hz = packet_rate_hz;
         }
     }
 }
 
-fn materialized_integrations(
+fn materialized_adapters(
     inner: &AgentStateInner,
     game_detection: Option<&GameDetectionResponse>,
-) -> Vec<IntegrationSummary> {
+) -> Vec<AdapterSummary> {
     let now = Instant::now();
-    let mut integrations = inner.integrations.clone();
-    if let Some(integration) = integrations
-        .iter_mut()
-        .find(|integration| integration.id == "forza-data-out")
-    {
-        apply_forza_runtime_summary(integration, &inner.forza_runtime, game_detection, now);
+    let mut adapters = inner.adapters.clone();
+    for adapter in &mut adapters {
+        if let Some(runtime) = inner.adapter_runtime(&adapter.id) {
+            apply_adapter_runtime_summary(adapter, runtime, game_detection, now);
+        }
     }
-    integrations
+    adapters
 }
 
-fn apply_forza_runtime_summary(
-    integration: &mut IntegrationSummary,
-    runtime: &ForzaDataOutRuntime,
+fn apply_adapter_runtime_summary(
+    adapter: &mut AdapterSummary,
+    runtime: &AdapterRuntime,
     game_detection: Option<&GameDetectionResponse>,
     now: Instant,
 ) {
     let bind_addr = runtime
         .bind_addr
         .map(|addr| addr.to_string())
-        .unwrap_or_else(|| "127.0.0.1:5300".to_string());
+        .unwrap_or_else(|| default_adapter_bind_addr(runtime));
     let detected_game = detected_forza_game_name(game_detection);
 
     if !runtime.listener_bound {
         if let Some(error) = runtime.last_error.as_ref() {
-            integration.enabled = true;
-            integration.state = "faulted".to_string();
-            integration.packet_rate_hz = None;
-            integration.setup_hint = format!(
-                "DSCC could not bind the Forza Data Out UDP listener on {bind_addr}: {error}"
+            adapter.enabled = true;
+            adapter.state = "faulted".to_string();
+            adapter.packet_rate_hz = None;
+            adapter.setup_hint = format!(
+                "DSCC could not bind the {} UDP listener on {bind_addr}: {error}",
+                runtime.display_name
             );
         }
         return;
     }
 
-    integration.enabled = true;
+    adapter.enabled = true;
     if runtime.has_recent_packet(now) {
-        integration.state = "connected".to_string();
-        integration.packet_rate_hz = runtime.packet_rate_hz;
+        adapter.state = "connected".to_string();
+        adapter.packet_rate_hz = runtime.packet_rate_hz;
         let packet_len = runtime.last_packet_len.unwrap_or_default();
-        integration.setup_hint = format!(
-            "Receiving Forza Data Out on {bind_addr}; last packet was {packet_len} bytes {}.",
+        adapter.setup_hint = format!(
+            "Receiving {} on {bind_addr}; last packet was {packet_len} bytes {}.",
+            runtime.display_name,
             runtime
                 .last_packet_at
                 .map(|last| format_elapsed_brief(now.duration_since(last)))
@@ -6444,32 +6901,48 @@ fn apply_forza_runtime_summary(
         return;
     }
 
-    integration.packet_rate_hz = Some(0);
+    adapter.packet_rate_hz = Some(0);
     if runtime.packet_count > 0 {
-        integration.state = "needs_setup".to_string();
-        integration.setup_hint = format!(
-            "Forza Data Out is listening on {bind_addr}, but the stream is stale; last packet arrived {}.",
+        adapter.state = "needs_setup".to_string();
+        adapter.setup_hint = format!(
+            "{} is listening on {bind_addr}, but the stream is stale; last packet arrived {}.",
+            runtime.display_name,
             runtime
                 .last_packet_at
                 .map(|last| format_elapsed_brief(now.duration_since(last)))
                 .unwrap_or_else(|| "earlier".to_string())
         );
-    } else if let Some(game_name) = detected_game {
-        integration.state = "needs_setup".to_string();
-        integration.setup_hint = format!(
-            "{game_name} is running and DSCC is listening on {bind_addr}, but no Data Out packets have arrived. Enable UDP Race Telemetry in-game, set target IP to 127.0.0.1, use port 5300, then enter a driving session."
-        );
+    } else if runtime.adapter_id == FORZA_DATA_OUT_ADAPTER_ID {
+        if let Some(game_name) = detected_game {
+            adapter.state = "needs_setup".to_string();
+            adapter.setup_hint = format!(
+                "{game_name} is running and DSCC is listening on {bind_addr}, but no Data Out packets have arrived. Enable UDP Race Telemetry in-game, set target IP to 127.0.0.1, use port 5300, then enter a driving session."
+            );
+        } else {
+            adapter.state = "ready".to_string();
+            adapter.setup_hint = format!(
+                "DSCC is listening on {bind_addr}; launch a supported Forza title and enable UDP Race Telemetry."
+            );
+        }
     } else {
-        integration.state = "ready".to_string();
-        integration.setup_hint = format!(
-            "DSCC is listening on {bind_addr}; launch a supported Forza title and enable UDP Race Telemetry."
+        adapter.state = "needs_setup".to_string();
+        adapter.setup_hint = format!(
+            "DSCC is listening on {bind_addr}; configure {} to send UDP telemetry to this adapter.",
+            runtime.display_name
         );
+    }
+}
+
+fn default_adapter_bind_addr(runtime: &AdapterRuntime) -> String {
+    match runtime.default_port {
+        Some(port) => format!("127.0.0.1:{port}"),
+        None => "127.0.0.1".to_string(),
     }
 }
 
 fn detected_forza_game_name(game_detection: Option<&GameDetectionResponse>) -> Option<&str> {
     game_detection.and_then(|detection| {
-        (detection.module_id.as_deref() == Some("forza-data-out"))
+        (detection.adapter_id.as_deref() == Some(FORZA_DATA_OUT_ADAPTER_ID))
             .then_some(detection.active_game_name.as_deref())
             .flatten()
     })
@@ -6486,33 +6959,36 @@ fn format_elapsed_brief(duration: Duration) -> String {
     }
 }
 
-fn forza_runtime_health_check(
-    runtime: &ForzaDataOutRuntime,
+fn adapter_runtime_health_check(
+    runtime: &AdapterRuntime,
     game_detection: Option<&GameDetectionResponse>,
 ) -> HealthCheck {
     let now = Instant::now();
     let bind_addr = runtime
         .bind_addr
         .map(|addr| addr.to_string())
-        .unwrap_or_else(|| "127.0.0.1:5300".to_string());
+        .unwrap_or_else(|| default_adapter_bind_addr(runtime));
 
     if !runtime.listener_bound {
         return HealthCheck {
-            name: "forza-data-out".to_string(),
+            name: runtime.adapter_id.clone(),
             status: if runtime.last_error.is_some() {
                 "blocked".to_string()
             } else {
                 "pending".to_string()
             },
             detail: runtime.last_error.clone().unwrap_or_else(|| {
-                format!("Forza Data Out listener has not reported ready on {bind_addr}")
+                format!(
+                    "{} listener has not reported ready on {bind_addr}",
+                    runtime.display_name
+                )
             }),
         };
     }
 
     if runtime.has_recent_packet(now) {
         return HealthCheck {
-            name: "forza-data-out".to_string(),
+            name: runtime.adapter_id.clone(),
             status: "ok".to_string(),
             detail: format!(
                 "Receiving {} byte packets on {bind_addr} at {} Hz",
@@ -6522,17 +6998,26 @@ fn forza_runtime_health_check(
         };
     }
 
-    let status = if detected_forza_game_name(game_detection).is_some() {
+    let detected_game = (runtime.adapter_id == FORZA_DATA_OUT_ADAPTER_ID)
+        .then(|| detected_forza_game_name(game_detection))
+        .flatten();
+    let status = if detected_game.is_some() {
         "warning"
     } else {
-        "pending"
+        "ok"
     };
-    let mut detail = if let Some(game_name) = detected_forza_game_name(game_detection) {
+    let mut detail = if let Some(game_name) = detected_game {
         format!(
             "{game_name} is running; listener is ready on {bind_addr}, but no live Data Out packets are arriving"
         )
+    } else if runtime.adapter_id == FORZA_DATA_OUT_ADAPTER_ID {
+        format!(
+            "Listener is ready on {bind_addr}; telemetry will activate when a supported Forza title is running"
+        )
     } else {
-        format!("Listener is ready on {bind_addr}; waiting for a supported Forza process")
+        format!(
+            "Listener is ready on {bind_addr}; telemetry will activate when a supported source sends packets"
+        )
     };
     if let Some(last_packet_at) = runtime.last_packet_at {
         detail = format!(
@@ -6545,13 +7030,13 @@ fn forza_runtime_health_check(
     }
 
     HealthCheck {
-        name: "forza-data-out".to_string(),
+        name: runtime.adapter_id.clone(),
         status: status.to_string(),
         detail,
     }
 }
 
-fn integration_state_label(detection: &AdapterDetection) -> &'static str {
+fn adapter_state_label(detection: &AdapterDetection) -> &'static str {
     match detection {
         AdapterDetection::Unavailable { .. } => "disabled",
         AdapterDetection::NeedsSetup { .. } => "needs_setup",
@@ -6561,101 +7046,44 @@ fn integration_state_label(detection: &AdapterDetection) -> &'static str {
     }
 }
 
-fn module_profile_templates(module_id: &str) -> Vec<String> {
-    match module_id {
-        "forza-data-out" => vec![
-            "Forza Horizon Road Feel".to_string(),
-            "Forza Horizon Immersive".to_string(),
-            "Forza Horizon Edge Track Focus".to_string(),
-            "Forza Horizon Rain And Rally".to_string(),
-        ],
-        _ => Vec::new(),
-    }
-}
-
 fn module_summaries() -> Vec<ModuleSummary> {
-    built_in_integrations()
+    let mut summaries: Vec<ModuleSummary> = built_in_adapters()
         .iter()
-        .map(|integration| ModuleSummary {
-            id: integration.id.to_string(),
-            name: integration.display_name.to_string(),
+        .map(|adapter| ModuleSummary {
+            id: adapter.id.to_string(),
+            name: adapter.display_name.to_string(),
+            kind: "adapter".to_string(),
             version: "builtin".to_string(),
             source: "built_in".to_string(),
             trusted: true,
-            protocol: format!("{:?}", integration.protocol).to_ascii_lowercase(),
-            setup_hint: integration.setup_hint.to_string(),
-            setup_url: integration.setup_url.map(str::to_string),
-            profile_templates: module_profile_templates(integration.id),
+            protocol: format!("{:?}", adapter.protocol).to_ascii_lowercase(),
+            setup_hint: adapter.setup_hint.to_string(),
+            setup_url: adapter.setup_url.map(str::to_string),
+            profile_templates: Vec::new(),
         })
-        .collect()
+        .collect();
+    summaries.extend(game_module_summaries());
+    summaries
 }
-
-#[derive(Clone, Copy, Debug)]
-struct KnownGame {
-    game_id: &'static str,
-    name: &'static str,
-    module_id: &'static str,
-    default_profile_id: &'static str,
-    process_names: &'static [&'static str],
-    steam_app_ids: &'static [&'static str],
-    steam_install_dirs: &'static [&'static str],
-    steam_catalog: bool,
-}
-
-const KNOWN_GAMES: &[KnownGame] = &[
-    KnownGame {
-        game_id: "forza-horizon-6",
-        name: "Forza Horizon 6",
-        module_id: "forza-data-out",
-        default_profile_id: "forza-horizon",
-        process_names: &[
-            "ForzaHorizon6.exe",
-            "ForzaHorizon6-WinGDK-Shipping.exe",
-            "ForzaHorizon6_Steam.exe",
-        ],
-        steam_app_ids: &[FORZA_HORIZON6_STEAM_APP_ID],
-        steam_install_dirs: &["ForzaHorizon6"],
-        steam_catalog: true,
-    },
-    KnownGame {
-        game_id: "forza-horizon-5",
-        name: "Forza Horizon 5",
-        module_id: "forza-data-out",
-        default_profile_id: "forza-horizon",
-        process_names: &[
-            "ForzaHorizon5.exe",
-            "ForzaHorizon5-Win64-Shipping.exe",
-            "ForzaHorizon5_Steam.exe",
-        ],
-        steam_app_ids: &[FORZA_HORIZON5_STEAM_APP_ID],
-        steam_install_dirs: &["ForzaHorizon5"],
-        steam_catalog: true,
-    },
-    KnownGame {
-        game_id: "forza-motorsport",
-        name: "Forza Motorsport",
-        module_id: "forza-data-out",
-        default_profile_id: "forza-horizon",
-        process_names: &["ForzaMotorsport.exe", "ForzaMotorsport-WinGDK-Shipping.exe"],
-        steam_app_ids: &["2483190"],
-        steam_install_dirs: &[],
-        steam_catalog: false,
-    },
-];
 
 #[cfg(test)]
-async fn detect_running_game() -> GameDetectionResponse {
+async fn detect_running_game(
+    _user_games: &BTreeMap<String, UserGameConfig>,
+) -> GameDetectionResponse {
     no_game_detection("none")
 }
 
 #[cfg(not(test))]
-async fn detect_running_game() -> GameDetectionResponse {
+async fn detect_running_game(
+    user_games: &BTreeMap<String, UserGameConfig>,
+) -> GameDetectionResponse {
     if let Ok(fixture) = std::env::var("DSCC_PROCESS_SCAN_FIXTURE") {
-        return detect_running_game_from_processes(
+        return detect_running_game_from_processes_with_user_games(
             fixture
                 .split(';')
                 .map(str::trim)
                 .filter(|process| !process.is_empty()),
+            user_games,
         );
     }
 
@@ -6664,7 +7092,10 @@ async fn detect_running_game() -> GameDetectionResponse {
     }
 
     match current_process_names().await {
-        Ok(processes) => detect_running_game_from_processes(processes.iter().map(String::as_str)),
+        Ok(processes) => detect_running_game_from_processes_with_user_games(
+            processes.iter().map(String::as_str),
+            user_games,
+        ),
         Err(error) => GameDetectionResponse {
             active_game_id: None,
             active_game_name: None,
@@ -6672,27 +7103,13 @@ async fn detect_running_game() -> GameDetectionResponse {
             confidence: 0,
             process_name: None,
             module_id: None,
+            adapter_id: None,
             profile_id: None,
             candidates: Vec::new(),
             supported_games: Vec::new(),
             selected_game: None,
         }
         .with_source_detail(error.to_string()),
-    }
-}
-
-fn no_game_detection(source: &str) -> GameDetectionResponse {
-    GameDetectionResponse {
-        active_game_id: None,
-        active_game_name: None,
-        source: source.to_string(),
-        confidence: 0,
-        process_name: None,
-        module_id: None,
-        profile_id: None,
-        candidates: Vec::new(),
-        supported_games: Vec::new(),
-        selected_game: None,
     }
 }
 
@@ -6706,53 +7123,6 @@ impl GameDetectionSourceDetail for GameDetectionResponse {
     fn with_source_detail(mut self, detail: String) -> Self {
         self.source = format!("{}:{detail}", self.source);
         self
-    }
-}
-
-fn detect_running_game_from_processes<'a, I>(processes: I) -> GameDetectionResponse
-where
-    I: IntoIterator<Item = &'a str>,
-{
-    let mut candidates = Vec::new();
-    for process in processes {
-        for game in KNOWN_GAMES {
-            if game
-                .process_names
-                .iter()
-                .any(|known| known.eq_ignore_ascii_case(process))
-            {
-                candidates.push(GameDetectionCandidate {
-                    game_id: game.game_id.to_string(),
-                    name: game.name.to_string(),
-                    process_name: process.to_string(),
-                    module_id: game.module_id.to_string(),
-                    profile_id: game.default_profile_id.to_string(),
-                    confidence: 82,
-                });
-            }
-        }
-    }
-
-    let active = candidates.first().cloned();
-    GameDetectionResponse {
-        active_game_id: active.as_ref().map(|candidate| candidate.game_id.clone()),
-        active_game_name: active.as_ref().map(|candidate| candidate.name.clone()),
-        source: if active.is_some() {
-            "process_scan".to_string()
-        } else {
-            "none".to_string()
-        },
-        confidence: active.as_ref().map_or(0, |candidate| candidate.confidence),
-        process_name: active
-            .as_ref()
-            .map(|candidate| candidate.process_name.clone()),
-        module_id: active.as_ref().map(|candidate| candidate.module_id.clone()),
-        profile_id: active
-            .as_ref()
-            .map(|candidate| candidate.profile_id.clone()),
-        candidates,
-        supported_games: Vec::new(),
-        selected_game: None,
     }
 }
 
@@ -6792,27 +7162,26 @@ fn profile_resolution(
         .into_iter()
         .find(|controller| controller.connected)
         .map(|controller| controller.id);
-    let telemetry_game_id = live_telemetry_game_id(inner);
-    let detected_game_id = game_detection
-        .and_then(|detection| detection.active_game_id.clone())
-        .or(telemetry_game_id);
-    let detected_module_id = game_detection.and_then(|detection| {
+    let detected_game_id = game_detection.and_then(|detection| detection.active_game_id.clone());
+    let detected_adapter_id = game_detection.and_then(|detection| {
         detection
             .active_game_id
             .as_ref()
-            .and_then(|_| detection.module_id.clone())
+            .and_then(|_| detection.adapter_id.clone())
     });
-    let active_integration_id = detected_module_id
+    let active_adapter_id = detected_adapter_id
         .clone()
-        .or_else(|| inner.active_integration_id.clone())
+        .or_else(|| inner.active_adapter_id.clone())
         .or_else(|| inner.telemetry.text("source.id").map(str::to_string));
     let override_key = profile_override_key(controller_id.as_deref(), detected_game_id.as_deref());
     let fallback_override_key = profile_override_key(None, detected_game_id.as_deref());
+    let controller_global_override_key = profile_override_key(controller_id.as_deref(), None);
     let global_override_key = profile_override_key(None, None);
     let override_profile = inner
         .profile_overrides
         .get(&override_key)
         .or_else(|| inner.profile_overrides.get(&fallback_override_key))
+        .or_else(|| inner.profile_overrides.get(&controller_global_override_key))
         .or_else(|| inner.profile_overrides.get(&global_override_key));
 
     let assigned_profile_id = controller_id.as_deref().and_then(|id| {
@@ -6843,7 +7212,7 @@ fn profile_resolution(
     ProfileResolutionResponse {
         controller_id,
         detected_game_id,
-        active_integration_id,
+        active_adapter_id,
         selected_profile_id,
         reason: if override_profile.is_some() {
             "manual_override".to_string()
@@ -6853,26 +7222,13 @@ fn profile_resolution(
             "telemetry_source".to_string()
         } else if module_profile_id.is_some() {
             "module_template".to_string()
-        } else if inner.active_integration_id.is_some() {
+        } else if inner.active_adapter_id.is_some() {
             "active_telemetry_source".to_string()
         } else {
             "global_default".to_string()
         },
         override_profile_id: override_profile.map(|profile| profile.profile_id.clone()),
         validation: validation.to_string(),
-    }
-}
-
-fn live_telemetry_game_id(inner: &AgentStateInner) -> Option<String> {
-    match inner.telemetry.text("source.id") {
-        Some("forza-data-out") => inner
-            .forza_runtime
-            .has_recent_packet(Instant::now())
-            .then(|| inner.telemetry.text("game.id"))
-            .flatten()
-            .map(str::to_string),
-        Some("none") | None => None,
-        Some(_) => inner.telemetry.text("game.id").map(str::to_string),
     }
 }
 
@@ -6887,7 +7243,6 @@ fn assigned_profile_for(config: &ControllerConfig, game_id: Option<&str>) -> Opt
 
 fn profile_assignment_matches(assignment_game_id: &str, detected_game_id: &str) -> bool {
     assignment_game_id == detected_game_id
-        || game_aliases(detected_game_id).contains(&assignment_game_id)
 }
 
 fn update_number(updates: &[SignalUpdate], name: &str) -> Option<f64> {
@@ -6943,19 +7298,6 @@ fn forza_shift_thump_enabled(config: &ControllerConfig) -> bool {
         > 0.0
 }
 
-fn game_aliases(game_id: &str) -> &'static [&'static str] {
-    match game_id {
-        "forza-horizon-6" | "forza-horizon-5" | "forza-motorsport" => &["forza", "forza-data-out"],
-        "forza-data-out" => &[
-            "forza-horizon-6",
-            "forza-horizon-5",
-            "forza-motorsport",
-            "forza",
-        ],
-        _ => &[],
-    }
-}
-
 fn telemetry_response(snapshot: &SignalSnapshot) -> Vec<TelemetrySignalResponse> {
     snapshot
         .signals()
@@ -6976,8 +7318,17 @@ fn materialized_telemetry_response(
     let now = Instant::now();
     if let Some((game_id, game_name)) = detected_forza_game(game_detection) {
         let source_id = inner.telemetry.text("source.id");
-        if source_id != Some("forza-data-out") || !inner.forza_runtime.has_recent_packet(now) {
-            return forza_waiting_telemetry_response(&inner.forza_runtime, game_id, game_name, now);
+        if source_id != Some(FORZA_DATA_OUT_ADAPTER_ID)
+            || !inner
+                .require_adapter_runtime(FORZA_DATA_OUT_ADAPTER_ID)
+                .has_recent_packet(now)
+        {
+            return forza_waiting_telemetry_response(
+                inner.require_adapter_runtime(FORZA_DATA_OUT_ADAPTER_ID),
+                game_id,
+                game_name,
+                now,
+            );
         }
         let mut response = telemetry_response(&inner.telemetry);
         upsert_telemetry_signal(&mut response, telemetry_signal("game.id", game_id, None, 0));
@@ -6993,7 +7344,7 @@ fn materialized_telemetry_response(
 
 fn detected_forza_game(game_detection: Option<&GameDetectionResponse>) -> Option<(&str, &str)> {
     let detection = game_detection?;
-    if detection.module_id.as_deref() != Some("forza-data-out") {
+    if detection.adapter_id.as_deref() != Some(FORZA_DATA_OUT_ADAPTER_ID) {
         return None;
     }
     let game_id = detection.active_game_id.as_deref()?;
@@ -7015,7 +7366,7 @@ fn upsert_telemetry_signal(
 }
 
 fn forza_waiting_telemetry_response(
-    runtime: &ForzaDataOutRuntime,
+    runtime: &AdapterRuntime,
     game_id: &str,
     game_name: &str,
     now: Instant,
@@ -7079,7 +7430,7 @@ fn forza_waiting_telemetry_response(
 }
 
 fn forza_waiting_signal_snapshot(
-    runtime: &ForzaDataOutRuntime,
+    runtime: &AdapterRuntime,
     game_id: &str,
     game_name: &str,
     now: Instant,
@@ -7122,7 +7473,7 @@ fn forza_waiting_signal_snapshot(
 }
 
 fn forza_inactive_signal_snapshot(
-    runtime: &ForzaDataOutRuntime,
+    runtime: &AdapterRuntime,
     now: Instant,
     game_id: Option<&str>,
     game_name: Option<&str>,
@@ -7163,15 +7514,24 @@ fn current_effect_snapshot(
     let now = Instant::now();
     if let Some((game_id, game_name)) = detected_forza_game(game_detection) {
         let source_id = inner.telemetry.text("source.id");
-        if source_id != Some("forza-data-out") || !inner.forza_runtime.has_recent_packet(now) {
+        if source_id != Some(FORZA_DATA_OUT_ADAPTER_ID)
+            || !inner
+                .require_adapter_runtime(FORZA_DATA_OUT_ADAPTER_ID)
+                .has_recent_packet(now)
+        {
             return (
-                forza_waiting_signal_snapshot(&inner.forza_runtime, game_id, game_name, now),
+                forza_waiting_signal_snapshot(
+                    inner.require_adapter_runtime(FORZA_DATA_OUT_ADAPTER_ID),
+                    game_id,
+                    game_name,
+                    now,
+                ),
                 false,
             );
         }
 
         let mut snapshot = inner.telemetry.clone();
-        if let Some(shift_event) = inner.forza_runtime.latched_shift_event(now) {
+        if let Some(shift_event) = inner.forza_effect_runtime.latched_shift_event(now) {
             snapshot.apply_update(signal_update("drivetrain.shift_event", shift_event));
             snapshot.apply_update(signal_update("drivetrain.shift_pulse", 1.0));
         } else {
@@ -7181,12 +7541,14 @@ fn current_effect_snapshot(
         return (snapshot, true);
     }
 
-    if inner.telemetry.text("source.id") == Some("forza-data-out")
-        && !inner.forza_runtime.has_recent_packet(now)
+    if inner.telemetry.text("source.id") == Some(FORZA_DATA_OUT_ADAPTER_ID)
+        && !inner
+            .require_adapter_runtime(FORZA_DATA_OUT_ADAPTER_ID)
+            .has_recent_packet(now)
     {
         return (
             forza_inactive_signal_snapshot(
-                &inner.forza_runtime,
+                inner.require_adapter_runtime(FORZA_DATA_OUT_ADAPTER_ID),
                 now,
                 inner.telemetry.text("game.id"),
                 inner.telemetry.text("game.name"),
@@ -7364,11 +7726,17 @@ fn apply_forza_output_enhancements(
     let forza = config
         .map(|config| config.forza.clone().normalized())
         .unwrap_or_default();
-    let vibration = trigger_vibration_scalar(config.map(|config| &config.trigger));
+    let trigger = config.map(|config| &config.trigger);
+    let vibration = trigger_vibration_scalar(trigger);
     if vibration <= 0.0 {
         output.rumble = None;
     } else {
-        output.rumble = forza_rumble_output(&forza, snapshot, vibration);
+        output.rumble = forza_rumble_output(
+            &forza,
+            snapshot,
+            vibration,
+            trigger.map_or("Balanced", |trigger| trigger.vibration_mode.as_str()),
+        );
     }
 
     if config.map(|config| config.lightbar.enabled).unwrap_or(true) {
@@ -7393,6 +7761,7 @@ fn forza_rumble_output(
     forza: &ForzaTelemetryConfig,
     snapshot: &SignalSnapshot,
     vibration: f64,
+    vibration_mode: &str,
 ) -> Option<RumbleOutput> {
     let throttle = signal_unit_value(snapshot, "input.throttle");
     let brake = signal_unit_value(snapshot, "input.brake");
@@ -7517,6 +7886,7 @@ fn forza_rumble_output(
 
     low = clamp_unit(low * vibration);
     high = clamp_unit(high * vibration);
+    (low, high) = apply_vibration_mode(vibration_mode, low, high);
 
     if low < 0.025 && high < 0.025 {
         None
@@ -8089,6 +8459,11 @@ fn generic_runtime_profile(
             amplitude: ValueSource::constant(intensity),
             frequency_hz: ValueSource::constant(36.0),
         },
+        "Wall pulse" => EffectTemplate::PulseAb {
+            strength: ValueSource::constant(intensity),
+            frequency_hz: ValueSource::constant(36.0),
+            wall_zones: ValueSource::constant(2.0),
+        },
         "Wall" => EffectTemplate::Wall {
             position: ValueSource::constant(0.32),
             strength: ValueSource::constant(intensity),
@@ -8178,6 +8553,14 @@ fn trigger_vibration_scalar(trigger: Option<&TriggerConfig>) -> f64 {
         Some("High") => 1.0,
         Some("Medium") | None => 0.82,
         _ => 0.82,
+    }
+}
+
+fn apply_vibration_mode(mode: &str, low: f64, high: f64) -> (f64, f64) {
+    match mode {
+        "Deep thump" | "deep_thump" => (clamp_unit(low.max(high * 0.28)), clamp_unit(high * 0.42)),
+        "Fine buzz" | "fine_buzz" => (clamp_unit(low * 0.42), clamp_unit(high.max(low * 0.28))),
+        _ => (clamp_unit(low), clamp_unit(high)),
     }
 }
 
@@ -8377,10 +8760,7 @@ fn effect_test_output_frame(request: &EffectTestRequest) -> ControllerOutputFram
             });
         }
         "rumble" => {
-            frame.rumble = Some(RumbleOutput {
-                low_frequency: intensity,
-                high_frequency: (intensity * 0.82).clamp(0.0, 1.0),
-            });
+            frame.rumble = Some(rumble_for_mode(mode, intensity));
         }
         _ => frame.r2 = trigger_for_mode(mode, intensity, start_position),
     }
@@ -8487,10 +8867,28 @@ fn trigger_for_mode(mode: &str, intensity: f64, start_position: f64) -> TriggerO
             amplitude: intensity,
             frequency_hz: 18.0 + intensity * 42.0,
         },
+        "pulse_ab" | "wall_pulse" => TriggerOutput::PulseAb {
+            strength: intensity,
+            frequency_hz: 18.0 + intensity * 42.0,
+            wall_zones: 2,
+        },
         _ => TriggerOutput::AdaptiveResistance {
             start_position,
             strength: intensity,
         },
+    }
+}
+
+fn rumble_for_mode(mode: &str, intensity: f64) -> RumbleOutput {
+    let intensity = clamp_unit(intensity);
+    let (low, high) = match mode {
+        "deep_thump" | "low" => (intensity, intensity * 0.18),
+        "fine_buzz" | "high" => (intensity * 0.18, intensity),
+        _ => apply_vibration_mode(mode, intensity, intensity * 0.82),
+    };
+    RumbleOutput {
+        low_frequency: clamp_unit(low),
+        high_frequency: clamp_unit(high),
     }
 }
 
@@ -8516,49 +8914,6 @@ impl DevicePermissionProblem {
     }
 }
 
-fn request_origin_matches_host(headers: &HeaderMap) -> bool {
-    let Some(origin) = headers
-        .get(header::ORIGIN)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|origin| !origin.is_empty())
-    else {
-        return true;
-    };
-    let Some(host) = headers
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|host| !host.is_empty())
-    else {
-        return false;
-    };
-    let Some(origin_host) = origin
-        .strip_prefix("http://")
-        .or_else(|| origin.strip_prefix("https://"))
-        .and_then(|origin| origin.split('/').next())
-    else {
-        return false;
-    };
-
-    origin_host.eq_ignore_ascii_case(host)
-}
-
-async fn reject_cross_origin_mutations(
-    request: Request<Body>,
-    next: Next,
-) -> Result<Response, StatusCode> {
-    if matches!(
-        *request.method(),
-        Method::GET | Method::HEAD | Method::OPTIONS
-    ) || request_origin_matches_host(request.headers())
-    {
-        return Ok(next.run(request).await);
-    }
-
-    Err(StatusCode::FORBIDDEN)
-}
-
 pub fn app(state: AgentState) -> Router {
     let dist = web_dist_dir();
     let static_assets =
@@ -8572,7 +8927,10 @@ pub fn app(state: AgentState) -> Router {
         )
         .route("/api/snapshot", get(get_snapshot))
         .route("/api/controllers", get(list_controllers))
-        .route("/api/controllers/:id", get(get_controller))
+        .route(
+            "/api/controllers/:id",
+            get(get_controller).put(update_controller),
+        )
         .route(
             "/api/controllers/:id/config",
             get(get_controller_config).put(update_controller_config),
@@ -8601,8 +8959,8 @@ pub fn app(state: AgentState) -> Router {
         .route("/api/profiles/:id/config", put(update_profile_config))
         .route("/api/profiles/:id/export", get(export_profile))
         .route("/api/profiles/:id/activate", post(activate_profile))
-        .route("/api/integrations", get(list_integrations))
-        .route("/api/integrations/:id", put(update_integration))
+        .route("/api/adapters", get(list_adapters))
+        .route("/api/adapters/:id", put(update_adapter))
         .route("/api/steam-input", get(get_steam_input_status))
         .route(
             "/api/steam-input/bindings",
@@ -8611,6 +8969,14 @@ pub fn app(state: AgentState) -> Router {
         .route("/api/modules", get(list_modules))
         .route("/api/games/detected", get(get_detected_game))
         .route("/api/games/art/:game_id/:kind", get(get_game_art))
+        .route("/api/games/steam-art/:app_id/:kind", get(get_steam_app_art))
+        .route("/api/games/steam-library", get(list_steam_library))
+        .route(
+            "/api/games/steam-library/browse",
+            get(browse_steam_library),
+        )
+        .route("/api/games/custom", post(add_custom_game))
+        .route("/api/games/custom/:game_id", delete(remove_custom_game))
         .route("/api/effects/current", get(get_current_effect))
         .route("/api/profile-resolution", get(get_profile_resolution))
         .route(
@@ -8630,10 +8996,14 @@ pub async fn serve(addr: SocketAddr) -> anyhow::Result<()> {
     init_tracing();
     let listener = TcpListener::bind(addr).await?;
     let state = hid_agent_state().with_bind_addr(addr);
-    tokio::spawn(forza_data_out_loop(
-        state.clone(),
-        resolve_forza_bind_addr(),
-    ));
+    for adapter in built_in_udp_adapters() {
+        let bind_addr = udp_adapter_bind_addr(adapter);
+        tokio::spawn(udp_telemetry_adapter_loop(
+            state.clone(),
+            *adapter,
+            bind_addr,
+        ));
+    }
     tokio::spawn(output_watchdog_loop(
         state.clone(),
         Duration::from_millis(250),
@@ -8694,27 +9064,6 @@ fn hid_agent_state() -> AgentState {
     }
 }
 
-fn configured_output_mode() -> OutputMode {
-    if env_flag("DSCC_DISABLE_HARDWARE_OUTPUT").unwrap_or(false) {
-        OutputMode::DryRunHid
-    } else if let Some(enabled) = env_flag("DSCC_ENABLE_HARDWARE_OUTPUT") {
-        if enabled {
-            OutputMode::HardwareOutput
-        } else {
-            OutputMode::DryRunHid
-        }
-    } else {
-        OutputMode::HardwareOutput
-    }
-}
-
-fn env_flag(name: &str) -> Option<bool> {
-    std::env::var(name).ok().map(|value| {
-        let normalized = value.trim().to_ascii_lowercase();
-        matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
-    })
-}
-
 async fn device_scan_loop<T>(
     state: AgentState,
     mut manager: DeviceManager<T>,
@@ -8761,15 +9110,20 @@ async fn output_watchdog_loop(state: AgentState, interval_duration: Duration) {
         let should_send_neutral = {
             let inner = state.inner.read().await;
             let now = Instant::now();
-            let live = inner.forza_runtime.has_recent_packet(now);
+            let live = inner
+                .require_adapter_runtime(FORZA_DATA_OUT_ADAPTER_ID)
+                .has_recent_packet(now);
             if live || forza_still_running {
                 neutral_sent_for_stale_stream = false;
                 false
             } else {
-                inner.forza_runtime.packet_count > 0
+                inner
+                    .require_adapter_runtime(FORZA_DATA_OUT_ADAPTER_ID)
+                    .packet_count
+                    > 0
                     && !neutral_sent_for_stale_stream
-                    && (inner.active_integration_id.as_deref() == Some("forza-data-out")
-                        || inner.telemetry.text("source.id") == Some("forza-data-out"))
+                    && (inner.active_adapter_id.as_deref() == Some(FORZA_DATA_OUT_ADAPTER_ID)
+                        || inner.telemetry.text("source.id") == Some(FORZA_DATA_OUT_ADAPTER_ID))
             }
         };
 
@@ -8839,17 +9193,31 @@ async fn hardware_output_loop(state: AgentState, interval_duration: Duration) {
     }
 }
 
-async fn forza_data_out_loop(state: AgentState, bind_addr: SocketAddr) {
+fn udp_adapter_bind_addr(adapter: &UdpTelemetryAdapter) -> SocketAddr {
+    match adapter.id {
+        FORZA_DATA_OUT_ADAPTER_ID => resolve_forza_bind_addr(),
+        _ => SocketAddr::from(([127, 0, 0, 1], adapter.default_port)),
+    }
+}
+
+async fn udp_telemetry_adapter_loop(
+    state: AgentState,
+    adapter: UdpTelemetryAdapter,
+    bind_addr: SocketAddr,
+) {
     let socket = match UdpSocket::bind(bind_addr).await {
         Ok(socket) => socket,
         Err(error) => {
             let mut inner = state.inner.write().await;
             inner
-                .forza_runtime
+                .adapter_runtime_mut(adapter.id)
                 .mark_bind_error(bind_addr, error.to_string());
             inner.logs.push(LogEntry {
                 level: "warn".to_string(),
-                message: format!("Forza Data Out listener could not bind {bind_addr}: {error}"),
+                message: format!(
+                    "{} listener could not bind {bind_addr}: {error}",
+                    adapter.display_name
+                ),
                 timestamp: current_timestamp(),
             });
             return;
@@ -8858,10 +9226,10 @@ async fn forza_data_out_loop(state: AgentState, bind_addr: SocketAddr) {
 
     {
         let mut inner = state.inner.write().await;
-        inner.forza_runtime.mark_bound(bind_addr);
+        inner.adapter_runtime_mut(adapter.id).mark_bound(bind_addr);
         inner.logs.push(LogEntry {
             level: "info".to_string(),
-            message: format!("Forza Data Out listener ready on {bind_addr}"),
+            message: format!("{} listener ready on {bind_addr}", adapter.display_name),
             timestamp: current_timestamp(),
         });
     }
@@ -8875,26 +9243,35 @@ async fn forza_data_out_loop(state: AgentState, bind_addr: SocketAddr) {
                 sequence = sequence.saturating_add(1);
                 let now = Instant::now();
                 if last_processed_at
-                    .is_some_and(|last| now.duration_since(last) < FORZA_TELEMETRY_PROCESS_INTERVAL)
+                    .is_some_and(|last| now.duration_since(last) < UDP_TELEMETRY_PROCESS_INTERVAL)
                 {
                     continue;
                 }
                 last_processed_at = Some(now);
-                if let Some(parsed) = parse_forza_data_out_packet(&buffer[..len], sequence) {
+                if let Some(parsed) =
+                    parse_udp_telemetry_packet(adapter.id, &buffer[..len], sequence)
+                {
                     state
-                        .apply_forza_packet(parsed.packet_len, sequence, parsed.updates)
+                        .apply_adapter_packet(
+                            parsed.adapter_id,
+                            parsed.packet_len,
+                            sequence,
+                            parsed.updates,
+                        )
                         .await;
                 } else {
                     let mut inner = state.inner.write().await;
-                    inner.forza_runtime.mark_parse_error(len, sequence);
+                    inner
+                        .adapter_runtime_mut(adapter.id)
+                        .mark_parse_error(len, sequence);
                 }
             }
             Err(error) => {
                 let mut inner = state.inner.write().await;
-                inner.forza_runtime.last_error = Some(error.to_string());
+                inner.adapter_runtime_mut(adapter.id).last_error = Some(error.to_string());
                 inner.logs.push(LogEntry {
                     level: "warn".to_string(),
-                    message: format!("Forza Data Out listener read failed: {error}"),
+                    message: format!("{} listener read failed: {error}", adapter.display_name),
                     timestamp: current_timestamp(),
                 });
             }
@@ -8937,273 +9314,6 @@ fn web_dist_dir() -> PathBuf {
     PathBuf::from("web/dist")
 }
 
-fn default_forza_horizon6_install_path() -> PathBuf {
-    std::env::var_os("DSCC_FORZA_HORIZON6_INSTALL_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(FORZA_HORIZON6_DEFAULT_INSTALL_PATH))
-}
-
-fn resolve_forza_horizon6_install_path(path: Option<&str>) -> PathBuf {
-    path.map(str::trim)
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(default_forza_horizon6_install_path)
-}
-
-fn forza_controller_icon_targets(root: &FsPath) -> [PathBuf; 2] {
-    [
-        root.join("media")
-            .join("UI")
-            .join("Textures")
-            .join("Data_Bound")
-            .join("ControllerIcons.zip"),
-        root.join("media")
-            .join("UI")
-            .join("Textures")
-            .join("HiRes")
-            .join("Data_Bound")
-            .join("ControllerIcons.zip"),
-    ]
-}
-
-fn forza_controller_icon_backup_path(target: &FsPath) -> PathBuf {
-    target.with_extension("zip.dscc-xbox-backup")
-}
-
-fn file_matches_bytes(path: &FsPath, expected: &[u8]) -> io::Result<bool> {
-    match fs::read(path) {
-        Ok(bytes) => Ok(bytes == expected),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error),
-    }
-}
-
-fn path_exists(path: &FsPath) -> io::Result<bool> {
-    path.try_exists()
-}
-
-fn canonical_forza_install_root(root: PathBuf) -> io::Result<PathBuf> {
-    let root = fs::canonicalize(root)?;
-    if root.is_dir() {
-        Ok(root)
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Forza Horizon 6 folder was not found at {}", root.display()),
-        ))
-    }
-}
-
-fn trusted_forza_horizon6_install_path(
-    configured_path: Option<PathBuf>,
-    steam_path: Option<PathBuf>,
-) -> PathBuf {
-    if let Some(steam_path) = steam_path {
-        return steam_path;
-    }
-
-    let default_path = default_forza_horizon6_install_path();
-    if configured_path
-        .as_ref()
-        .and_then(|path| fs::canonicalize(path).ok())
-        .zip(fs::canonicalize(&default_path).ok())
-        .is_some_and(|(configured, default)| configured == default)
-    {
-        return configured_path.expect("configured path was checked above");
-    }
-
-    default_path
-}
-
-fn ensure_forza_icon_target_is_safe(root: &FsPath, target: &FsPath) -> io::Result<()> {
-    if !target.starts_with(root) {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            format!(
-                "Refusing to write outside Forza Horizon 6 root: {}",
-                target.display()
-            ),
-        ));
-    }
-
-    if let Some(mut ancestor) = target.parent() {
-        while !ancestor.exists() {
-            ancestor = ancestor.parent().ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    format!(
-                        "Refusing to write outside Forza Horizon 6 root: {}",
-                        target.display()
-                    ),
-                )
-            })?;
-        }
-
-        let canonical_ancestor = fs::canonicalize(ancestor)?;
-        if !canonical_ancestor.starts_with(root) {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                format!(
-                    "Refusing to follow redirected Forza glyph folder: {}",
-                    ancestor.display()
-                ),
-            ));
-        }
-    }
-
-    Ok(())
-}
-
-fn install_forza_playstation_glyphs(root: PathBuf) -> io::Result<String> {
-    let root = canonical_forza_install_root(root)?;
-    let mut backup_actions = Vec::new();
-    let mut install_targets = Vec::new();
-
-    for target in forza_controller_icon_targets(&root) {
-        ensure_forza_icon_target_is_safe(&root, &target)?;
-        let backup = forza_controller_icon_backup_path(&target);
-        let target_exists = path_exists(&target)?;
-        let backup_exists = path_exists(&backup)?;
-        let target_already_playstation =
-            file_matches_bytes(&target, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP)?;
-        let backup_is_playstation =
-            file_matches_bytes(&backup, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP)?;
-
-        if target_exists && !target_already_playstation {
-            backup_actions.push((target.clone(), backup));
-            install_targets.push(target);
-            continue;
-        }
-
-        if backup_exists && !backup_is_playstation {
-            install_targets.push(target);
-            continue;
-        }
-
-        if target_already_playstation {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "PlayStation glyphs are already present at {}, but DSCC does not have a saved original to restore. Verify the game files once, then enable the override again.",
-                    target.display()
-                ),
-            ));
-        }
-
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!(
-                "ControllerIcons.zip was not found at {}. DSCC will not install PlayStation glyphs until it can save the original game file first.",
-                target.display()
-            ),
-        ));
-    }
-
-    for (target, backup) in backup_actions {
-        if let Some(parent) = backup.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::copy(target, backup)?;
-    }
-
-    for target in install_targets {
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let temp = target.with_extension("zip.dscc-new");
-        fs::write(&temp, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP)?;
-        if path_exists(&target)? {
-            fs::remove_file(&target)?;
-        }
-        fs::rename(temp, target)?;
-    }
-
-    Ok(format!(
-        "PlayStation button glyphs installed for Forza Horizon 6 at {}.",
-        root.display()
-    ))
-}
-
-fn restore_forza_original_glyphs(root: PathBuf) -> io::Result<String> {
-    let root = canonical_forza_install_root(root)?;
-
-    let mut restore_actions = Vec::new();
-    let mut invalid_backups = 0usize;
-    let mut unbacked_playstation_files = Vec::new();
-    for target in forza_controller_icon_targets(&root) {
-        ensure_forza_icon_target_is_safe(&root, &target)?;
-        let backup = forza_controller_icon_backup_path(&target);
-        let backup_exists = path_exists(&backup)?;
-        let backup_is_playstation =
-            file_matches_bytes(&backup, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP)?;
-        let target_is_playstation =
-            file_matches_bytes(&target, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP)?;
-
-        if backup_exists && backup_is_playstation {
-            invalid_backups += 1;
-            continue;
-        }
-
-        if backup_exists {
-            restore_actions.push((target, backup));
-            continue;
-        }
-
-        if target_is_playstation {
-            unbacked_playstation_files.push(target);
-        }
-    }
-
-    if invalid_backups > 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "DSCC found {invalid_backups} glyph backup file{} that already contain PlayStation icons. Verify the game files once, then enable the override again so DSCC can capture the original Xbox files.",
-                if invalid_backups == 1 { "" } else { "s" }
-            ),
-        ));
-    }
-
-    if !unbacked_playstation_files.is_empty() {
-        let target_list = unbacked_playstation_files
-            .iter()
-            .map(|target| target.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "DSCC found PlayStation glyph files without saved originals at {target_list}. Verify the game files once, then enable the override again so DSCC can capture the original Xbox files."
-            ),
-        ));
-    }
-
-    if restore_actions.is_empty() {
-        return Ok(
-            "Forza Horizon 6 button glyphs are already using the game defaults.".to_string(),
-        );
-    }
-
-    let mut restored = 0usize;
-    for (target, backup) in restore_actions {
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let temp = target.with_extension("zip.dscc-restore");
-        fs::copy(&backup, &temp)?;
-        if path_exists(&target)? {
-            fs::remove_file(&target)?;
-        }
-        fs::rename(temp, target)?;
-        restored += 1;
-    }
-
-    Ok(format!(
-        "Restored {restored} original Forza Horizon 6 button glyph file{}.",
-        if restored == 1 { "" } else { "s" }
-    ))
-}
-
 async fn get_status(State(state): State<AgentState>) -> Json<StatusResponse> {
     let game_detection = state.cached_game_detection().await;
     Json(state.status_with_detection(Some(&game_detection)).await)
@@ -9217,7 +9327,16 @@ async fn get_app_settings(State(state): State<AgentState>) -> Json<AppSettingsRe
 async fn update_app_settings(
     State(state): State<AgentState>,
     Json(request): Json<UpdateAppSettingsRequest>,
-) -> Json<AppSettingsResponse> {
+) -> Result<Json<AppSettingsResponse>, (StatusCode, String)> {
+    if request.listen_on_all_interfaces == Some(true) && !lan_api_enabled() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!(
+                "LAN API access requires explicit opt-in. Set {LAN_API_ENABLE_ENV}=1 before enabling all-interface binding."
+            ),
+        ));
+    }
+
     let glyph_result = if let Some(glyphs) = request.forza_playstation_glyphs.clone() {
         let persisted_install_path = {
             let inner = state.inner.read().await;
@@ -9296,7 +9415,7 @@ async fn update_app_settings(
         controller: None,
         message: Some("app-settings-updated".to_string()),
     });
-    Json(response)
+    Ok(Json(response))
 }
 
 async fn get_snapshot(State(state): State<AgentState>) -> Json<AgentSnapshotResponse> {
@@ -9305,7 +9424,10 @@ async fn get_snapshot(State(state): State<AgentState>) -> Json<AgentSnapshotResp
 
 async fn list_controllers(State(state): State<AgentState>) -> Json<Vec<ControllerSummary>> {
     let inner = state.inner.read().await;
-    Json(inner.controllers.summaries())
+    Json(apply_controller_names(
+        inner.controllers.summaries(),
+        &inner.controller_names,
+    ))
 }
 
 async fn get_controller(
@@ -9316,8 +9438,38 @@ async fn get_controller(
     inner
         .controllers
         .detail(&id)
+        .map(|detail| apply_controller_name(detail, &inner.controller_names))
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)
+}
+
+async fn update_controller(
+    Path(id): Path<String>,
+    State(state): State<AgentState>,
+    Json(request): Json<UpdateControllerRequest>,
+) -> Result<Json<ControllerDetail>, StatusCode> {
+    let name = normalize_controller_display_name(&request.name).ok_or(StatusCode::BAD_REQUEST)?;
+    let (detail, to_save) = {
+        let mut inner = state.inner.write().await;
+        let detail = inner.controllers.detail(&id).ok_or(StatusCode::NOT_FOUND)?;
+        inner.controller_names.insert(id.clone(), name.clone());
+        inner.logs.push(LogEntry {
+            level: "info".to_string(),
+            message: format!("Controller {id} renamed to {name}"),
+            timestamp: current_timestamp(),
+        });
+        (
+            apply_controller_name(detail, &inner.controller_names),
+            build_persist_snapshot(&inner),
+        )
+    };
+    persist_snapshot(&state, to_save).await;
+    let _ = state.event_tx.send(RealtimeMessage {
+        kind: "snapshot_invalidated".to_string(),
+        controller: None,
+        message: Some("controller-renamed".to_string()),
+    });
+    Ok(Json(detail))
 }
 
 async fn get_controller_config(
@@ -9754,6 +9906,7 @@ async fn create_profile(
     let (profile, to_save) = {
         let mut inner = state.inner.write().await;
         let id = slugify(&request.name);
+        let game_id = normalize_optional_profile_game_id(request.game_id);
         if inner.profiles.iter().any(|profile| profile.id == id) {
             return (
                 StatusCode::CONFLICT,
@@ -9762,6 +9915,7 @@ async fn create_profile(
                     name: request.name,
                     built_in: false,
                     active: false,
+                    game_id,
                 }),
             );
         }
@@ -9771,6 +9925,7 @@ async fn create_profile(
             name: request.name,
             built_in: false,
             active: false,
+            game_id,
         };
         inner.profiles.push(profile.clone());
         inner.effect_revision = inner.effect_revision.saturating_add(1);
@@ -9813,29 +9968,35 @@ async fn export_profile(
         name: profile.name,
         built_in: profile.built_in,
         active: profile.active,
+        game_id: profile.game_id,
     }))
 }
 
 async fn import_profile(
     State(state): State<AgentState>,
     Json(request): Json<ImportProfileRequest>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, StatusCode> {
+    if request.schema != "dev.dscc.profile.v1" {
+        return Err(StatusCode::BAD_REQUEST);
+    }
     let (profile, to_save) = {
         let mut inner = state.inner.write().await;
         let mut id = request.id.unwrap_or_else(|| slugify(&request.name));
+        let game_id = normalize_optional_profile_game_id(request.game_id);
         if id.trim().is_empty() {
             id = slugify(&request.name);
         }
         if inner.profiles.iter().any(|profile| profile.id == id) {
-            return (
+            return Ok((
                 StatusCode::CONFLICT,
                 Json(ProfileSummary {
                     id,
                     name: request.name,
                     built_in: false,
                     active: false,
+                    game_id,
                 }),
-            );
+            ));
         }
 
         let profile = ProfileSummary {
@@ -9843,6 +10004,7 @@ async fn import_profile(
             name: request.name,
             built_in: false,
             active: false,
+            game_id,
         };
         if let Some(config) = request.config {
             inner.profile_configs.insert(profile.id.clone(), config);
@@ -9852,7 +10014,7 @@ async fn import_profile(
         (profile, build_persist_snapshot(&inner))
     };
     persist_snapshot(&state, to_save).await;
-    (StatusCode::CREATED, Json(profile))
+    Ok((StatusCode::CREATED, Json(profile)))
 }
 
 async fn update_profile(
@@ -10068,37 +10230,37 @@ async fn activate_profile(
     }))
 }
 
-async fn list_integrations(State(state): State<AgentState>) -> Json<Vec<IntegrationSummary>> {
+async fn list_adapters(State(state): State<AgentState>) -> Json<Vec<AdapterSummary>> {
     let game_detection = state.cached_game_detection().await;
     let inner = state.inner.read().await;
-    Json(materialized_integrations(&inner, Some(&game_detection)))
+    Json(materialized_adapters(&inner, Some(&game_detection)))
 }
 
-async fn update_integration(
+async fn update_adapter(
     Path(id): Path<String>,
     State(state): State<AgentState>,
-    Json(request): Json<UpdateIntegrationRequest>,
-) -> Result<Json<IntegrationSummary>, StatusCode> {
+    Json(request): Json<UpdateAdapterRequest>,
+) -> Result<Json<AdapterSummary>, StatusCode> {
     let game_detection = state.cached_game_detection().await;
     let (updated, to_save) = {
         let mut inner = state.inner.write().await;
-        let integration = inner
-            .integrations
+        let adapter = inner
+            .adapters
             .iter_mut()
-            .find(|integration| integration.id == id)
+            .find(|adapter| adapter.id == id)
             .ok_or(StatusCode::NOT_FOUND)?;
 
-        integration.enabled = request.enabled;
-        integration.state = if request.enabled {
+        adapter.enabled = request.enabled;
+        adapter.state = if request.enabled {
             "needs_setup".to_string()
         } else {
             "disabled".to_string()
         };
-        let mut updated = integration.clone();
-        if updated.id == "forza-data-out" {
-            apply_forza_runtime_summary(
+        let mut updated = adapter.clone();
+        if let Some(runtime) = inner.adapter_runtime(&updated.id) {
+            apply_adapter_runtime_summary(
                 &mut updated,
-                &inner.forza_runtime,
+                runtime,
                 Some(&game_detection),
                 Instant::now(),
             );
@@ -10175,6 +10337,371 @@ async fn get_game_art(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .map_err(|_| StatusCode::NOT_FOUND)?;
     Ok(([(header::CONTENT_TYPE, content_type)], bytes))
+}
+
+/// Serves a single artwork file out of Steam's local librarycache, keyed by the
+/// numeric `app_id`. This is what `user_game_artwork_for_app` points its URLs
+/// at — many Steam apps lack public CDN capsules but always have the local
+/// renders Steam uses in-client.
+async fn get_steam_app_art(
+    Path((app_id, kind)): Path<(String, String)>,
+) -> Result<impl IntoResponse, StatusCode> {
+    if !["icon", "banner", "hero", "capsule"].contains(&kind.as_str()) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    // app_id must be purely digits — guards against path traversal and tells us
+    // the request is for a real Steam manifest, not an arbitrary string.
+    if app_id.is_empty() || !app_id.chars().all(|ch| ch.is_ascii_digit()) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let path = tokio::task::spawn_blocking(move || {
+        steam_root_candidates()
+            .into_iter()
+            .find(|root| root.join("steamapps").is_dir() || root.join("steam.exe").is_file())
+            .and_then(|root| {
+                discover_steam_artwork_paths(&root, &app_id)
+                    .remove(&kind)
+                    .filter(|path| steam_artwork_file_usable(path))
+            })
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .ok_or(StatusCode::NOT_FOUND)?;
+
+    let content_type = artwork_content_type(&path);
+    let bytes = tokio::task::spawn_blocking(move || fs::read(path))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    Ok(([(header::CONTENT_TYPE, content_type)], bytes))
+}
+
+async fn list_steam_library(State(state): State<AgentState>) -> Json<SteamLibraryListResponse> {
+    let user_games = {
+        let inner = state.inner.read().await;
+        inner.user_games.clone()
+    };
+    let games = tokio::task::spawn_blocking(move || discover_steam_library_entries(&user_games))
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "Steam library discovery task failed");
+            Vec::new()
+        });
+    Json(SteamLibraryListResponse { games })
+}
+
+/// Maximum entries returned by a single browse request. Larger directories are
+/// truncated and the response sets `truncated: true` so the UI can warn.
+const STEAM_LIBRARY_BROWSE_LIMIT: usize = 400;
+
+/// Sandboxed directory listing for a Steam-installed game. The endpoint never
+/// resolves outside the game's install path; it confirms the resolved path is
+/// a prefix-equal of the install root after canonicalisation, so symlinks and
+/// `..` traversal can't escape the game folder.
+async fn browse_steam_library(
+    Query(params): Query<BrowseSteamLibraryParams>,
+) -> Result<Json<SteamLibraryBrowseResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let app_id = params.app_id.trim().to_string();
+    if app_id.is_empty() || !app_id.chars().all(|ch| ch.is_ascii_digit()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "appId must be a numeric Steam app id"})),
+        ));
+    }
+
+    let requested_rel = params.path.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let Some(manifest) = locate_steam_manifest(&app_id) else {
+            return Err(BrowseError::NotFound);
+        };
+        let install_root = manifest
+            .install_path
+            .canonicalize()
+            .map_err(|_| BrowseError::NotFound)?;
+        let target = resolve_browse_target(&install_root, &requested_rel)?;
+        if !target.is_dir() {
+            return Err(BrowseError::NotADirectory);
+        }
+        let (entries, truncated) = read_browse_entries(&target);
+        let relative_path = path_relative_to(&install_root, &target);
+        Ok(SteamLibraryBrowseResponse {
+            app_id: manifest.app_id,
+            install_path: install_root.display().to_string(),
+            relative_path,
+            entries,
+            truncated,
+        })
+    })
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "directory scan task failed"})),
+        )
+    })?;
+
+    match result {
+        Ok(response) => Ok(Json(response)),
+        Err(BrowseError::NotFound) => Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "Steam app manifest or install folder not found"})),
+        )),
+        Err(BrowseError::OutsideRoot) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(
+                serde_json::json!({"error": "path escapes the install folder (rejected)"}),
+            ),
+        )),
+        Err(BrowseError::NotADirectory) => Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "requested path is not a directory"})),
+        )),
+    }
+}
+
+enum BrowseError {
+    NotFound,
+    OutsideRoot,
+    NotADirectory,
+}
+
+/// Resolves `relative` against `root` and asserts the canonical result is
+/// under `root`. Empty/whitespace relative paths return `root` itself. Forward
+/// or backward slashes are accepted; `..` segments are blocked.
+fn resolve_browse_target(root: &FsPath, relative: &str) -> Result<PathBuf, BrowseError> {
+    let trimmed = relative.trim().trim_start_matches(['/', '\\']);
+    if trimmed.is_empty() {
+        return Ok(root.to_path_buf());
+    }
+    let mut combined = root.to_path_buf();
+    for segment in trimmed.split(['/', '\\']) {
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment == ".." || segment.contains('\0') {
+            return Err(BrowseError::OutsideRoot);
+        }
+        combined.push(segment);
+    }
+    let canonical = combined.canonicalize().map_err(|_| BrowseError::NotFound)?;
+    if !canonical.starts_with(root) {
+        return Err(BrowseError::OutsideRoot);
+    }
+    Ok(canonical)
+}
+
+/// Returns the forward-slashed path of `target` relative to `root`, or an
+/// empty string if they are equal. Caller has already confirmed `target` is
+/// inside `root`.
+fn path_relative_to(root: &FsPath, target: &FsPath) -> String {
+    target
+        .strip_prefix(root)
+        .map(|rel| {
+            rel.components()
+                .filter_map(|component| component.as_os_str().to_str().map(String::from))
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .unwrap_or_default()
+}
+
+fn read_browse_entries(dir: &FsPath) -> (Vec<SteamLibraryBrowseEntry>, bool) {
+    let Ok(read_dir) = fs::read_dir(dir) else {
+        return (Vec::new(), false);
+    };
+
+    let mut dirs: Vec<SteamLibraryBrowseEntry> = Vec::new();
+    let mut exes: Vec<SteamLibraryBrowseEntry> = Vec::new();
+    let mut truncated = false;
+
+    for entry in read_dir.flatten() {
+        if dirs.len() + exes.len() >= STEAM_LIBRARY_BROWSE_LIMIT {
+            truncated = true;
+            break;
+        }
+        let Some(name) = entry.file_name().to_str().map(String::from) else {
+            continue;
+        };
+        // Hide dotfiles and the Steam-managed sentinel files; the user is
+        // never going to pick those as a launch executable.
+        if name.starts_with('.') || name.eq_ignore_ascii_case("steam_appid.txt") {
+            continue;
+        }
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            dirs.push(SteamLibraryBrowseEntry {
+                name,
+                kind: "dir".to_string(),
+                size_bytes: None,
+            });
+        } else if file_type.is_file() && name.to_ascii_lowercase().ends_with(".exe") {
+            let size_bytes = entry.metadata().ok().map(|metadata| metadata.len());
+            exes.push(SteamLibraryBrowseEntry {
+                name,
+                kind: "exe".to_string(),
+                size_bytes,
+            });
+        }
+    }
+
+    dirs.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
+    exes.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
+
+    let mut combined = dirs;
+    combined.extend(exes);
+    (combined, truncated)
+}
+
+async fn add_custom_game(
+    State(state): State<AgentState>,
+    Json(request): Json<AddUserGameRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let app_id = request.app_id.trim().to_string();
+    if app_id.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "appId is required"})),
+        ));
+    }
+
+    let game_id = user_game_id_for_app_id(&app_id);
+    if built_in_game_modules()
+        .iter()
+        .any(|module| module.id == game_id)
+    {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "A built-in module already covers this gameId",
+                "gameId": game_id,
+            })),
+        ));
+    }
+
+    // Look up Steam manifest first (outside any lock; this hits the disk).
+    let manifest_lookup_app_id = app_id.clone();
+    let manifest =
+        tokio::task::spawn_blocking(move || locate_steam_manifest(&manifest_lookup_app_id))
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "Steam manifest lookup task failed");
+                None
+            });
+    let Some(manifest) = manifest else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "Steam app manifest not found",
+                "appId": app_id,
+            })),
+        ));
+    };
+
+    // If the client supplied explicit process names, trust them; otherwise scan
+    // the install dir. The override path is the escape hatch for games whose
+    // .exe lives in a subfolder or is named oddly.
+    let process_names = if !request.process_names.is_empty() {
+        sanitize_user_game_process_names(&request.process_names)
+    } else {
+        let process_candidates_path = manifest.install_path.clone();
+        tokio::task::spawn_blocking(move || {
+            discover_user_game_process_candidates(&process_candidates_path)
+        })
+        .await
+        .unwrap_or_default()
+    };
+
+    let added_at = current_timestamp();
+    let new_game = UserGameConfig {
+        game_id: game_id.clone(),
+        app_id: manifest.app_id.clone(),
+        name: manifest.name.clone(),
+        install_dir: manifest.install_dir.clone(),
+        install_path: manifest.install_path.display().to_string(),
+        process_names,
+        added_at,
+    };
+
+    let (summary, to_save) = {
+        let mut inner = state.inner.write().await;
+        if inner.user_games.contains_key(&game_id) {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": "Game already registered",
+                    "gameId": game_id,
+                })),
+            ));
+        }
+        inner.user_games.insert(game_id.clone(), new_game.clone());
+        inner.logs.push(LogEntry {
+            level: "info".to_string(),
+            message: format!(
+                "Registered custom Steam game {} ({} processes)",
+                new_game.name,
+                new_game.process_names.len()
+            ),
+            timestamp: current_timestamp(),
+        });
+        inner.effect_revision = inner.effect_revision.saturating_add(1);
+        let summary = user_game_to_supported_summary(&new_game, None, SteamGameStats::default());
+        (summary, build_persist_snapshot(&inner))
+    };
+    persist_snapshot(&state, to_save).await;
+    // Invalidate the detection cache so the new game shows up immediately.
+    {
+        let mut cache = state.discovery_cache.game_detection.lock().await;
+        cache.value = None;
+        cache.refreshed_at = None;
+    }
+    let _ = state.event_tx.send(RealtimeMessage {
+        kind: "snapshot_invalidated".to_string(),
+        controller: None,
+        message: Some("user-game-added".to_string()),
+    });
+
+    Ok((
+        StatusCode::CREATED,
+        Json(AddUserGameResponse { game: summary }),
+    ))
+}
+
+async fn remove_custom_game(
+    Path(game_id): Path<String>,
+    State(state): State<AgentState>,
+) -> Result<StatusCode, StatusCode> {
+    let to_save = {
+        let mut inner = state.inner.write().await;
+        if inner.user_games.remove(&game_id).is_none() {
+            return Err(StatusCode::NOT_FOUND);
+        }
+        inner.logs.push(LogEntry {
+            level: "info".to_string(),
+            message: format!("Removed custom game {game_id}"),
+            timestamp: current_timestamp(),
+        });
+        inner.effect_revision = inner.effect_revision.saturating_add(1);
+        if inner.auto_loaded_profile_id.is_some() {
+            // The detection cache is invalidated below; auto-loaded profile
+            // re-resolves on the next snapshot pass.
+        }
+        build_persist_snapshot(&inner)
+    };
+    persist_snapshot(&state, to_save).await;
+    {
+        let mut cache = state.discovery_cache.game_detection.lock().await;
+        cache.value = None;
+        cache.refreshed_at = None;
+    }
+    let _ = state.event_tx.send(RealtimeMessage {
+        kind: "snapshot_invalidated".to_string(),
+        controller: None,
+        message: Some("user-game-removed".to_string()),
+    });
+    Ok(StatusCode::NO_CONTENT)
 }
 
 fn artwork_content_type(path: &FsPath) -> &'static str {
@@ -10358,12 +10885,74 @@ fn slugify(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game_modules::{FORZA_HORIZON5_STEAM_APP_ID, FORZA_HORIZON6_STEAM_APP_ID};
     use axum::{
         body::{to_bytes, Body},
         http::{Method, Request},
     };
     use serde::de::DeserializeOwned;
+    use std::sync::Mutex as StdMutex;
     use tower::ServiceExt;
+
+    static TEST_ENV_LOCK: StdMutex<()> = StdMutex::new(());
+
+    struct TestEnv {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
+
+    impl TestEnv {
+        fn new(names: &[&'static str]) -> Self {
+            let lock = TEST_ENV_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let saved = names
+                .iter()
+                .map(|name| (*name, std::env::var_os(name)))
+                .collect();
+            Self { _lock: lock, saved }
+        }
+    }
+
+    impl Drop for TestEnv {
+        fn drop(&mut self) {
+            for (name, value) in &self.saved {
+                if let Some(value) = value {
+                    std::env::set_var(name, value);
+                } else {
+                    std::env::remove_var(name);
+                }
+            }
+        }
+    }
+
+    fn temp_test_dir(prefix: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "{prefix}-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ))
+    }
+
+    fn test_udp_adapter_runtime() -> AdapterRuntime {
+        let adapter = built_in_udp_adapters()
+            .iter()
+            .find(|adapter| adapter.id == FORZA_DATA_OUT_ADAPTER_ID)
+            .copied()
+            .expect("Forza UDP adapter is registered");
+        AdapterRuntime::for_udp_adapter(adapter)
+    }
+
+    fn test_forza_effect_runtime() -> ForzaEffectRuntime {
+        ForzaEffectRuntime::default()
+    }
+
+    fn test_game_module_by_id(id: &str) -> &'static GameModule {
+        built_in_game_modules()
+            .iter()
+            .find(|game| game.id == id)
+            .expect("built-in game module exists")
+    }
 
     fn forza_horizon_controller_config() -> ControllerConfig {
         let mut config = ControllerConfig::default_for("edge-forza", "DualSense Edge");
@@ -10392,6 +10981,140 @@ mod tests {
             status.active_profile_id.as_deref(),
             Some(DEFAULT_PROFILE_ID)
         );
+    }
+
+    #[tokio::test]
+    async fn cross_origin_mutations_are_rejected() {
+        let response = app(AgentState::mock())
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/app-settings")
+                    .header("host", "127.0.0.1:43473")
+                    .header("origin", "http://evil.example")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"listenOnAllInterfaces":false}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn cross_origin_websocket_origin_guard_rejects_host_mismatch() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, "127.0.0.1:43473".parse().unwrap());
+        headers.insert(header::ORIGIN, "http://evil.example".parse().unwrap());
+
+        assert!(!request_origin_matches_host(&headers));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn lan_api_mode_requires_explicit_opt_in() {
+        let _env = TestEnv::new(&[LAN_API_ENABLE_ENV]);
+        std::env::remove_var(LAN_API_ENABLE_ENV);
+
+        let response = app(AgentState::mock())
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/app-settings")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"listenOnAllInterfaces":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn agent_bind_addr_ignores_non_loopback_without_lan_opt_in() {
+        let config_dir = temp_test_dir("dscc-agent-bind-config");
+        fs::create_dir_all(&config_dir).expect("temp config dir");
+        let _env = TestEnv::new(&["DSCC_AGENT_ADDR", "DSCC_CONFIG_DIR", LAN_API_ENABLE_ENV]);
+        std::env::set_var("DSCC_AGENT_ADDR", "0.0.0.0:43474");
+        std::env::set_var("DSCC_CONFIG_DIR", &config_dir);
+        std::env::remove_var(LAN_API_ENABLE_ENV);
+
+        assert_eq!(resolve_agent_bind_addr(), default_agent_bind_addr());
+
+        let _ = fs::remove_dir_all(config_dir);
+    }
+
+    #[test]
+    fn agent_bind_addr_allows_non_loopback_with_lan_opt_in() {
+        let _env = TestEnv::new(&["DSCC_AGENT_ADDR", LAN_API_ENABLE_ENV]);
+        std::env::set_var("DSCC_AGENT_ADDR", "0.0.0.0:43474");
+        std::env::set_var(LAN_API_ENABLE_ENV, "1");
+
+        assert_eq!(
+            resolve_agent_bind_addr(),
+            "0.0.0.0:43474".parse::<SocketAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn forza_bind_addr_ignores_non_loopback_without_lan_opt_in() {
+        let _env = TestEnv::new(&[FORZA_BIND_ADDR_ENV, FORZA_LAN_ENABLE_ENV]);
+        std::env::set_var(FORZA_BIND_ADDR_ENV, "0.0.0.0:5300");
+        std::env::remove_var(FORZA_LAN_ENABLE_ENV);
+
+        assert_eq!(
+            resolve_forza_bind_addr(),
+            DEFAULT_FORZA_BIND_ADDR.parse::<SocketAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn forza_bind_addr_allows_non_loopback_with_lan_opt_in() {
+        let _env = TestEnv::new(&[FORZA_BIND_ADDR_ENV, FORZA_LAN_ENABLE_ENV]);
+        std::env::set_var(FORZA_BIND_ADDR_ENV, "0.0.0.0:5301");
+        std::env::set_var(FORZA_LAN_ENABLE_ENV, "true");
+
+        assert_eq!(
+            resolve_forza_bind_addr(),
+            "0.0.0.0:5301".parse::<SocketAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn hardware_output_mode_defaults_to_hardware_output() {
+        let _env = TestEnv::new(&[
+            "DSCC_DISABLE_HARDWARE_OUTPUT",
+            "DSCC_ENABLE_HARDWARE_OUTPUT",
+        ]);
+        std::env::remove_var("DSCC_DISABLE_HARDWARE_OUTPUT");
+        std::env::remove_var("DSCC_ENABLE_HARDWARE_OUTPUT");
+
+        assert_eq!(configured_output_mode(), OutputMode::HardwareOutput);
+    }
+
+    #[test]
+    fn hardware_output_mode_disable_env_wins_over_enable_env() {
+        let _env = TestEnv::new(&[
+            "DSCC_DISABLE_HARDWARE_OUTPUT",
+            "DSCC_ENABLE_HARDWARE_OUTPUT",
+        ]);
+        std::env::set_var("DSCC_DISABLE_HARDWARE_OUTPUT", "1");
+        std::env::set_var("DSCC_ENABLE_HARDWARE_OUTPUT", "1");
+
+        assert_eq!(configured_output_mode(), OutputMode::DryRunHid);
+    }
+
+    #[test]
+    fn hardware_output_mode_enable_zero_selects_dry_run() {
+        let _env = TestEnv::new(&[
+            "DSCC_DISABLE_HARDWARE_OUTPUT",
+            "DSCC_ENABLE_HARDWARE_OUTPUT",
+        ]);
+        std::env::remove_var("DSCC_DISABLE_HARDWARE_OUTPUT");
+        std::env::set_var("DSCC_ENABLE_HARDWARE_OUTPUT", "0");
+
+        assert_eq!(configured_output_mode(), OutputMode::DryRunHid);
     }
 
     #[tokio::test]
@@ -10436,6 +11159,33 @@ mod tests {
         let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
         let status: StatusResponse = serde_json::from_slice(&body).unwrap();
         assert_eq!(status.active_profile_id.as_deref(), Some("track-focus"));
+    }
+
+    #[tokio::test]
+    async fn profile_create_and_export_preserve_game_scope() {
+        let router = app(AgentState::mock());
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/profiles")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"name":"Horizon Rally","gameId":"forza-horizon-6"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let created: ProfileSummary = serde_json::from_slice(&body).unwrap();
+        assert_eq!(created.game_id.as_deref(), Some("forza-horizon-6"));
+
+        let exported: ExportedProfile =
+            get_json(router, "/api/profiles/horizon-rally/export", StatusCode::OK).await;
+        assert_eq!(exported.game_id.as_deref(), Some("forza-horizon-6"));
     }
 
     #[tokio::test]
@@ -10592,13 +11342,29 @@ mod tests {
                     .uri("/api/profiles/import")
                     .header("content-type", "application/json")
                     .body(Body::from(
-                        r#"{"id":"imported-road","name":"Imported Road"}"#,
+                        r#"{"schema":"dev.dscc.profile.v1","id":"imported-road","name":"Imported Road"}"#,
                     ))
                     .unwrap(),
             )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::CREATED);
+
+        let bad_schema = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/profiles/import")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"schema":"dev.dscc.profile.v0","id":"bad-road","name":"Bad Road"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(bad_schema.status(), StatusCode::BAD_REQUEST);
 
         let imported: ProfileSummary =
             get_json(router, "/api/profiles/imported-road", StatusCode::OK).await;
@@ -10659,6 +11425,39 @@ mod tests {
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "test_fixture"));
+    }
+
+    #[tokio::test]
+    async fn controller_can_be_renamed_without_changing_identity() {
+        let router = app(AgentState::from_controller_events([attach_event(
+            "edge-identity",
+            ControllerFamily::DualSenseEdge,
+            ControllerTransportKind::Bluetooth,
+            Some(84),
+        )]));
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/controllers/edge-identity")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"name":"Rig Edge"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let renamed: ControllerDetail = serde_json::from_slice(&body).unwrap();
+        assert_eq!(renamed.id, "edge-identity");
+        assert_eq!(renamed.name, "Rig Edge");
+
+        let controllers: Vec<ControllerSummary> =
+            get_json(router, "/api/controllers", StatusCode::OK).await;
+        assert_eq!(controllers[0].id, "edge-identity");
+        assert_eq!(controllers[0].name, "Rig Edge");
     }
 
     #[tokio::test]
@@ -10800,6 +11599,204 @@ mod tests {
     }
 
     #[test]
+    fn steam_input_layout_parser_keeps_input_id_for_non_full_activators() {
+        let root = FsPath::new("C:/Program Files (x86)/Steam");
+        let file = root.join("userdata/123456/1551360/remote/test_controller_config.vdf");
+        let layout = parse_steam_input_layout(
+            root,
+            &file,
+            r##""controller_mappings"
+{
+    "title" "Forza Layout"
+    "controller_type" "controller_ps5"
+    "group"
+    {
+        "ID" "1"
+        "mode" "dpad"
+        "inputs"
+        {
+            "dpad_north"
+            {
+                "activators"
+                {
+                    "Long_Press"
+                    {
+                        "bindings"
+                        {
+                            "binding" "key_press UP_ARROW"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}"##,
+        )
+        .expect("layout parses");
+
+        assert_eq!(layout.bindings.len(), 1);
+        assert_eq!(layout.bindings[0].input_id, "dpad_north");
+        assert_eq!(layout.bindings[0].input, "D-Pad Up");
+        assert_eq!(layout.bindings[0].activator.as_deref(), Some("Long Press"));
+    }
+
+    #[test]
+    fn steam_input_layout_parser_mirrors_fh6_active_sources() {
+        let root = FsPath::new("C:/Program Files (x86)/Steam");
+        let file = root.join(
+            "steamapps/common/Steam Controller Configs/123456/config/2483190/controller_ps5.vdf",
+        );
+        let layout = parse_steam_input_layout(
+            root,
+            &file,
+            r##""controller_mappings"
+{
+    "title" "#Title"
+    "controller_type" "controller_ps5_edge"
+    "localization"
+    {
+        "english"
+        {
+            "title" "Gamepad"
+        }
+    }
+    "group"
+    {
+        "id" "7"
+        "mode" "switches"
+        "inputs"
+        {
+            "button_menu"
+            {
+                "activators"
+                {
+                    "Full_Press"
+                    {
+                        "bindings"
+                        {
+                            "binding" "xinput_button select, , "
+                        }
+                    }
+                }
+            }
+            "button_escape"
+            {
+                "activators"
+                {
+                    "Full_Press"
+                    {
+                        "bindings"
+                        {
+                            "binding" "xinput_button start, , "
+                        }
+                    }
+                }
+            }
+            "button_back_left_upper"
+            {
+                "activators"
+                {
+                    "Full_Press"
+                    {
+                        "bindings"
+                        {
+                            "binding" "key_press M, , "
+                        }
+                    }
+                }
+            }
+            "button_back_left"
+            {
+                "activators"
+                {
+                    "Full_Press"
+                    {
+                        "bindings"
+                        {
+                            "binding" "key_press Q, , "
+                        }
+                    }
+                }
+            }
+        }
+    }
+    "group"
+    {
+        "id" "14"
+        "mode" "2dscroll"
+        "inputs"
+        {
+            "dpad_north"
+            {
+                "activators"
+                {
+                    "Full_Press"
+                    {
+                        "bindings"
+                        {
+                            "binding" "key_press EQUALS, , "
+                        }
+                    }
+                }
+            }
+            "dpad_south"
+            {
+                "activators"
+                {
+                    "Full_Press"
+                    {
+                        "bindings"
+                        {
+                            "binding" "key_press DASH, , "
+                        }
+                    }
+                }
+            }
+        }
+    }
+    "preset"
+    {
+        "id" "0"
+        "name" "Default"
+        "group_source_bindings"
+        {
+            "7" "switch active"
+            "14" "center_trackpad active"
+        }
+    }
+}"##,
+        )
+        .expect("layout parses");
+
+        let find = |input_id: &str, group_id: &str| {
+            layout
+                .bindings
+                .iter()
+                .find(|binding| {
+                    binding.input_id == input_id && binding.group_id.as_deref() == Some(group_id)
+                })
+                .expect("binding exists")
+        };
+
+        let create = find("button_menu", "7");
+        assert_eq!(create.input, "Create");
+        assert_eq!(create.binding, "Select");
+        let options = find("button_escape", "7");
+        assert_eq!(options.input, "Options");
+        assert_eq!(options.binding, "Start");
+        let fn_left = find("button_back_left_upper", "7");
+        assert_eq!(fn_left.binding, "M Key");
+        let swipe_up = find("dpad_north", "14");
+        assert_eq!(swipe_up.input, "Swipe Up");
+        assert_eq!(swipe_up.binding, "= Key");
+        assert_eq!(swipe_up.source.as_deref(), Some("Center Trackpad"));
+        assert_eq!(swipe_up.source_mode.as_deref(), Some("Directional Swipe"));
+        let swipe_down = find("dpad_south", "14");
+        assert_eq!(swipe_down.input, "Swipe Down");
+        assert_eq!(swipe_down.binding, "- Key");
+    }
+
+    #[test]
     fn steam_input_writer_replaces_only_selected_binding() {
         let source = r##""controller_mappings"
 {
@@ -10850,7 +11847,7 @@ mod tests {
             group_id: Some("7".to_string()),
             activator: Some("Full Press".to_string()),
             raw_binding: "key_press M, , ".to_string(),
-            profile_name: Some("Forza Horizon / Immersive / active".to_string()),
+            profile_name: Some("Immersive / active".to_string()),
             dry_run: true,
         };
 
@@ -10861,17 +11858,87 @@ mod tests {
 
         assert!(updated.contains(r#""binding" "key_press M, , ""#));
         assert!(updated.contains(r#""binding" "key_press E, , ""#));
-        assert!(updated.contains(r#""title" "DSCC / Forza Horizon / Immersive / active""#));
+        assert!(updated.contains(r#""title" "DSCC / Immersive / active""#));
         assert!(updated.contains(r#""revision" "5""#));
         assert!(!updated.contains(r#""binding" "key_press Q, , ""#));
     }
 
     #[test]
+    fn steam_input_writer_updates_center_trackpad_without_touching_dpad() {
+        let source = r##""controller_mappings"
+{
+    "title" "Forza Layout"
+    "revision" "2"
+    "controller_type" "controller_ps5_edge"
+    "group"
+    {
+        "id" "9"
+        "mode" "dpad"
+        "inputs"
+        {
+            "dpad_north"
+            {
+                "activators"
+                {
+                    "Full_Press"
+                    {
+                        "bindings"
+                        {
+                            "binding" "xinput_button DPAD_UP, , "
+                        }
+                    }
+                }
+            }
+        }
+    }
+    "group"
+    {
+        "id" "14"
+        "mode" "2dscroll"
+        "inputs"
+        {
+            "dpad_north"
+            {
+                "activators"
+                {
+                    "Full_Press"
+                    {
+                        "bindings"
+                        {
+                            "binding" "key_press EQUALS, , "
+                        }
+                    }
+                }
+            }
+        }
+    }
+}"##;
+        let request = SteamInputBindingWriteRequest {
+            layout_source:
+                "steamapps/common/Steam Controller Configs/123/config/2483190/controller_ps5.vdf"
+                    .to_string(),
+            app_id: Some("2483190".to_string()),
+            input_id: "dpad_north".to_string(),
+            group_id: Some("14".to_string()),
+            activator: Some("Full Press".to_string()),
+            raw_binding: "key_press TAB, , ".to_string(),
+            profile_name: Some("Immersive / active".to_string()),
+            dry_run: true,
+        };
+
+        let updated = replace_steam_binding_value(source, &request, "key_press TAB, , ")
+            .expect("binding can be replaced")
+            .expect("source changes");
+
+        assert!(updated.contains(r#""binding" "xinput_button DPAD_UP, , ""#));
+        assert!(updated.contains(r#""binding" "key_press TAB, , ""#));
+        assert!(!updated.contains(r#""binding" "key_press EQUALS, , ""#));
+    }
+
+    #[test]
     fn steam_input_writer_dry_run_uses_temp_steam_root_without_writing() {
-        let root = std::env::temp_dir().join(format!(
-            "dscc-steam-input-test-{}",
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ));
+        let _env = TestEnv::new(&["DSCC_STEAM_ROOT"]);
+        let root = temp_test_dir("dscc-steam-input-test");
         let layout_dir = root
             .join("steamapps")
             .join("common")
@@ -10918,11 +11985,10 @@ mod tests {
             group_id: Some("7".to_string()),
             activator: Some("Full Press".to_string()),
             raw_binding: "key_press M".to_string(),
-            profile_name: Some("Forza Horizon".to_string()),
+            profile_name: Some("Base".to_string()),
             dry_run: true,
         })
         .expect("dry run succeeds");
-        std::env::remove_var("DSCC_STEAM_ROOT");
 
         assert!(response.accepted);
         assert!(response.dry_run);
@@ -10931,6 +11997,177 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&layout_file).expect("layout still readable"),
             original
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn steam_input_writer_creates_backup_before_writing() {
+        let _env = TestEnv::new(&["DSCC_STEAM_ROOT"]);
+        let root = temp_test_dir("dscc-steam-input-write-test");
+        let layout_dir = root
+            .join("steamapps")
+            .join("common")
+            .join("Steam Controller Configs")
+            .join("123456")
+            .join("config")
+            .join("2483190");
+        fs::create_dir_all(&layout_dir).expect("layout fixture directory");
+        let layout_file = layout_dir.join("controller_ps5.vdf");
+        let original = r##""controller_mappings"
+{
+    "title" "Gamepad"
+    "revision" "1"
+    "controller_type" "controller_ps5_edge"
+    "group"
+    {
+        "id" "7"
+        "mode" "switches"
+        "inputs"
+        {
+            "button_back_left"
+            {
+                "activators"
+                {
+                    "Full_Press"
+                    {
+                        "bindings"
+                        {
+                            "binding" "key_press Q, , "
+                        }
+                    }
+                }
+            }
+        }
+    }
+}"##;
+        fs::write(&layout_file, original).expect("layout fixture");
+        let source = sanitized_steam_path(&root, &layout_file).expect("sanitized source");
+
+        std::env::set_var("DSCC_STEAM_ROOT", &root);
+        let response = write_steam_input_binding(SteamInputBindingWriteRequest {
+            layout_source: source,
+            app_id: Some("2483190".to_string()),
+            input_id: "button_back_left".to_string(),
+            group_id: Some("7".to_string()),
+            activator: Some("Full Press".to_string()),
+            raw_binding: "key_press M".to_string(),
+            profile_name: Some("Base".to_string()),
+            dry_run: false,
+        })
+        .expect("write succeeds");
+
+        assert!(response.accepted);
+        assert!(!response.dry_run);
+        assert_eq!(response.binding.binding, "M Key");
+        let backup_path = response
+            .backup_path
+            .as_deref()
+            .map(PathBuf::from)
+            .expect("backup path is reported");
+        assert_eq!(
+            fs::read_to_string(&backup_path).expect("backup layout is readable"),
+            original
+        );
+        let updated = fs::read_to_string(&layout_file).expect("updated layout is readable");
+        assert!(updated.contains(r#""binding" "key_press M, , ""#));
+        assert!(updated.contains(r#""title" "DSCC / Base""#));
+        assert!(updated.contains(r#""revision" "2""#));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn steam_input_writer_rejects_layouts_outside_steam_root() {
+        let root = temp_test_dir("dscc-steam-root-test");
+        let outside_root = temp_test_dir("dscc-steam-outside-test");
+        fs::create_dir_all(&root).expect("steam root fixture");
+        fs::create_dir_all(&outside_root).expect("outside fixture");
+        let outside_file = outside_root.join("controller_ps5.vdf");
+        fs::write(&outside_file, "\"controller_mappings\"\n{}").expect("outside layout fixture");
+
+        let error = validated_steam_input_layout_path(root.clone(), outside_file)
+            .expect_err("outside layout should be rejected");
+
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+        assert!(
+            error.message.contains("inside the Steam install path"),
+            "unexpected message: {}",
+            error.message
+        );
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside_root);
+    }
+
+    #[test]
+    fn steam_input_writer_rejects_non_controller_layout_names() {
+        let root = temp_test_dir("dscc-steam-name-test");
+        let layout_dir = root.join("userdata").join("123456").join("config");
+        fs::create_dir_all(&layout_dir).expect("layout fixture directory");
+        let layout_file = layout_dir.join("controller_base.vdf");
+        fs::write(&layout_file, "\"controller_mappings\"\n{}").expect("layout fixture");
+
+        let error = validated_steam_input_layout_path(root.clone(), layout_file)
+            .expect_err("base layout should be rejected");
+
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+        assert!(
+            error.message.contains("controller_*.vdf"),
+            "unexpected message: {}",
+            error.message
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn steam_input_writer_rejects_layouts_over_guarded_size_limit() {
+        let _env = TestEnv::new(&[
+            "DSCC_STEAM_ROOT",
+            "ProgramFiles(x86)",
+            "ProgramFiles",
+            "LOCALAPPDATA",
+        ]);
+        let root = temp_test_dir("dscc-steam-large-test");
+        let layout_dir = root
+            .join("userdata")
+            .join("123456")
+            .join("2483190")
+            .join("remote");
+        fs::create_dir_all(&layout_dir).expect("layout fixture directory");
+        let layout_file = layout_dir.join("controller_ps5.vdf");
+        fs::write(&layout_file, vec![b'a'; 256 * 1024 + 1]).expect("large layout fixture");
+
+        std::env::set_var("DSCC_STEAM_ROOT", &root);
+        std::env::set_var("ProgramFiles(x86)", root.join("missing-pf86"));
+        std::env::set_var("ProgramFiles", root.join("missing-pf"));
+        std::env::set_var("LOCALAPPDATA", root.join("missing-local-app-data"));
+        let error = write_steam_input_binding(SteamInputBindingWriteRequest {
+            layout_source: layout_file.display().to_string(),
+            app_id: Some("2483190".to_string()),
+            input_id: "button_back_left".to_string(),
+            group_id: None,
+            activator: None,
+            raw_binding: "key_press M".to_string(),
+            profile_name: None,
+            dry_run: false,
+        })
+        .expect_err("large layout should be rejected");
+
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+        assert!(
+            error.message.contains("guarded write limit"),
+            "unexpected message: {}",
+            error.message
+        );
+        assert!(
+            fs::read_dir(&layout_dir)
+                .expect("layout directory is readable")
+                .all(|entry| entry
+                    .expect("layout entry is readable")
+                    .file_name()
+                    .to_string_lossy()
+                    == "controller_ps5.vdf"),
+            "large rejected layout should not create backups"
         );
         let _ = fs::remove_dir_all(root);
     }
@@ -10984,6 +12221,141 @@ mod tests {
             .expect("FH6 is discovered from Steam appmanifest");
         assert_eq!(fh6.app_id.as_deref(), Some(FORZA_HORIZON6_STEAM_APP_ID));
         assert_eq!(fh6.support_level, "telemetry");
+    }
+
+    #[test]
+    fn built_in_game_modules_have_unique_game_ids_and_non_empty_core_ids() {
+        let mut game_ids = std::collections::BTreeSet::new();
+        let built_in_module_ids: std::collections::BTreeSet<_> =
+            built_in_adapters().iter().map(|module| module.id).collect();
+        let built_in_profile_ids: std::collections::BTreeSet<_> = default_profiles()
+            .iter()
+            .map(|profile| profile.id.clone())
+            .collect();
+
+        for game in built_in_game_modules() {
+            assert!(
+                !game.id.trim().is_empty(),
+                "built-in game id must not be empty for {game:?}"
+            );
+            assert!(
+                game_ids.insert(game.id),
+                "duplicate built-in game id: {}",
+                game.id
+            );
+            assert!(
+                !game.adapter_id.trim().is_empty(),
+                "module id must not be empty for {}",
+                game.id
+            );
+            assert!(
+                built_in_module_ids.contains(game.adapter_id),
+                "{} references unknown module id {}",
+                game.id,
+                game.adapter_id
+            );
+            assert!(
+                !game.default_profile_id.trim().is_empty(),
+                "default profile id must not be empty for {}",
+                game.id
+            );
+            assert!(
+                built_in_profile_ids.contains(game.default_profile_id),
+                "{} references unknown default profile id {}",
+                game.id,
+                game.default_profile_id
+            );
+        }
+    }
+
+    #[test]
+    fn every_built_in_game_has_detection_metadata() {
+        for game in built_in_game_modules() {
+            assert!(
+                !game.display_name.trim().is_empty(),
+                "game name must not be empty for {}",
+                game.id
+            );
+            assert!(
+                !game.process_names.is_empty(),
+                "{} must declare at least one process name",
+                game.id
+            );
+
+            for process_name in game.process_names {
+                assert!(
+                    !process_name.trim().is_empty(),
+                    "{} contains an empty process name",
+                    game.id
+                );
+                let detection = detect_running_game_from_processes([*process_name]);
+                assert_eq!(
+                    detection.active_game_id.as_deref(),
+                    Some(game.id),
+                    "{} should detect from process {}",
+                    game.id,
+                    process_name
+                );
+                assert_eq!(
+                    detection.module_id.as_deref(),
+                    Some(game.id),
+                    "{} should detect game module {}",
+                    game.id,
+                    game.id
+                );
+                assert_eq!(
+                    detection.adapter_id.as_deref(),
+                    Some(game.adapter_id),
+                    "{} should detect adapter {}",
+                    game.id,
+                    game.adapter_id
+                );
+                assert_eq!(
+                    detection.profile_id.as_deref(),
+                    Some(game.default_profile_id),
+                    "{} should detect default profile {}",
+                    game.id,
+                    game.default_profile_id
+                );
+                assert_eq!(detection.candidates.len(), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn forza_games_are_distinct_game_modules_sharing_forza_data_out() {
+        let forza_games: Vec<_> = built_in_game_modules()
+            .iter()
+            .filter(|game| game.adapter_id == FORZA_DATA_OUT_ADAPTER_ID)
+            .collect();
+        let forza_game_ids: std::collections::BTreeSet<_> =
+            forza_games.iter().map(|game| game.id).collect();
+
+        assert!(forza_game_ids.contains("forza-horizon-5"));
+        assert!(forza_game_ids.contains("forza-horizon-6"));
+        assert!(
+            forza_games.len() >= 2,
+            "Forza titles should stay separate game entries"
+        );
+        assert_eq!(
+            forza_game_ids.len(),
+            forza_games.len(),
+            "Forza titles must have distinct game ids"
+        );
+        assert!(
+            forza_games
+                .iter()
+                .all(|game| game.adapter_id == FORZA_DATA_OUT_ADAPTER_ID),
+            "Forza titles should share the Forza Data Out adapter id"
+        );
+
+        let fh5 = detect_running_game_from_processes(["ForzaHorizon5.exe"]);
+        let fh6 = detect_running_game_from_processes(["ForzaHorizon6.exe"]);
+        assert_ne!(fh5.active_game_id, fh6.active_game_id);
+        assert_eq!(fh5.module_id.as_deref(), Some("forza-horizon-5"));
+        assert_eq!(fh6.module_id.as_deref(), Some("forza-horizon-6"));
+        assert_eq!(fh5.adapter_id.as_deref(), Some(FORZA_DATA_OUT_ADAPTER_ID));
+        assert_eq!(fh6.adapter_id.as_deref(), Some(FORZA_DATA_OUT_ADAPTER_ID));
     }
 
     #[test]
@@ -11103,10 +12475,7 @@ mod tests {
 
     #[test]
     fn game_detection_is_enriched_with_supported_steam_game_selection() {
-        let fh5 = KNOWN_GAMES
-            .iter()
-            .find(|game| game.game_id == "forza-horizon-5")
-            .unwrap();
+        let fh5 = test_game_module_by_id("forza-horizon-5");
         let catalog = SteamGameCatalog {
             supported_games: vec![supported_game_summary(
                 fh5,
@@ -11142,10 +12511,7 @@ mod tests {
 
     #[test]
     fn installed_supported_games_do_not_become_selected_without_detection() {
-        let fh6 = KNOWN_GAMES
-            .iter()
-            .find(|game| game.game_id == "forza-horizon-6")
-            .unwrap();
+        let fh6 = test_game_module_by_id("forza-horizon-6");
         let catalog = SteamGameCatalog {
             supported_games: vec![SupportedGameSummary {
                 installed: true,
@@ -11333,10 +12699,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn controller_global_profile_override_resolves_for_selected_controller() {
+        let router = app(AgentState::from_controller_events([attach_event(
+            "edge-global",
+            ControllerFamily::DualSenseEdge,
+            ControllerTransportKind::Bluetooth,
+            Some(84),
+        )]));
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::PUT)
+                    .uri("/api/profile-resolution/override")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"controllerId":"edge-global","gameId":null,"profileId":"forza-horizon-immersive"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let resolution: ProfileResolutionResponse =
+            get_json(router, "/api/profile-resolution", StatusCode::OK).await;
+        assert_eq!(resolution.reason, "manual_override");
+        assert_eq!(
+            resolution.selected_profile_id.as_deref(),
+            Some(IMMERSIVE_PROFILE_ID)
+        );
+    }
+
+    #[tokio::test]
     async fn process_detection_maps_forza_to_edge_profile() {
         let detection = detect_running_game_from_processes(["ForzaHorizon6.exe"]);
         assert_eq!(detection.active_game_id.as_deref(), Some("forza-horizon-6"));
-        assert_eq!(detection.profile_id.as_deref(), Some("forza-horizon"));
+        assert_eq!(detection.profile_id.as_deref(), Some(IMMERSIVE_PROFILE_ID));
     }
 
     #[tokio::test]
@@ -11351,28 +12751,28 @@ mod tests {
         {
             let mut inner = state.inner.write().await;
             inner
-                .forza_runtime
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
                 .mark_bound("127.0.0.1:5300".parse().unwrap());
         }
 
         let inner = state.inner.read().await;
-        let integrations = materialized_integrations(&inner, Some(&detection));
-        let forza = integrations
+        let adapters = materialized_adapters(&inner, Some(&detection));
+        let forza = adapters
             .iter()
-            .find(|integration| integration.id == "forza-data-out")
-            .expect("Forza integration exists");
+            .find(|adapter| adapter.id == "forza-data-out")
+            .expect("Forza adapter exists");
         assert!(forza.enabled);
         assert_eq!(forza.state, "needs_setup");
         assert!(forza.setup_hint.contains("no Data Out packets"));
 
         let resolution = profile_resolution(&inner, Some(&detection));
         assert_eq!(
-            resolution.active_integration_id.as_deref(),
+            resolution.active_adapter_id.as_deref(),
             Some("forza-data-out")
         );
         assert_eq!(
             resolution.selected_profile_id.as_deref(),
-            Some("forza-horizon")
+            Some(IMMERSIVE_PROFILE_ID)
         );
         assert_eq!(resolution.reason, "foreground_game");
 
@@ -11380,6 +12780,33 @@ mod tests {
         assert!(telemetry.iter().any(|signal| {
             signal.name == "game.state" && signal.value == serde_json::json!("awaiting_data_out")
         }));
+    }
+
+    #[test]
+    fn idle_forza_listener_is_a_clear_diagnostic() {
+        let mut runtime = test_udp_adapter_runtime();
+        runtime.mark_bound("127.0.0.1:5300".parse().unwrap());
+
+        let health = adapter_runtime_health_check(&runtime, Some(&no_game_detection("none")));
+
+        assert_eq!(health.name, "forza-data-out");
+        assert_eq!(health.status, "ok");
+        assert!(health.detail.contains("telemetry will activate"));
+        assert!(!health.detail.contains("waiting"));
+    }
+
+    #[test]
+    fn detected_forza_without_packets_warns_in_diagnostics() {
+        let mut runtime = test_udp_adapter_runtime();
+        runtime.mark_bound("127.0.0.1:5300".parse().unwrap());
+        let detection = detect_running_game_from_processes(["ForzaHorizon6.exe"]);
+
+        let health = adapter_runtime_health_check(&runtime, Some(&detection));
+
+        assert_eq!(health.name, "forza-data-out");
+        assert_eq!(health.status, "warning");
+        assert!(health.detail.contains("Forza Horizon 6 is running"));
+        assert!(health.detail.contains("no live Data Out packets"));
     }
 
     #[tokio::test]
@@ -11409,7 +12836,7 @@ mod tests {
         ));
         assert_eq!(
             inner.auto_loaded_profile_id.as_deref(),
-            Some(DEFAULT_PROFILE_ID)
+            Some(IMMERSIVE_PROFILE_ID)
         );
         assert_eq!(inner.active_profile_id.as_deref(), Some(DEFAULT_PROFILE_ID));
 
@@ -11505,13 +12932,19 @@ mod tests {
         {
             let mut inner = state.inner.write().await;
             inner
-                .forza_runtime
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
                 .mark_bound("127.0.0.1:5300".parse().unwrap());
-            inner.forza_runtime.packet_count = 1;
-            inner.forza_runtime.last_packet_at =
-                Some(Instant::now() - FORZA_PACKET_STALE_AFTER - Duration::from_secs(1));
-            inner.forza_runtime.last_packet_len = Some(324);
-            inner.active_integration_id = Some("forza-data-out".to_string());
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .packet_count = 1;
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .last_packet_at =
+                Some(Instant::now() - TELEMETRY_PACKET_STALE_AFTER - Duration::from_secs(1));
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .last_packet_len = Some(324);
+            inner.active_adapter_id = Some("forza-data-out".to_string());
             inner.telemetry = SignalSnapshot::from_updates([
                 signal_update("source.id", "forza-data-out"),
                 signal_update("game.id", "forza-horizon-6"),
@@ -11564,13 +12997,19 @@ mod tests {
         {
             let mut inner = state.inner.write().await;
             inner
-                .forza_runtime
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
                 .mark_bound("127.0.0.1:5300".parse().unwrap());
-            inner.forza_runtime.packet_count = 1;
-            inner.forza_runtime.last_packet_at =
-                Some(Instant::now() - FORZA_PACKET_STALE_AFTER - Duration::from_secs(1));
-            inner.forza_runtime.last_packet_len = Some(324);
-            inner.active_integration_id = Some("forza-data-out".to_string());
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .packet_count = 1;
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .last_packet_at =
+                Some(Instant::now() - TELEMETRY_PACKET_STALE_AFTER - Duration::from_secs(1));
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .last_packet_len = Some(324);
+            inner.active_adapter_id = Some("forza-data-out".to_string());
             inner.telemetry = SignalSnapshot::from_updates([
                 signal_update("source.id", "forza-data-out"),
                 signal_update("game.id", "forza-horizon-6"),
@@ -11600,15 +13039,21 @@ mod tests {
         {
             let mut inner = state.inner.write().await;
             inner
-                .forza_runtime
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
                 .mark_bound("127.0.0.1:5300".parse().unwrap());
-            inner.forza_runtime.packet_count = 1;
-            inner.forza_runtime.last_packet_at = Some(Instant::now());
-            inner.forza_runtime.last_packet_len = Some(324);
-            inner.active_integration_id = Some("forza-data-out".to_string());
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .packet_count = 1;
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .last_packet_at = Some(Instant::now());
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .last_packet_len = Some(324);
+            inner.active_adapter_id = Some("forza-data-out".to_string());
             inner.telemetry = SignalSnapshot::from_updates([
                 signal_update("source.id", "forza-data-out"),
-                signal_update("game.id", "forza-data-out"),
+                signal_update("game.id", "forza-horizon-6"),
                 signal_update("game.state", "menu"),
                 signal_update("input.brake", 0.0),
                 signal_update("input.throttle", 0.0),
@@ -11657,12 +13102,18 @@ mod tests {
         {
             let mut inner = state.inner.write().await;
             inner
-                .forza_runtime
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
                 .mark_bound("127.0.0.1:5300".parse().unwrap());
-            inner.forza_runtime.packet_count = 1;
-            inner.forza_runtime.last_packet_at = Some(Instant::now());
-            inner.forza_runtime.last_packet_len = Some(324);
-            inner.active_integration_id = Some("forza-data-out".to_string());
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .packet_count = 1;
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .last_packet_at = Some(Instant::now());
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .last_packet_len = Some(324);
+            inner.active_adapter_id = Some("forza-data-out".to_string());
             inner.telemetry = SignalSnapshot::from_updates([
                 signal_update("source.id", "forza-data-out"),
                 signal_update("game.id", "forza-horizon-6"),
@@ -11781,12 +13232,18 @@ mod tests {
 
             let mut inner = state.inner.write().await;
             inner
-                .forza_runtime
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
                 .mark_bound("127.0.0.1:5300".parse().unwrap());
-            inner.forza_runtime.packet_count = 1;
-            inner.forza_runtime.last_packet_at = Some(Instant::now());
-            inner.forza_runtime.last_packet_len = Some(324);
-            inner.active_integration_id = Some("forza-data-out".to_string());
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .packet_count = 1;
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .last_packet_at = Some(Instant::now());
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .last_packet_len = Some(324);
+            inner.active_adapter_id = Some("forza-data-out".to_string());
             inner
                 .controller_configs
                 .insert("edge-forza".to_string(), config);
@@ -11850,7 +13307,8 @@ mod tests {
             signal_update("drivetrain.shift_pulse", 1.0),
         ]);
 
-        let rumble = forza_rumble_output(&forza, &snapshot, 1.0).expect("shift should rumble");
+        let rumble =
+            forza_rumble_output(&forza, &snapshot, 1.0, "Balanced").expect("shift should rumble");
 
         assert!(rumble.low_frequency > 0.85);
         assert!(rumble.high_frequency < 0.30);
@@ -11954,7 +13412,10 @@ mod tests {
             signal_update("drivetrain.shift_pulse", 0.0),
         ]);
 
-        assert_eq!(forza_rumble_output(&forza, &idle_on_dirt, 1.0), None);
+        assert_eq!(
+            forza_rumble_output(&forza, &idle_on_dirt, 1.0, "Balanced"),
+            None
+        );
 
         let rolling_on_dirt = SignalSnapshot::from_updates([
             signal_update("input.throttle", 0.0),
@@ -11972,7 +13433,7 @@ mod tests {
             signal_update("vehicle.acceleration.magnitude", 0.0),
             signal_update("drivetrain.shift_pulse", 0.0),
         ]);
-        let rumble = forza_rumble_output(&forza, &rolling_on_dirt, 1.0)
+        let rumble = forza_rumble_output(&forza, &rolling_on_dirt, 1.0, "Balanced")
             .expect("dirt should rumble once the car is rolling");
 
         assert!(rumble.low_frequency > 0.20);
@@ -12236,7 +13697,7 @@ mod tests {
 
     #[test]
     fn forza_shift_detector_tracks_raw_direction_blind_gear_changes() {
-        let mut runtime = ForzaDataOutRuntime::default();
+        let mut runtime = test_forza_effect_runtime();
         let now = Instant::now();
 
         assert_eq!(
@@ -12261,7 +13722,7 @@ mod tests {
 
     #[test]
     fn forza_shift_detector_suppresses_first_packet_and_hard_stops() {
-        let mut runtime = ForzaDataOutRuntime::default();
+        let mut runtime = test_forza_effect_runtime();
         let now = Instant::now();
 
         assert_eq!(
@@ -12285,7 +13746,7 @@ mod tests {
 
     #[test]
     fn forza_shift_detector_extends_without_stacking() {
-        let mut runtime = ForzaDataOutRuntime::default();
+        let mut runtime = test_forza_effect_runtime();
         let now = Instant::now();
 
         assert_eq!(
@@ -12313,7 +13774,7 @@ mod tests {
 
     #[test]
     fn forza_shift_detector_freezes_while_disabled_or_telemetry_off() {
-        let mut runtime = ForzaDataOutRuntime::default();
+        let mut runtime = test_forza_effect_runtime();
         let now = Instant::now();
 
         assert_eq!(
@@ -12534,8 +13995,89 @@ mod tests {
     }
 
     #[test]
+    fn base_feel_test_exposes_wall_pulse_pattern() {
+        let trigger = TriggerConfig {
+            l2_from: 12,
+            r2_from: 7,
+            effect: "Wall pulse".to_string(),
+            intensity: "Strong (Standard)".to_string(),
+            ..Default::default()
+        };
+
+        let request = EffectTestRequest {
+            target: Some("base_feel".to_string()),
+            mode: Some("hold".to_string()),
+            intensity: Some(100),
+            start_position: None,
+            l2_position: None,
+            r2_position: None,
+            duration_ms: Some(DEFAULT_BASE_FEEL_TEST_DURATION_MS),
+            trigger: Some(trigger),
+        };
+
+        let frame = effect_test_output_frame(&request);
+        match frame.l2 {
+            TriggerOutput::PulseAb {
+                strength,
+                frequency_hz,
+                wall_zones,
+            } => {
+                assert!((strength - 1.0).abs() < f64::EPSILON);
+                assert!((frequency_hz - 60.0).abs() < f64::EPSILON);
+                assert_eq!(wall_zones, 2);
+            }
+            other => panic!("expected L2 wall pulse, got {other:?}"),
+        }
+        match frame.r2 {
+            TriggerOutput::PulseAb {
+                strength,
+                frequency_hz,
+                wall_zones,
+            } => {
+                assert!((strength - 1.0).abs() < f64::EPSILON);
+                assert!((frequency_hz - 60.0).abs() < f64::EPSILON);
+                assert_eq!(wall_zones, 2);
+            }
+            other => panic!("expected R2 wall pulse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rumble_test_honors_body_haptic_character() {
+        let deep = effect_test_output_frame(&EffectTestRequest {
+            target: Some("rumble".to_string()),
+            mode: Some("deep_thump".to_string()),
+            intensity: Some(80),
+            start_position: None,
+            l2_position: None,
+            r2_position: None,
+            duration_ms: Some(DEFAULT_EFFECT_TEST_DURATION_MS),
+            trigger: None,
+        })
+        .rumble
+        .expect("deep thump should produce rumble");
+        assert!((deep.low_frequency - 0.80).abs() < f64::EPSILON);
+        assert!(deep.high_frequency < 0.20);
+
+        let fine = effect_test_output_frame(&EffectTestRequest {
+            target: Some("rumble".to_string()),
+            mode: Some("fine_buzz".to_string()),
+            intensity: Some(80),
+            start_position: None,
+            l2_position: None,
+            r2_position: None,
+            duration_ms: Some(DEFAULT_EFFECT_TEST_DURATION_MS),
+            trigger: None,
+        })
+        .rumble
+        .expect("fine buzz should produce rumble");
+        assert!(fine.low_frequency < 0.20);
+        assert!((fine.high_frequency - 0.80).abs() < f64::EPSILON);
+    }
+
+    #[test]
     fn forza_horizon_preset_enables_road_texture_only_for_continuous_rumble() {
-        // The "Forza Horizon" built-in preset is designed to be
+        // The "Base" built-in preset is designed to be
         // battery-conscious: adaptive triggers stay on, road texture is the
         // default surface cue, and heavier continuous-rumble effects remain
         // disabled. Event-driven thumps and trigger effects stay enabled.
@@ -12565,7 +14107,7 @@ mod tests {
             assert!(
                 !effect.enabled,
                 "heavy continuous-rumble effect '{id}' must default to disabled in the \
-                 Forza preset (got enabled={})",
+                 Base preset (got enabled={})",
                 effect.enabled,
             );
         }
@@ -12588,7 +14130,7 @@ mod tests {
             assert!(
                 effect.enabled,
                 "adaptive-trigger effect '{id}' should stay enabled in the \
-                 stock Forza preset"
+                 Base preset"
             );
             assert_eq!(effect.route, *expected_route, "route for '{id}'");
         }
@@ -12619,7 +14161,7 @@ mod tests {
             .expect("preset must contain 'rpm_leds'");
         assert!(
             !rpm_leds.enabled,
-            "stock Horizon should leave gear LEDs disabled and keep only the user lightbar color"
+            "Base should leave gear LEDs disabled and keep only the user lightbar color"
         );
 
         // Unknown profile ids have no preset — activation is a no-op for
@@ -12679,7 +14221,10 @@ mod tests {
         }
 
         let rpm_leds = effect("rpm_leds");
-        assert!(rpm_leds.enabled);
+        assert!(
+            !rpm_leds.enabled,
+            "Immersive should keep gear LEDs and the RPM bar disabled by default"
+        );
         assert_eq!(rpm_leds.intensity, 100);
         assert_eq!(rpm_leds.route, "light_led");
     }
@@ -12753,7 +14298,7 @@ mod tests {
             .get("edge-forza")
             .expect("controller config still present");
 
-        // The stock Forza preset enables road texture but leaves heavier
+        // The Base preset enables road texture but leaves heavier
         // continuous-rumble effects disabled on the saved config.
         let road = config
             .forza
@@ -12763,7 +14308,7 @@ mod tests {
             .expect("road_texture present after activation");
         assert!(
             road.enabled,
-            "activating the stock Forza preset should enable road_texture on the saved \
+            "activating the Base preset should enable road_texture on the saved \
              controller config"
         );
         assert_eq!(road.intensity, 40);
@@ -12873,7 +14418,10 @@ mod tests {
         assert_eq!(effect("suspension_impact").route, "body_both");
         assert!(effect("puddle_drag").enabled);
         assert_eq!(effect("puddle_drag").route, "body_left");
-        assert!(effect("rpm_leds").enabled);
+        assert!(
+            !effect("rpm_leds").enabled,
+            "Immersive should leave gear LEDs and the RPM bar disabled"
+        );
         assert_eq!(config.trigger.l2_from, 0);
         assert_eq!(config.trigger.r2_from, 0);
         assert_eq!(config.trigger.l2_to, 100);
@@ -12916,6 +14464,7 @@ mod tests {
                 name: "My Custom Profile".to_string(),
                 built_in: false,
                 active: false,
+                game_id: None,
             });
         }
 
@@ -12983,6 +14532,7 @@ mod tests {
                 name: "Track Focus".to_string(),
                 built_in: false,
                 active: false,
+                game_id: None,
             });
         }
 
@@ -13205,7 +14755,7 @@ mod tests {
             .expect("road_texture present after activation");
         assert!(
             road.enabled,
-            "activating the stock Forza profile must use the built-in preset, not a stale saved override"
+            "activating the Base profile must use the built-in preset, not a stale saved override"
         );
         assert_eq!(road.intensity, 40);
 
@@ -13227,7 +14777,7 @@ mod tests {
         {
             let mut inner = state.inner.write().await;
             inner
-                .forza_runtime
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
                 .mark_bound("127.0.0.1:5300".parse().unwrap());
         }
         let mut packet = vec![0_u8; 324];
@@ -13236,23 +14786,26 @@ mod tests {
         write_f32(&mut packet, 16, 6_000.0);
         write_f32(&mut packet, 244 + 12, 30.0);
         packet[244 + 71] = 204;
-        let parsed = parse_forza_data_out_packet(&packet, 7).expect("packet parses");
+        let parsed = parse_udp_telemetry_packet(FORZA_DATA_OUT_ADAPTER_ID, &packet, 7)
+            .expect("packet parses");
 
         state
-            .apply_forza_packet(parsed.packet_len, 7, parsed.updates)
+            .apply_adapter_packet(parsed.adapter_id, parsed.packet_len, 7, parsed.updates)
             .await;
 
         let inner = state.inner.read().await;
+        assert_eq!(inner.active_adapter_id.as_deref(), Some("forza-data-out"));
         assert_eq!(
-            inner.active_integration_id.as_deref(),
-            Some("forza-data-out")
+            inner
+                .require_adapter_runtime(FORZA_DATA_OUT_ADAPTER_ID)
+                .packet_count,
+            1
         );
-        assert_eq!(inner.forza_runtime.packet_count, 1);
-        let integrations = materialized_integrations(&inner, None);
-        let forza = integrations
+        let adapters = materialized_adapters(&inner, None);
+        let forza = adapters
             .iter()
-            .find(|integration| integration.id == "forza-data-out")
-            .expect("Forza integration exists");
+            .find(|adapter| adapter.id == "forza-data-out")
+            .expect("Forza adapter exists");
         assert_eq!(forza.state, "connected");
 
         let telemetry = materialized_telemetry_response(&inner, Some(&detection));
@@ -13274,11 +14827,14 @@ mod tests {
         {
             let mut inner = state.inner.write().await;
             inner
-                .forza_runtime
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
                 .mark_bound("127.0.0.1:5300".parse().unwrap());
-            inner.forza_runtime.rate_window_started_at =
-                Some(Instant::now() - Duration::from_secs(2));
-            inner.forza_runtime.rate_window_packet_count = 119;
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .rate_window_started_at = Some(Instant::now() - Duration::from_secs(2));
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .rate_window_packet_count = 119;
         }
         let mut packet = vec![0_u8; 324];
         write_i32(&mut packet, 0, 1);
@@ -13286,18 +14842,19 @@ mod tests {
         write_f32(&mut packet, 16, 6_000.0);
         write_f32(&mut packet, 244 + 12, 30.0);
         packet[244 + 71] = 204;
-        let parsed = parse_forza_data_out_packet(&packet, 9).expect("packet parses");
+        let parsed = parse_udp_telemetry_packet(FORZA_DATA_OUT_ADAPTER_ID, &packet, 9)
+            .expect("packet parses");
 
         state
-            .apply_forza_packet(parsed.packet_len, 9, parsed.updates)
+            .apply_adapter_packet(parsed.adapter_id, parsed.packet_len, 9, parsed.updates)
             .await;
 
         let inner = state.inner.read().await;
-        let integrations = materialized_integrations(&inner, Some(&detection));
-        let forza = integrations
+        let adapters = materialized_adapters(&inner, Some(&detection));
+        let forza = adapters
             .iter()
-            .find(|integration| integration.id == "forza-data-out")
-            .expect("Forza integration exists");
+            .find(|adapter| adapter.id == "forza-data-out")
+            .expect("Forza adapter exists");
         let packet_rate_hz = forza.packet_rate_hz.expect("packet rate is materialized");
         assert!((59..=60).contains(&packet_rate_hz));
 
@@ -13322,9 +14879,15 @@ mod tests {
             packet[244 + 71] = 255;
             packet[244 + 75] = gear;
 
-            let parsed = parse_forza_data_out_packet(&packet, sequence).expect("packet parses");
+            let parsed = parse_udp_telemetry_packet(FORZA_DATA_OUT_ADAPTER_ID, &packet, sequence)
+                .expect("packet parses");
             state
-                .apply_forza_packet(parsed.packet_len, sequence, parsed.updates)
+                .apply_adapter_packet(
+                    parsed.adapter_id,
+                    parsed.packet_len,
+                    sequence,
+                    parsed.updates,
+                )
                 .await;
         }
 
@@ -13483,6 +15046,57 @@ mod tests {
             panic!("Windows PnP fallback should create attach events");
         };
         assert_eq!(controller.info.family, ControllerFamily::DualSenseEdge);
+    }
+
+    #[test]
+    fn forza_trusted_install_path_ignores_untrusted_configured_path_without_steam_catalog() {
+        let _env = TestEnv::new(&["DSCC_FORZA_HORIZON6_INSTALL_DIR"]);
+        let default_root = temp_test_dir("dscc-forza-default-root");
+        let configured_root = temp_test_dir("dscc-forza-configured-root");
+        fs::create_dir_all(&default_root).expect("default root fixture");
+        fs::create_dir_all(&configured_root).expect("configured root fixture");
+        std::env::set_var("DSCC_FORZA_HORIZON6_INSTALL_DIR", &default_root);
+
+        let trusted = trusted_forza_horizon6_install_path(Some(configured_root.clone()), None);
+
+        assert_eq!(
+            fs::canonicalize(trusted).expect("trusted path canonicalizes"),
+            fs::canonicalize(&default_root).expect("default path canonicalizes")
+        );
+        let _ = fs::remove_dir_all(default_root);
+        let _ = fs::remove_dir_all(configured_root);
+    }
+
+    #[test]
+    fn forza_trusted_install_path_prefers_discovered_steam_path() {
+        let _env = TestEnv::new(&["DSCC_FORZA_HORIZON6_INSTALL_DIR"]);
+        let default_root = temp_test_dir("dscc-forza-default-root");
+        let steam_root = temp_test_dir("dscc-forza-steam-root");
+        fs::create_dir_all(&default_root).expect("default root fixture");
+        fs::create_dir_all(&steam_root).expect("steam root fixture");
+        std::env::set_var("DSCC_FORZA_HORIZON6_INSTALL_DIR", &default_root);
+
+        let trusted = trusted_forza_horizon6_install_path(None, Some(steam_root.clone()));
+
+        assert_eq!(trusted, steam_root);
+        let _ = fs::remove_dir_all(default_root);
+        let _ = fs::remove_dir_all(steam_root);
+    }
+
+    #[test]
+    fn forza_icon_target_guard_rejects_paths_outside_install_root() {
+        let root = temp_test_dir("dscc-forza-safe-root");
+        let outside_root = temp_test_dir("dscc-forza-outside-root");
+        fs::create_dir_all(&root).expect("root fixture");
+        fs::create_dir_all(&outside_root).expect("outside fixture");
+        let outside_target = outside_root.join("ControllerIcons.zip");
+
+        let error = ensure_forza_icon_target_is_safe(&root, &outside_target)
+            .expect_err("outside target should be rejected");
+
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside_root);
     }
 
     #[test]
@@ -13705,23 +15319,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integrations_include_first_wave_catalog() {
+    async fn adapters_include_first_wave_catalog() {
         let router = app(AgentState::mock());
 
-        let integrations: Vec<IntegrationSummary> =
-            get_json(router, "/api/integrations", StatusCode::OK).await;
-        let ids = integrations
+        let adapters: Vec<AdapterSummary> = get_json(router, "/api/adapters", StatusCode::OK).await;
+        let ids = adapters
             .iter()
-            .map(|integration| integration.id.as_str())
+            .map(|adapter| adapter.id.as_str())
             .collect::<Vec<_>>();
 
         assert!(ids.contains(&"forza-data-out"));
         assert!(ids.contains(&"ea-f1-udp"));
         assert!(ids.contains(&"beamng"));
-        assert!(integrations
+        assert!(adapters
             .iter()
-            .find(|integration| integration.id == "forza-data-out")
-            .is_some_and(|integration| integration.setup_url.is_some()));
+            .find(|adapter| adapter.id == "forza-data-out")
+            .is_some_and(|adapter| adapter.setup_url.is_some()));
     }
 
     #[tokio::test]
@@ -13851,6 +15464,577 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    fn make_user_game(
+        app_id: &str,
+        name: &str,
+        install_path: &str,
+        processes: &[&str],
+    ) -> UserGameConfig {
+        UserGameConfig {
+            game_id: user_game_id_for_app_id(app_id),
+            app_id: app_id.to_string(),
+            name: name.to_string(),
+            install_dir: name.replace(' ', ""),
+            install_path: install_path.to_string(),
+            process_names: processes.iter().map(|s| s.to_string()).collect(),
+            added_at: current_timestamp(),
+        }
+    }
+
+    fn make_test_steam_root(prefix: &str) -> PathBuf {
+        let root = temp_test_dir(prefix);
+        let steamapps = root.join("steamapps");
+        let common = steamapps.join("common");
+        fs::create_dir_all(&common).expect("steam common");
+        root
+    }
+
+    fn install_test_steam_manifest(
+        steam_root: &FsPath,
+        app_id: &str,
+        name: &str,
+        install_dir: &str,
+        exe_names: &[&str],
+    ) {
+        let steamapps = steam_root.join("steamapps");
+        let manifest_path = steamapps.join(format!("appmanifest_{app_id}.acf"));
+        let manifest = format!(
+            r#""AppState"
+{{
+    "appid"        "{app_id}"
+    "name"        "{name}"
+    "installdir"        "{install_dir}"
+    "Universe"        "1"
+}}
+"#
+        );
+        fs::write(&manifest_path, manifest).expect("write appmanifest");
+        let install_path = steamapps.join("common").join(install_dir);
+        fs::create_dir_all(&install_path).expect("create install dir");
+        for exe in exe_names {
+            fs::write(install_path.join(exe), [0_u8; 4]).expect("write fake exe");
+        }
+    }
+
+    #[test]
+    fn user_game_id_uses_custom_prefix() {
+        assert_eq!(user_game_id_for_app_id("12345"), "custom-12345");
+    }
+
+    #[test]
+    fn user_game_process_candidates_filter_known_uninstaller_patterns() {
+        let install_dir = temp_test_dir("dscc-user-game-procs");
+        fs::create_dir_all(&install_dir).expect("install dir");
+        for name in [
+            "Game.exe",
+            "GameLauncher.exe",
+            "UnityCrashHandler.exe",
+            "uninstall.exe",
+            "setup.exe",
+            "vcredist_x64.exe",
+            "EasyAntiCheat.exe",
+            "readme.txt",
+        ] {
+            fs::write(install_dir.join(name), [0_u8; 4]).expect("touch file");
+        }
+        let candidates = discover_user_game_process_candidates(&install_dir);
+        assert!(candidates.iter().any(|n| n == "Game.exe"));
+        assert!(candidates.iter().any(|n| n == "GameLauncher.exe"));
+        assert!(!candidates
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case("UnityCrashHandler.exe")));
+        assert!(!candidates
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case("uninstall.exe")));
+        assert!(!candidates
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case("setup.exe")));
+        assert!(!candidates
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case("vcredist_x64.exe")));
+        assert!(!candidates
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case("EasyAntiCheat.exe")));
+        let _ = fs::remove_dir_all(install_dir);
+    }
+
+    #[tokio::test]
+    async fn steam_library_endpoint_lists_installed_games() {
+        let _env = TestEnv::new(&[
+            "DSCC_STEAM_ROOT",
+            "ProgramFiles(x86)",
+            "ProgramFiles",
+            "LOCALAPPDATA",
+        ]);
+        let steam_root = make_test_steam_root("dscc-steam-lib-list");
+        install_test_steam_manifest(
+            &steam_root,
+            FORZA_HORIZON5_STEAM_APP_ID,
+            "Forza Horizon 5",
+            "ForzaHorizon5",
+            &["ForzaHorizon5.exe"],
+        );
+        install_test_steam_manifest(
+            &steam_root,
+            "987654321",
+            "Imaginary Indie Racer",
+            "ImaginaryRacer",
+            &["ImaginaryRacer.exe", "uninstall.exe"],
+        );
+        std::env::set_var("DSCC_STEAM_ROOT", &steam_root);
+        std::env::remove_var("ProgramFiles(x86)");
+        std::env::remove_var("ProgramFiles");
+        std::env::remove_var("LOCALAPPDATA");
+
+        let response = app(AgentState::mock())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/games/steam-library")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 256 * 1024).await.unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let games = parsed
+            .get("games")
+            .and_then(|games| games.as_array())
+            .expect("games array");
+        let fh5 = games
+            .iter()
+            .find(|game| {
+                game.get("appId").and_then(|app_id| app_id.as_str())
+                    == Some(FORZA_HORIZON5_STEAM_APP_ID)
+            })
+            .expect("FH5 present");
+        assert_eq!(
+            fh5.get("alreadyInCatalog")
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            fh5.get("suggestedGameId").and_then(|value| value.as_str()),
+            Some(format!("custom-{FORZA_HORIZON5_STEAM_APP_ID}").as_str())
+        );
+        let indie = games
+            .iter()
+            .find(|game| game.get("appId").and_then(|value| value.as_str()) == Some("987654321"))
+            .expect("imaginary indie present");
+        assert_eq!(
+            indie
+                .get("alreadyInCatalog")
+                .and_then(|value| value.as_bool()),
+            Some(false)
+        );
+        let process_candidates = indie
+            .get("processCandidates")
+            .and_then(|value| value.as_array())
+            .expect("process candidates");
+        let process_names: Vec<&str> = process_candidates
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect();
+        assert!(process_names.contains(&"ImaginaryRacer.exe"));
+        assert!(!process_names
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case("uninstall.exe")));
+        let _ = fs::remove_dir_all(&steam_root);
+    }
+
+    #[tokio::test]
+    async fn add_custom_game_rejects_unknown_app_id() {
+        let _env = TestEnv::new(&[
+            "DSCC_STEAM_ROOT",
+            "ProgramFiles(x86)",
+            "ProgramFiles",
+            "LOCALAPPDATA",
+        ]);
+        let steam_root = make_test_steam_root("dscc-add-custom-404");
+        std::env::set_var("DSCC_STEAM_ROOT", &steam_root);
+        std::env::remove_var("ProgramFiles(x86)");
+        std::env::remove_var("ProgramFiles");
+        std::env::remove_var("LOCALAPPDATA");
+
+        let response = app(AgentState::mock())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/games/custom")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"appId":"42"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let _ = fs::remove_dir_all(&steam_root);
+    }
+
+    #[tokio::test]
+    async fn add_custom_game_rejects_duplicate_registration() {
+        let _env = TestEnv::new(&[
+            "DSCC_STEAM_ROOT",
+            "ProgramFiles(x86)",
+            "ProgramFiles",
+            "LOCALAPPDATA",
+        ]);
+        let steam_root = make_test_steam_root("dscc-add-custom-dup");
+        install_test_steam_manifest(
+            &steam_root,
+            "555000",
+            "Sample Racer",
+            "SampleRacer",
+            &["SampleRacer.exe"],
+        );
+        std::env::set_var("DSCC_STEAM_ROOT", &steam_root);
+        std::env::remove_var("ProgramFiles(x86)");
+        std::env::remove_var("ProgramFiles");
+        std::env::remove_var("LOCALAPPDATA");
+
+        let router = app(AgentState::mock());
+        let first = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/games/custom")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"appId":"555000"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::CREATED);
+        let body = to_bytes(first.into_body(), 64 * 1024).await.unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let game = parsed.get("game").expect("game key");
+        assert_eq!(
+            game.get("gameId").and_then(|value| value.as_str()),
+            Some("custom-555000")
+        );
+        assert_eq!(
+            game.get("supportLevel").and_then(|value| value.as_str()),
+            Some("custom")
+        );
+
+        let duplicate = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/games/custom")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"appId":"555000"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(duplicate.status(), StatusCode::CONFLICT);
+        let _ = fs::remove_dir_all(&steam_root);
+    }
+
+    #[tokio::test]
+    async fn add_and_remove_custom_game_round_trips() {
+        let _env = TestEnv::new(&[
+            "DSCC_STEAM_ROOT",
+            "ProgramFiles(x86)",
+            "ProgramFiles",
+            "LOCALAPPDATA",
+        ]);
+        let steam_root = make_test_steam_root("dscc-add-remove-custom");
+        install_test_steam_manifest(
+            &steam_root,
+            "777111",
+            "Removable Racer",
+            "RemovableRacer",
+            &["RemovableRacer.exe"],
+        );
+        std::env::set_var("DSCC_STEAM_ROOT", &steam_root);
+        std::env::remove_var("ProgramFiles(x86)");
+        std::env::remove_var("ProgramFiles");
+        std::env::remove_var("LOCALAPPDATA");
+
+        let state = AgentState::mock();
+        let router = app(state.clone());
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/games/custom")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"appId":"777111"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        {
+            let inner = state.inner.read().await;
+            assert!(inner.user_games.contains_key("custom-777111"));
+        }
+
+        let delete_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/games/custom/custom-777111")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
+
+        let missing_delete = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::DELETE)
+                    .uri("/api/games/custom/custom-777111")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing_delete.status(), StatusCode::NOT_FOUND);
+
+        {
+            let inner = state.inner.read().await;
+            assert!(!inner.user_games.contains_key("custom-777111"));
+        }
+        let _ = fs::remove_dir_all(&steam_root);
+    }
+
+    #[tokio::test]
+    async fn browse_steam_library_lists_root_entries() {
+        let _env = TestEnv::new(&[
+            "DSCC_STEAM_ROOT",
+            "ProgramFiles(x86)",
+            "ProgramFiles",
+            "LOCALAPPDATA",
+        ]);
+        let steam_root = make_test_steam_root("dscc-browse-root");
+        std::env::set_var("DSCC_STEAM_ROOT", &steam_root);
+        std::env::remove_var("ProgramFiles(x86)");
+        std::env::remove_var("ProgramFiles");
+        std::env::remove_var("LOCALAPPDATA");
+
+        install_test_steam_manifest(
+            &steam_root,
+            "9911",
+            "Browse Test Game",
+            "BrowseTestGame",
+            &["LauncherA.exe", "GameB.exe"],
+        );
+        // Add a nested directory so we can confirm directories are surfaced.
+        let install_path = steam_root
+            .join("steamapps")
+            .join("common")
+            .join("BrowseTestGame");
+        fs::create_dir_all(install_path.join("Binaries").join("Win64")).expect("nested dirs");
+        fs::write(
+            install_path.join("Binaries").join("Win64").join("Game-Shipping.exe"),
+            [0_u8; 4],
+        )
+        .expect("nested exe");
+
+        let response = app(AgentState::mock())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/games/steam-library/browse?appId=9911&path=")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let payload: SteamLibraryBrowseResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload.app_id, "9911");
+        assert_eq!(payload.relative_path, "");
+        assert!(!payload.truncated);
+        let names: Vec<_> = payload.entries.iter().map(|e| e.name.as_str()).collect();
+        // Directories sort first, then exes — alphabetical within each group.
+        assert_eq!(names, vec!["Binaries", "GameB.exe", "LauncherA.exe"]);
+        let kinds: Vec<_> = payload.entries.iter().map(|e| e.kind.as_str()).collect();
+        assert_eq!(kinds, vec!["dir", "exe", "exe"]);
+
+        // Walk into the nested directory.
+        let nested = app(AgentState::mock())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/games/steam-library/browse?appId=9911&path=Binaries/Win64")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(nested.status(), StatusCode::OK);
+        let body = to_bytes(nested.into_body(), 1024 * 1024).await.unwrap();
+        let payload: SteamLibraryBrowseResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload.relative_path, "Binaries/Win64");
+        let names: Vec<_> = payload.entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["Game-Shipping.exe"]);
+
+        let _ = fs::remove_dir_all(&steam_root);
+    }
+
+    #[tokio::test]
+    async fn browse_steam_library_blocks_path_traversal() {
+        let _env = TestEnv::new(&[
+            "DSCC_STEAM_ROOT",
+            "ProgramFiles(x86)",
+            "ProgramFiles",
+            "LOCALAPPDATA",
+        ]);
+        let steam_root = make_test_steam_root("dscc-browse-traversal");
+        std::env::set_var("DSCC_STEAM_ROOT", &steam_root);
+        std::env::remove_var("ProgramFiles(x86)");
+        std::env::remove_var("ProgramFiles");
+        std::env::remove_var("LOCALAPPDATA");
+
+        install_test_steam_manifest(
+            &steam_root,
+            "9912",
+            "Traversal Test",
+            "TraversalTest",
+            &["GameOnly.exe"],
+        );
+
+        let response = app(AgentState::mock())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/games/steam-library/browse?appId=9912&path=../..")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let _ = fs::remove_dir_all(&steam_root);
+    }
+
+    #[tokio::test]
+    async fn snapshot_supported_games_includes_user_games_with_custom_support_level() {
+        let state = AgentState::mock();
+        {
+            let mut inner = state.inner.write().await;
+            inner.user_games.insert(
+                "custom-12345".to_string(),
+                make_user_game(
+                    "12345",
+                    "Test Custom Game",
+                    "C:/dscc/fake/install",
+                    &["TestCustomGame.exe"],
+                ),
+            );
+        }
+        let response = app(state)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/snapshot")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let snapshot: AgentSnapshotResponse = serde_json::from_slice(&body).unwrap();
+        let custom = snapshot
+            .game_detection
+            .supported_games
+            .iter()
+            .find(|game| game.game_id == "custom-12345")
+            .expect("custom game appears in supported_games");
+        assert_eq!(custom.support_level, "custom");
+        assert_eq!(custom.app_id.as_deref(), Some("12345"));
+        assert_eq!(custom.name, "Test Custom Game");
+    }
+
+    #[test]
+    fn persisted_state_round_trips_user_games() {
+        let mut inner_user_games = BTreeMap::new();
+        inner_user_games.insert(
+            "custom-99887".to_string(),
+            make_user_game(
+                "99887",
+                "Round Trip Racer",
+                "C:/dscc/round-trip",
+                &["RoundTrip.exe"],
+            ),
+        );
+        let persisted = PersistedAgentState {
+            version: PERSISTED_STATE_VERSION,
+            user_games: inner_user_games.clone(),
+            ..Default::default()
+        };
+        let serialized = serde_json::to_string(&persisted).expect("serialize");
+        let deserialized: PersistedAgentState =
+            serde_json::from_str(&serialized).expect("deserialize");
+        let normalized = deserialized.normalized();
+        assert!(normalized.user_games.contains_key("custom-99887"));
+        let restored = normalized
+            .user_games
+            .get("custom-99887")
+            .expect("user game survives");
+        assert_eq!(restored.name, "Round Trip Racer");
+        assert_eq!(restored.process_names, vec!["RoundTrip.exe".to_string()]);
+    }
+
+    #[test]
+    fn normalization_drops_user_games_that_collide_with_built_in_modules() {
+        let mut user_games = BTreeMap::new();
+        // Use a built-in module id (forza-horizon-5) as the user game id;
+        // normalization should drop it.
+        user_games.insert(
+            "forza-horizon-5".to_string(),
+            UserGameConfig {
+                game_id: "forza-horizon-5".to_string(),
+                app_id: FORZA_HORIZON5_STEAM_APP_ID.to_string(),
+                name: "Bad clone".to_string(),
+                install_dir: "FH5".to_string(),
+                install_path: "C:/whatever".to_string(),
+                process_names: vec!["ForzaHorizon5.exe".to_string()],
+                added_at: current_timestamp(),
+            },
+        );
+        let persisted = PersistedAgentState {
+            version: PERSISTED_STATE_VERSION,
+            user_games,
+            ..Default::default()
+        };
+        let normalized = persisted.normalized();
+        assert!(normalized.user_games.is_empty());
+    }
+
+    #[test]
+    fn process_detection_matches_user_game_process_name() {
+        let mut user_games = BTreeMap::new();
+        user_games.insert(
+            "custom-99887".to_string(),
+            make_user_game(
+                "99887",
+                "Round Trip Racer",
+                "C:/dscc/round-trip",
+                &["RoundTrip.exe"],
+            ),
+        );
+        let detection =
+            detect_running_game_from_processes_with_user_games(["RoundTrip.exe"], &user_games);
+        assert_eq!(detection.active_game_id.as_deref(), Some("custom-99887"));
+        assert_eq!(detection.module_id.as_deref(), Some("custom-99887"));
+        // Custom games do not have a telemetry adapter; the response omits
+        // the adapter id and profile id.
+        assert!(detection.adapter_id.is_none());
+        assert!(detection.profile_id.is_none());
+        assert_eq!(detection.candidates.len(), 1);
     }
 
     async fn get_json<T>(router: Router, uri: &str, expected_status: StatusCode) -> T

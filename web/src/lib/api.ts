@@ -1,4 +1,5 @@
 import type {
+  AddCustomGameResponse,
   AppSnapshot,
   AppSettingsResponse,
   ControllerConfiguration,
@@ -12,7 +13,7 @@ import type {
   ExportedProfile,
   GameDetection,
   HealthState,
-  IntegrationStatus,
+  AdapterStatus,
   LogEntry,
   ModuleSummary,
   ProfileResolution,
@@ -21,9 +22,36 @@ import type {
   SteamInputBindingWriteRequest,
   SteamInputBindingWriteResponse,
   SteamInputStatus,
+  SteamLibraryBrowseResponse,
+  SteamLibraryResponse,
   SupportedGame,
   TelemetrySignal
 } from './types';
+import {
+  activateMockProfile,
+  addMockCustomGame,
+  browseMockSteamLibrary,
+  clearMockProfileOverride,
+  connectMockAppSnapshotSocket,
+  createMockProfile,
+  deleteMockProfile,
+  exportMockProfile,
+  getMockAppSnapshot,
+  getMockControllerConfig,
+  getMockControllerInput,
+  getMockSteamLibrary,
+  importMockProfile,
+  isMockApiEnabled,
+  removeMockCustomGame,
+  renameMockProfile,
+  renameMockController,
+  runMockEffectTest,
+  saveMockAppSettings,
+  saveMockControllerConfig,
+  saveMockProfileConfig,
+  setMockProfileOverride,
+  writeMockSteamInputBinding
+} from './mock/api';
 
 const API_BASE = '/api';
 
@@ -35,10 +63,9 @@ interface AgentStatusDto {
   version: string;
   healthy: boolean;
   bind_address?: string;
-  bindAddress?: string;
   uptime_seconds: number;
   active_profile_id: string | null;
-  active_integration_id: string | null;
+  active_adapter_id: string | null;
 }
 
 interface ControllerDto {
@@ -58,10 +85,12 @@ interface ProfileDto {
   id: string;
   name: string;
   built_in: boolean;
+  game_id?: string | null;
+  gameId?: string | null;
   active: boolean;
 }
 
-interface IntegrationDto {
+interface AdapterDto {
   id: string;
   name: string;
   enabled: boolean;
@@ -118,33 +147,24 @@ interface ControllerInputResponseDto {
 
 interface AgentSnapshotDto {
   status: AgentStatusDto;
-  app_settings?: AppSettingsResponse;
-  appSettings?: AppSettingsResponse;
+  appSettings: AppSettingsResponse;
   controllers: ControllerDto[];
   profiles: ProfileDto[];
-  integrations: IntegrationDto[];
+  adapters: AdapterDto[];
   modules: ModuleSummary[];
-  steam_input?: SteamInputStatus;
-  steamInput?: SteamInputStatus;
-  game_detection?: GameDetection;
-  gameDetection?: GameDetection;
-  profile_resolution?: ProfileResolution;
-  profileResolution?: ProfileResolution;
-  effect_state?: CurrentEffectState;
-  effectState?: CurrentEffectState;
+  steamInput: SteamInputStatus;
+  gameDetection: GameDetection;
+  profileResolution: ProfileResolution;
+  effectState: CurrentEffectState;
   telemetry: TelemetrySignalDto[];
   logs: AgentLogDto[];
   diagnostics: DiagnosticsDto;
-  partial_errors?: SnapshotPartialError[];
-  partialErrors?: SnapshotPartialError[];
+  partialErrors: SnapshotPartialError[];
 }
 
 type SnapshotSocketMessage = {
   type?: string;
   snapshot?: unknown;
-  appSnapshot?: unknown;
-  data?: unknown;
-  payload?: unknown;
   [key: string]: unknown;
 };
 
@@ -200,7 +220,7 @@ const FALLBACK_AGENT_STATUS: AgentStatusDto = {
   healthy: false,
   uptime_seconds: 0,
   active_profile_id: null,
-  active_integration_id: null
+  active_adapter_id: null
 };
 
 const FALLBACK_STEAM_INPUT: SteamInputStatus = {
@@ -218,6 +238,7 @@ const FALLBACK_GAME_DETECTION: GameDetection = {
   confidence: 0,
   processName: null,
   moduleId: null,
+  adapterId: null,
   profileId: null,
   candidates: []
 };
@@ -225,7 +246,7 @@ const FALLBACK_GAME_DETECTION: GameDetection = {
 const FALLBACK_PROFILE_RESOLUTION: ProfileResolution = {
   controllerId: null,
   detectedGameId: null,
-  activeIntegrationId: null,
+  activeAdapterId: null,
   selectedProfileId: null,
   reason: 'unavailable',
   overrideProfileId: null,
@@ -268,6 +289,7 @@ const FALLBACK_APP_SETTINGS: AppSettingsResponse = {
 };
 
 export async function getAppSnapshot(): Promise<AppSnapshot> {
+  if (isMockApiEnabled()) return getMockAppSnapshot();
   return mapSnapshotDto(await apiFetch<AgentSnapshotDto | AppSnapshot>('/snapshot'));
 }
 
@@ -278,6 +300,7 @@ export async function saveAppSettings(request: {
     installPath?: string | null;
   };
 }): Promise<AppSettingsResponse> {
+  if (isMockApiEnabled()) return saveMockAppSettings(request);
   return apiFetch<AppSettingsResponse>('/app-settings', {
     method: 'PUT',
     body: JSON.stringify(request)
@@ -285,6 +308,7 @@ export async function saveAppSettings(request: {
 }
 
 export function connectAppSnapshotSocket(callbacks: AppSnapshotSocketCallbacks): () => void {
+  if (isMockApiEnabled()) return connectMockAppSnapshotSocket(callbacks);
   if (typeof window === 'undefined' || typeof WebSocket === 'undefined') {
     callbacks.onUnavailable?.();
     return () => {};
@@ -346,6 +370,8 @@ export async function runEffectTest(
     durationMs: Math.max(100, Math.min(60000, request.durationMs))
   };
 
+  if (isMockApiEnabled()) return runMockEffectTest(safeRequest);
+
   const endpoint = controllerId
     ? `/controllers/${encodeURIComponent(controllerId)}/test-effect`
     : '/controllers/current/test-effect';
@@ -368,6 +394,7 @@ export async function runEffectTest(
 }
 
 export async function getControllerInput(controllerId?: string | null): Promise<ControllerInputState> {
+  if (isMockApiEnabled()) return getMockControllerInput(controllerId);
   const endpoint = controllerId
     ? `/controllers/${encodeURIComponent(controllerId)}/input`
     : '/controllers/current/input';
@@ -384,6 +411,7 @@ export async function getControllerInput(controllerId?: string | null): Promise<
 }
 
 export async function getControllerConfig(controllerId: string): Promise<ControllerConfiguration> {
+  if (isMockApiEnabled()) return getMockControllerConfig(controllerId);
   return apiFetch<ControllerConfiguration>(`/controllers/${encodeURIComponent(controllerId)}/config`);
 }
 
@@ -391,16 +419,27 @@ export async function saveControllerConfig(
   controllerId: string,
   config: Omit<ControllerConfiguration, 'controllerId' | 'model'>
 ): Promise<ControllerConfiguration> {
+  if (isMockApiEnabled()) return saveMockControllerConfig(controllerId, config);
   return apiFetch<ControllerConfiguration>(`/controllers/${encodeURIComponent(controllerId)}/config`, {
     method: 'PUT',
     body: JSON.stringify(config)
   });
 }
 
+export async function updateControllerName(controllerId: string, name: string): Promise<ControllerStatus> {
+  if (isMockApiEnabled()) return renameMockController(controllerId, name);
+  const dto = await apiFetch<ControllerDto>(`/controllers/${encodeURIComponent(controllerId)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ name })
+  });
+  return mapController(dto);
+}
+
 export async function saveProfileConfig(
   profileId: string,
   config: Omit<ControllerConfiguration, 'controllerId' | 'model'>
 ): Promise<ActionAcceptedDto> {
+  if (isMockApiEnabled()) return saveMockProfileConfig(profileId, config);
   return apiFetch<ActionAcceptedDto>(`/profiles/${encodeURIComponent(profileId)}/config`, {
     method: 'PUT',
     body: JSON.stringify(config)
@@ -412,6 +451,7 @@ export async function setProfileOverride(request: {
   gameId?: string | null;
   profileId: string;
 }): Promise<ProfileResolution> {
+  if (isMockApiEnabled()) return setMockProfileOverride(request);
   return apiFetch<ProfileResolution>('/profile-resolution/override', {
     method: 'PUT',
     body: JSON.stringify(request)
@@ -422,6 +462,7 @@ export async function clearProfileOverride(request?: {
   controllerId?: string | null;
   gameId?: string | null;
 }): Promise<ProfileResolution> {
+  if (isMockApiEnabled()) return clearMockProfileOverride(request);
   const params = new URLSearchParams();
   if (request?.controllerId) params.set('controllerId', request.controllerId);
   if (request?.gameId) params.set('gameId', request.gameId);
@@ -432,20 +473,23 @@ export async function clearProfileOverride(request?: {
 }
 
 export async function activateProfile(profileId: string): Promise<ActionAcceptedDto> {
+  if (isMockApiEnabled()) return activateMockProfile(profileId);
   return apiFetch<ActionAcceptedDto>(`/profiles/${encodeURIComponent(profileId)}/activate`, {
     method: 'POST'
   });
 }
 
-export async function createProfile(name: string): Promise<ProfileSummary> {
+export async function createProfile(name: string, options?: { gameId?: string | null }): Promise<ProfileSummary> {
+  if (isMockApiEnabled()) return createMockProfile(name, options);
   const dto = await apiFetch<ProfileDto>('/profiles', {
     method: 'POST',
-    body: JSON.stringify({ name })
+    body: JSON.stringify({ name, gameId: options?.gameId ?? null })
   });
   return mapProfile(dto);
 }
 
 export async function renameProfile(profileId: string, name: string): Promise<ProfileSummary> {
+  if (isMockApiEnabled()) return renameMockProfile(profileId, name);
   const dto = await apiFetch<ProfileDto>(`/profiles/${encodeURIComponent(profileId)}`, {
     method: 'PUT',
     body: JSON.stringify({ name })
@@ -454,14 +498,17 @@ export async function renameProfile(profileId: string, name: string): Promise<Pr
 }
 
 export async function exportProfile(profileId: string): Promise<ExportedProfile> {
+  if (isMockApiEnabled()) return exportMockProfile(profileId);
   return apiFetch<ExportedProfile>(`/profiles/${encodeURIComponent(profileId)}/export`);
 }
 
 export async function importProfile(profile: {
+  schema: string;
   id?: string | null;
   name: string;
   config?: ExportedProfile['config'];
 }): Promise<ProfileSummary> {
+  if (isMockApiEnabled()) return importMockProfile(profile);
   const dto = await apiFetch<ProfileDto>('/profiles/import', {
     method: 'POST',
     body: JSON.stringify(profile)
@@ -470,6 +517,7 @@ export async function importProfile(profile: {
 }
 
 export async function deleteProfile(profileId: string): Promise<ActionAcceptedDto | void> {
+  if (isMockApiEnabled()) return deleteMockProfile(profileId);
   try {
     return await apiFetch<ActionAcceptedDto | void>(`/profiles/${encodeURIComponent(profileId)}`, {
       method: 'DELETE'
@@ -485,10 +533,47 @@ export async function deleteProfile(profileId: string): Promise<ActionAcceptedDt
 export async function writeSteamInputBinding(
   request: SteamInputBindingWriteRequest
 ): Promise<SteamInputBindingWriteResponse> {
+  if (isMockApiEnabled()) return writeMockSteamInputBinding(request);
   return apiFetch<SteamInputBindingWriteResponse>('/steam-input/bindings', {
     method: 'POST',
     body: JSON.stringify(request)
   });
+}
+
+export async function getSteamLibrary(): Promise<SteamLibraryResponse> {
+  if (isMockApiEnabled()) return getMockSteamLibrary();
+  return apiFetch<SteamLibraryResponse>('/games/steam-library');
+}
+
+export async function addCustomGame(
+  appId: string,
+  processNames: string[] = []
+): Promise<AddCustomGameResponse> {
+  if (isMockApiEnabled()) return addMockCustomGame(appId, processNames);
+  const body: { appId: string; processNames?: string[] } = { appId };
+  if (processNames.length > 0) body.processNames = processNames;
+  return apiFetch<AddCustomGameResponse>('/games/custom', {
+    method: 'POST',
+    headers: jsonHeaders,
+    body: JSON.stringify(body)
+  });
+}
+
+export async function removeCustomGame(gameId: string): Promise<void> {
+  if (isMockApiEnabled()) return removeMockCustomGame(gameId);
+  await apiFetch<void>(`/games/custom/${encodeURIComponent(gameId)}`, {
+    method: 'DELETE'
+  });
+}
+
+export async function browseSteamLibrary(
+  appId: string,
+  path = ''
+): Promise<SteamLibraryBrowseResponse> {
+  if (isMockApiEnabled()) return browseMockSteamLibrary(appId, path);
+  const qs = new URLSearchParams({ appId });
+  if (path) qs.set('path', path);
+  return apiFetch<SteamLibraryBrowseResponse>(`/games/steam-library/browse?${qs.toString()}`);
 }
 
 function mapSnapshotDto(dto: AgentSnapshotDto | AppSnapshot): AppSnapshot {
@@ -496,20 +581,20 @@ function mapSnapshotDto(dto: AgentSnapshotDto | AppSnapshot): AppSnapshot {
 
   const snapshot = mapAgentSnapshot(
     dto.status ?? FALLBACK_AGENT_STATUS,
-    dto.app_settings ?? dto.appSettings ?? FALLBACK_APP_SETTINGS,
+    dto.appSettings ?? FALLBACK_APP_SETTINGS,
     dto.controllers ?? [],
     dto.profiles ?? [],
-    dto.integrations ?? [],
+    dto.adapters ?? [],
     dto.modules ?? [],
-    dto.steam_input ?? dto.steamInput ?? FALLBACK_STEAM_INPUT,
-    dto.game_detection ?? dto.gameDetection ?? FALLBACK_GAME_DETECTION,
-    dto.profile_resolution ?? dto.profileResolution ?? FALLBACK_PROFILE_RESOLUTION,
-    dto.effect_state ?? dto.effectState ?? FALLBACK_EFFECT_STATE,
+    dto.steamInput ?? FALLBACK_STEAM_INPUT,
+    dto.gameDetection ?? FALLBACK_GAME_DETECTION,
+    dto.profileResolution ?? FALLBACK_PROFILE_RESOLUTION,
+    dto.effectState ?? FALLBACK_EFFECT_STATE,
     dto.telemetry ?? [],
     dto.logs ?? [],
     dto.diagnostics ?? FALLBACK_DIAGNOSTICS
   );
-  snapshot.partialErrors = normalizePartialErrors(dto.partial_errors ?? dto.partialErrors);
+  snapshot.partialErrors = normalizePartialErrors(dto.partialErrors);
   return snapshot;
 }
 
@@ -543,14 +628,14 @@ function isCompleteSnapshotPayload(value: unknown): value is AgentSnapshotDto | 
   return Boolean(
     snapshot.status &&
       Array.isArray(snapshot.controllers) &&
-      (snapshot.app_settings || snapshot.appSettings) &&
+      snapshot.appSettings &&
       Array.isArray(snapshot.profiles) &&
-      Array.isArray(snapshot.integrations) &&
+      Array.isArray(snapshot.adapters) &&
       Array.isArray(snapshot.modules) &&
-      (snapshot.steam_input || snapshot.steamInput) &&
-      (snapshot.game_detection || snapshot.gameDetection) &&
-      (snapshot.profile_resolution || snapshot.profileResolution) &&
-      (snapshot.effect_state || snapshot.effectState) &&
+      snapshot.steamInput &&
+      snapshot.gameDetection &&
+      snapshot.profileResolution &&
+      snapshot.effectState &&
       Array.isArray(snapshot.telemetry) &&
       Array.isArray(snapshot.logs) &&
       snapshot.diagnostics
@@ -574,14 +659,11 @@ function parseSocketMessage(data: unknown): SnapshotSocketMessage | null {
 }
 
 function snapshotFromSocketMessage(message: SnapshotSocketMessage): AppSnapshot | null {
-  for (const candidate of [message.snapshot, message.appSnapshot, message.data, message.payload, message]) {
-    if (isCompleteSnapshotPayload(candidate)) return mapSnapshotDto(candidate);
-  }
-  return null;
+  if (message.type !== 'snapshot') return null;
+  return isCompleteSnapshotPayload(message.snapshot) ? mapSnapshotDto(message.snapshot) : null;
 }
 
 function isInvalidationMessage(message: SnapshotSocketMessage): boolean {
-  if (message.invalidate === true || Array.isArray(message.invalidates)) return true;
   const type = typeof message.type === 'string' ? message.type : '';
   return type.length > 0 && type !== 'snapshot' && type !== 'ping' && type !== 'pong';
 }
@@ -591,7 +673,7 @@ function mapAgentSnapshot(
   appSettings: AppSettingsResponse,
   controllers: ControllerDto[],
   profiles: ProfileDto[],
-  integrations: IntegrationDto[],
+  adapters: AdapterDto[],
   modules: ModuleSummary[],
   steamInput: SteamInputStatus,
   gameDetection: GameDetection,
@@ -602,19 +684,19 @@ function mapAgentSnapshot(
   diagnostics: DiagnosticsDto
 ): AppSnapshot {
   const profileMap = new Map(profiles.map((profile) => [profile.id, profile.name]));
-  const integrationMap = new Map(integrations.map((integration) => [integration.id, integration.name]));
+  const adapterMap = new Map(adapters.map((adapter) => [adapter.id, adapter.name]));
   const normalizedGameDetection = normalizeGameDetection(gameDetection);
 
   return {
     status: {
       version: status.version,
       uptime: formatDuration(status.uptime_seconds),
-      bindAddress: status.bind_address ?? status.bindAddress ?? appSettings.effectiveBindAddress,
+      bindAddress: status.bind_address ?? appSettings.effectiveBindAddress,
       mode: 'agent',
       health: status.healthy ? 'running' : 'faulted',
       activeProfile: profileMap.get(status.active_profile_id ?? '') ?? status.active_profile_id ?? 'none',
-      activeIntegration:
-        integrationMap.get(status.active_integration_id ?? '') ?? status.active_integration_id ?? 'none'
+      activeAdapter:
+        adapterMap.get(status.active_adapter_id ?? '') ?? status.active_adapter_id ?? 'none'
     },
     appSettings,
     controllers: controllers.map(mapController),
@@ -625,13 +707,13 @@ function mapAgentSnapshot(
       profileResolution,
       normalizedGameDetection
     ),
-    integrations: integrations.map(mapIntegration),
+    adapters: adapters.map(mapAdapter),
     modules,
     steamInput,
     gameDetection: normalizedGameDetection,
     profileResolution,
     effectState,
-    telemetry: mapTelemetry(status, integrations, telemetry),
+    telemetry: mapTelemetry(status, adapters, telemetry),
     logs: logs.map(mapLog).slice(0, 8),
     diagnostics: diagnostics.checks.map(mapDiagnostic),
     partialErrors: []
@@ -640,12 +722,8 @@ function mapAgentSnapshot(
 
 function normalizeGameDetection(gameDetection: GameDetection | undefined): GameDetection {
   const source = gameDetection ?? FALLBACK_GAME_DETECTION;
-  const looseSource = source as GameDetection & {
-    supported_games?: SupportedGame[];
-    selected_game?: SupportedGame | null;
-  };
-  const supportedGames = looseSource.supportedGames ?? looseSource.supported_games ?? [];
-  const selectedGame = looseSource.selectedGame ?? looseSource.selected_game ?? null;
+  const supportedGames = source.supportedGames ?? [];
+  const selectedGame = source.selectedGame ?? null;
 
   return {
     ...source,
@@ -655,6 +733,7 @@ function normalizeGameDetection(gameDetection: GameDetection | undefined): GameD
     confidence: source.confidence ?? 0,
     processName: source.processName ?? null,
     moduleId: source.moduleId ?? null,
+    adapterId: source.adapterId ?? null,
     profileId: source.profileId ?? null,
     candidates: Array.isArray(source.candidates) ? source.candidates : [],
     supportedGames: Array.isArray(supportedGames) ? supportedGames : [],
@@ -681,11 +760,12 @@ function mapController(controller: ControllerDto): ControllerStatus {
 }
 
 function mapProfile(profile: ProfileDto): ProfileSummary {
+  const gameId = profile.game_id ?? profile.gameId ?? null;
   return {
     id: profile.id,
     name: profile.name,
-    scope: profile.built_in ? 'Built-in' : 'Global',
-    gameId: 'all',
+    scope: profile.built_in ? 'Built-in' : gameId ? 'Game' : 'Global',
+    gameId: gameId ?? 'all',
     active: profile.active,
     rules: 0,
     updatedAt: 'agent'
@@ -720,26 +800,26 @@ function makeControllerProfileAssignments(
   ];
 }
 
-function mapIntegration(integration: IntegrationDto): IntegrationStatus {
+function mapAdapter(adapter: AdapterDto): AdapterStatus {
   return {
-    id: integration.id,
-    name: integration.name,
-    state: mapIntegrationState(integration),
-    packetRateHz: integration.packet_rate_hz ?? 0,
-    config: integration.enabled ? `${integration.protocol ?? 'adapter'} / agent managed` : 'Disabled',
+    id: adapter.id,
+    name: adapter.name,
+    state: mapAdapterState(adapter),
+    packetRateHz: adapter.packet_rate_hz ?? 0,
+    config: adapter.enabled ? `${adapter.protocol ?? 'adapter'} / agent managed` : 'Disabled',
     setupHint:
-      integration.setup_hint ??
-      (integration.enabled ? 'Agent reports this adapter as enabled.' : 'Enable this adapter to start telemetry.')
+      adapter.setup_hint ??
+      (adapter.enabled ? 'Agent reports this adapter as enabled.' : 'Enable this adapter to start telemetry.')
   };
 }
 
 function mapTelemetry(
   status: AgentStatusDto,
-  integrations: IntegrationDto[],
+  adapters: AdapterDto[],
   telemetry: TelemetrySignalDto[]
 ): TelemetrySignal[] {
   void status;
-  void integrations;
+  void adapters;
   return telemetry.map((signal) => ({
     name: signal.name,
     value: signal.value,
@@ -787,12 +867,12 @@ function mapBatteryState(state?: string): ControllerStatus['batteryState'] {
   return 'unknown';
 }
 
-function mapIntegrationState(integration: IntegrationDto): HealthState {
-  if (!integration.enabled || integration.state === 'disabled') return 'unavailable';
-  if (integration.state === 'connected') return 'running';
-  if (integration.state === 'ready') return 'ready';
-  if (integration.state === 'needs_setup') return 'needs_setup';
-  if (integration.state === 'faulted') return 'faulted';
+function mapAdapterState(adapter: AdapterDto): HealthState {
+  if (!adapter.enabled || adapter.state === 'disabled') return 'unavailable';
+  if (adapter.state === 'connected') return 'running';
+  if (adapter.state === 'ready') return 'ready';
+  if (adapter.state === 'needs_setup') return 'needs_setup';
+  if (adapter.state === 'faulted') return 'faulted';
   return 'ready';
 }
 
