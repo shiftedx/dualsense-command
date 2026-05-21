@@ -3,8 +3,8 @@ use axum::{
     http::{Method, Request, StatusCode},
 };
 use dscc_agent::{
-    app, AgentSnapshotResponse, AgentState, ControllerSummary, EffectTestResponse,
-    IntegrationSummary, TelemetrySignalResponse,
+    app, AdapterSummary, AgentSnapshotResponse, AgentState, ControllerSummary, EffectTestResponse,
+    TelemetrySignalResponse,
 };
 use tower::ServiceExt;
 
@@ -23,14 +23,15 @@ async fn agent_api_contract_serves_pre_hardware_runtime_state() {
         .iter()
         .any(|controller| controller.model == "DualSense Edge"));
 
-    let integrations: Vec<IntegrationSummary> =
-        get_json(router.clone(), "/api/integrations", StatusCode::OK).await;
-    assert!(integrations
+    let adapters: Vec<AdapterSummary> =
+        get_json(router.clone(), "/api/adapters", StatusCode::OK).await;
+    assert!(adapters
         .iter()
-        .any(|integration| integration.id == "forza-data-out"));
-    assert!(integrations
+        .any(|adapter| adapter.id == "forza-data-out"));
+    assert!(adapters
         .iter()
-        .any(|integration| integration.id == "forza-data-out" && integration.setup_url.is_some()));
+        .any(|adapter| adapter.id == "forza-data-out" && adapter.setup_url.is_some()));
+    assert_status(router.clone(), "/api/integrations", StatusCode::NOT_FOUND).await;
 
     let telemetry: Vec<TelemetrySignalResponse> =
         get_json(router.clone(), "/api/telemetry", StatusCode::OK).await;
@@ -51,9 +52,9 @@ async fn agent_api_contract_serves_pre_hardware_runtime_state() {
         vec!["forza-horizon", "forza-horizon-immersive"]
     );
     assert!(snapshot
-        .integrations
+        .adapters
         .iter()
-        .any(|integration| integration.id == "forza-data-out"));
+        .any(|adapter| adapter.id == "forza-data-out"));
     assert!(snapshot
         .diagnostics
         .checks
@@ -61,6 +62,38 @@ async fn agent_api_contract_serves_pre_hardware_runtime_state() {
         .any(|check| check.name == "api" && check.status == "ok"));
     assert!(snapshot.effect_state.dry_run);
     assert!(snapshot.partial_errors.is_empty());
+
+    let snapshot_json: serde_json::Value =
+        get_json(router.clone(), "/api/snapshot", StatusCode::OK).await;
+    assert!(snapshot_json.get("appSettings").is_some());
+    assert!(snapshot_json.get("gameDetection").is_some());
+    assert!(snapshot_json.get("profileResolution").is_some());
+    assert!(snapshot_json.get("adapters").is_some());
+    assert!(snapshot_json.get("app_settings").is_none());
+    assert!(snapshot_json.get("integrations").is_none());
+    assert!(snapshot_json
+        .get("status")
+        .and_then(|status| status.get("active_adapter_id"))
+        .is_some());
+    assert!(snapshot_json
+        .get("status")
+        .and_then(|status| status.get("active_integration_id"))
+        .is_none());
+    assert!(snapshot_json
+        .get("profileResolution")
+        .and_then(|resolution| resolution.get("activeAdapterId"))
+        .is_some());
+    assert!(snapshot_json
+        .get("profileResolution")
+        .and_then(|resolution| resolution.get("activeIntegrationId"))
+        .is_none());
+    assert!(snapshot_json
+        .get("modules")
+        .and_then(|modules| modules.as_array())
+        .is_some_and(|modules| modules.iter().any(|module| {
+            module.get("id").and_then(|id| id.as_str()) == Some("forza-data-out")
+                && module.get("kind").and_then(|kind| kind.as_str()) == Some("adapter")
+        })));
 
     let effect: EffectTestResponse = post_json(
         router,
@@ -71,6 +104,14 @@ async fn agent_api_contract_serves_pre_hardware_runtime_state() {
     .await;
     assert!(effect.accepted);
     assert!(effect.dry_run);
+}
+
+async fn assert_status(router: axum::Router, uri: &str, expected: StatusCode) {
+    let response = router
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), expected);
 }
 
 async fn get_json<T>(router: axum::Router, uri: &str, expected: StatusCode) -> T

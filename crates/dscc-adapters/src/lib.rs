@@ -15,10 +15,10 @@ use serde::{Deserialize, Serialize};
 use dscc_telemetry::SignalSnapshot;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct BuiltInIntegration {
+pub struct BuiltInAdapter {
     pub id: &'static str,
     pub display_name: &'static str,
-    pub protocol: IntegrationProtocol,
+    pub protocol: AdapterProtocol,
     pub default_port: Option<u16>,
     pub packet_formats: &'static [&'static str],
     pub setup_hint: &'static str,
@@ -28,7 +28,7 @@ pub struct BuiltInIntegration {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum IntegrationProtocol {
+pub enum AdapterProtocol {
     Synthetic,
     Udp,
     SharedMemory,
@@ -36,62 +36,62 @@ pub enum IntegrationProtocol {
     Custom,
 }
 
-pub fn built_in_integrations() -> &'static [BuiltInIntegration] {
+pub fn built_in_adapters() -> &'static [BuiltInAdapter] {
     &[
-        BuiltInIntegration {
+        BuiltInAdapter {
             id: "forza-data-out",
             display_name: "Forza Data Out",
-            protocol: IntegrationProtocol::Udp,
+            protocol: AdapterProtocol::Udp,
             default_port: Some(5300),
             packet_formats: &["sled", "dash"],
             setup_hint: "Enable UDP Race Telemetry in-game, set the target IP to localhost or this PC's LAN IP, and match the configured port.",
             setup_url: Some("https://support.forzamotorsport.net/hc/en-us/articles/21742934024211-Forza-Motorsport-Data-Out-Documentation"),
             enabled_by_default: false,
         },
-        BuiltInIntegration {
+        BuiltInAdapter {
             id: "ea-f1-udp",
             display_name: "EA F1 UDP Telemetry",
-            protocol: IntegrationProtocol::Udp,
+            protocol: AdapterProtocol::Udp,
             default_port: Some(20777),
             packet_formats: &["f1-25", "f1-24"],
             setup_hint: "Enable UDP telemetry in the F1 game settings and use a supported packet format.",
             setup_url: Some("https://forums.ea.com/blog/f1-games-game-info-hub-en/f1%C2%AE-25-udp-specification/12187347"),
             enabled_by_default: false,
         },
-        BuiltInIntegration {
+        BuiltInAdapter {
             id: "ea-wrc-udp",
             display_name: "EA SPORTS WRC UDP",
-            protocol: IntegrationProtocol::Udp,
+            protocol: AdapterProtocol::Udp,
             default_port: Some(20777),
             packet_formats: &["wrc-v1.3"],
             setup_hint: "Configure the game's UDP telemetry file, then bind DSCC to the same port.",
             setup_url: Some("https://forums.ea.com/t5/s/tghpe58374/attachments/tghpe58374/wrc-general-discussion-en/2667/1/EA%20SPORTS%20WRC%20-%20UDP%20Telemetry%20Guide%20%28v1.3%29.pdf"),
             enabled_by_default: false,
         },
-        BuiltInIntegration {
+        BuiltInAdapter {
             id: "beamng",
             display_name: "BeamNG.drive",
-            protocol: IntegrationProtocol::Udp,
+            protocol: AdapterProtocol::Udp,
             default_port: Some(4444),
             packet_formats: &["outgauge", "motionsim"],
             setup_hint: "Use BeamNG's documented protocols for OutGauge, MotionSim, or a custom Lua bridge.",
             setup_url: Some("https://documentation.beamng.com/modding/protocols/"),
             enabled_by_default: false,
         },
-        BuiltInIntegration {
+        BuiltInAdapter {
             id: "live-for-speed",
             display_name: "Live for Speed",
-            protocol: IntegrationProtocol::Udp,
+            protocol: AdapterProtocol::Udp,
             default_port: Some(29999),
             packet_formats: &["insim", "outgauge"],
             setup_hint: "Configure LFS InSim or OutGauge and match DSCC's bind port.",
             setup_url: Some("https://en.lfsmanual.net/wiki/InSim"),
             enabled_by_default: false,
         },
-        BuiltInIntegration {
+        BuiltInAdapter {
             id: "raceroom",
             display_name: "RaceRoom",
-            protocol: IntegrationProtocol::SharedMemory,
+            protocol: AdapterProtocol::SharedMemory,
             default_port: None,
             packet_formats: &["shared-memory"],
             setup_hint: "Uses RaceRoom's shared-memory API when running on a supported host.",
@@ -101,34 +101,32 @@ pub fn built_in_integrations() -> &'static [BuiltInIntegration] {
     ]
 }
 
-pub fn integration_by_id(id: &str) -> Option<&'static BuiltInIntegration> {
-    built_in_integrations()
-        .iter()
-        .find(|integration| integration.id == id)
+pub fn adapter_by_id(id: &str) -> Option<&'static BuiltInAdapter> {
+    built_in_adapters().iter().find(|adapter| adapter.id == id)
 }
 
-pub fn default_config_for(integration: &BuiltInIntegration) -> AdapterConfig {
+pub fn default_config_for(adapter: &BuiltInAdapter) -> AdapterConfig {
     AdapterConfig {
-        enabled: integration.enabled_by_default,
+        enabled: adapter.enabled_by_default,
         auto_detect: true,
         bind_address: Some("127.0.0.1".to_string()),
-        port: integration.default_port,
-        packet_format: integration
+        port: adapter.default_port,
+        packet_format: adapter
             .packet_formats
             .first()
             .map(|format| (*format).to_string()),
-        setup_url: integration.setup_url.map(str::to_string),
-        setup_text: Some(integration.setup_hint.to_string()),
+        setup_url: adapter.setup_url.map(str::to_string),
+        setup_text: Some(adapter.setup_hint.to_string()),
     }
 }
 
-pub fn capabilities_for(integration: &BuiltInIntegration) -> AdapterCapabilities {
+pub fn capabilities_for(adapter: &BuiltInAdapter) -> AdapterCapabilities {
     AdapterCapabilities {
-        udp_listener: integration.protocol == IntegrationProtocol::Udp,
-        shared_memory: integration.protocol == IntegrationProtocol::SharedMemory,
-        requires_setup: integration.protocol != IntegrationProtocol::Synthetic,
+        udp_listener: adapter.protocol == AdapterProtocol::Udp,
+        shared_memory: adapter.protocol == AdapterProtocol::SharedMemory,
+        requires_setup: adapter.protocol != AdapterProtocol::Synthetic,
         supports_auto_detect: true,
-        packet_formats: integration
+        packet_formats: adapter
             .packet_formats
             .iter()
             .map(|format| (*format).to_string())
@@ -136,22 +134,62 @@ pub fn capabilities_for(integration: &BuiltInIntegration) -> AdapterCapabilities
     }
 }
 
-pub fn initial_detection(integration: &BuiltInIntegration, enabled: bool) -> AdapterDetection {
+pub fn initial_detection(adapter: &BuiltInAdapter, enabled: bool) -> AdapterDetection {
     if !enabled {
         return AdapterDetection::Unavailable {
             reason: Some("adapter disabled".to_string()),
         };
     }
 
-    match integration.protocol {
-        IntegrationProtocol::Synthetic => AdapterDetection::Running,
-        IntegrationProtocol::Udp | IntegrationProtocol::SharedMemory | IntegrationProtocol::Sdk => {
+    match adapter.protocol {
+        AdapterProtocol::Synthetic => AdapterDetection::Running,
+        AdapterProtocol::Udp | AdapterProtocol::SharedMemory | AdapterProtocol::Sdk => {
             AdapterDetection::NeedsSetup {
-                instructions: Some(integration.setup_hint.to_string()),
+                instructions: Some(adapter.setup_hint.to_string()),
             }
         }
-        IntegrationProtocol::Custom => AdapterDetection::Ready,
+        AdapterProtocol::Custom => AdapterDetection::Ready,
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct UdpTelemetryParseResult {
+    pub adapter_id: &'static str,
+    pub packet_format: &'static str,
+    pub packet_len: usize,
+    pub updates: Vec<SignalUpdate>,
+}
+
+#[derive(Clone, Copy)]
+pub struct UdpTelemetryAdapter {
+    pub id: &'static str,
+    pub display_name: &'static str,
+    pub default_port: u16,
+    pub parse_packet: fn(&[u8], u64) -> Option<UdpTelemetryParseResult>,
+}
+
+pub fn built_in_udp_adapters() -> &'static [UdpTelemetryAdapter] {
+    &[UdpTelemetryAdapter {
+        id: "forza-data-out",
+        display_name: "Forza Data Out",
+        default_port: 5300,
+        parse_packet: parse_forza_udp_packet,
+    }]
+}
+
+pub fn udp_adapter_by_id(id: &str) -> Option<&'static UdpTelemetryAdapter> {
+    built_in_udp_adapters()
+        .iter()
+        .find(|adapter| adapter.id == id)
+}
+
+pub fn parse_udp_telemetry_packet(
+    adapter_id: &str,
+    packet: &[u8],
+    sequence: u64,
+) -> Option<UdpTelemetryParseResult> {
+    let adapter = udp_adapter_by_id(adapter_id)?;
+    (adapter.parse_packet)(packet, sequence)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -167,6 +205,27 @@ pub struct ForzaParseResult {
     pub kind: ForzaPacketKind,
     pub packet_len: usize,
     pub updates: Vec<SignalUpdate>,
+}
+
+impl ForzaPacketKind {
+    pub fn packet_format(self) -> &'static str {
+        match self {
+            ForzaPacketKind::Sled232 => "sled",
+            ForzaPacketKind::Dash311 => "dash",
+            ForzaPacketKind::Horizon324 => "horizon",
+            ForzaPacketKind::ExtendedDash => "extended_dash",
+        }
+    }
+}
+
+fn parse_forza_udp_packet(packet: &[u8], sequence: u64) -> Option<UdpTelemetryParseResult> {
+    let parsed = parse_forza_data_out_packet(packet, sequence)?;
+    Some(UdpTelemetryParseResult {
+        adapter_id: "forza-data-out",
+        packet_format: parsed.kind.packet_format(),
+        packet_len: parsed.packet_len,
+        updates: parsed.updates,
+    })
 }
 
 pub fn parse_forza_data_out_packet(packet: &[u8], sequence: u64) -> Option<ForzaParseResult> {
@@ -253,7 +312,6 @@ pub fn parse_forza_data_out_packet(packet: &[u8], sequence: u64) -> Option<Forza
         update("source.id", "forza-data-out", sequence),
         update("source.connected", true, sequence),
         update("source.packet_size", packet.len() as f64, sequence),
-        update("game.id", "forza-data-out", sequence),
         update(
             "game.state",
             if is_race_on == 1 { "driving" } else { "menu" },
@@ -436,10 +494,10 @@ mod tests {
     }
 
     #[test]
-    fn catalog_contains_first_wave_integrations() {
-        let ids = built_in_integrations()
+    fn catalog_contains_first_wave_adapters() {
+        let ids = built_in_adapters()
             .iter()
-            .map(|integration| integration.id)
+            .map(|adapter| adapter.id)
             .collect::<Vec<_>>();
 
         assert!(ids.contains(&"forza-data-out"));
@@ -447,6 +505,37 @@ mod tests {
         assert!(ids.contains(&"ea-wrc-udp"));
         assert!(ids.contains(&"beamng"));
         assert!(ids.contains(&"raceroom"));
+    }
+
+    #[test]
+    fn udp_adapter_registry_exposes_forza_parser() {
+        let adapter = udp_adapter_by_id("forza-data-out").expect("Forza UDP adapter is registered");
+
+        assert_eq!(adapter.display_name, "Forza Data Out");
+        assert_eq!(adapter.default_port, 5300);
+        assert!(udp_adapter_by_id("ea-f1-udp").is_none());
+    }
+
+    #[test]
+    fn generic_udp_parser_wraps_forza_packets() {
+        let mut packet = vec![0_u8; 324];
+        write_i32(&mut packet, 0, 1);
+        write_f32(&mut packet, 8, 8_000.0);
+        write_f32(&mut packet, 16, 6_000.0);
+        write_f32(&mut packet, 244 + 12, 30.0);
+        packet[244 + 71] = 204;
+        packet[244 + 72] = 64;
+        packet[244 + 75] = 4;
+
+        let result = parse_udp_telemetry_packet("forza-data-out", &packet, 19)
+            .expect("registered parser accepts Forza packets");
+        let snapshot = SignalSnapshot::from_updates(result.updates);
+
+        assert_eq!(result.adapter_id, "forza-data-out");
+        assert_eq!(result.packet_format, "horizon");
+        assert_eq!(result.packet_len, 324);
+        assert_eq!(snapshot.text("source.id"), Some("forza-data-out"));
+        assert_eq!(snapshot.number("vehicle.speed_kmh"), Some(108.0));
     }
 
     #[test]

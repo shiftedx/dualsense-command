@@ -438,9 +438,9 @@ struct RuleState {
 ///
 /// The engine keeps a small amount of per-rule state (keyed by `EffectRule.id`)
 /// to support smoothing, hysteresis, and timeout fallback. State is wrapped
-/// in a `Mutex` (which preserves `Send + Sync`) so the legacy
-/// `evaluate(&self, ...)` entry point remains usable, while the new
-/// `evaluate_at(&mut self, ...)` API offers an explicit `Instant` for
+/// in a `Mutex` (which preserves `Send + Sync`) so callers can use the
+/// convenient `evaluate(&self, ...)` entry point, while
+/// `evaluate_at(&mut self, ...)` offers an explicit `Instant` for
 /// deterministic testing.
 #[derive(Debug, Default)]
 pub struct EffectEngine {
@@ -467,10 +467,8 @@ impl EffectEngine {
         }
     }
 
-    /// Backwards-compatible entry point. Uses `Instant::now()` as the
-    /// evaluation time and the engine's internal state map. Existing
-    /// stateless rules (no smoothing / hysteresis / timeout) produce
-    /// identical output to the pre-temporal-features version.
+    /// Convenience entry point. Uses `Instant::now()` as the evaluation time
+    /// and the engine's internal state map.
     pub fn evaluate(&self, profile: &Profile, snapshot: &SignalSnapshot) -> ControllerOutputFrame {
         self.evaluate_inner(profile, snapshot, Instant::now())
     }
@@ -1230,12 +1228,12 @@ mod tests {
     }
 
     #[test]
-    fn temporal_fields_are_optional_in_json() {
-        // Backwards-compat: a JSON profile that predates smoothing /
-        // hysteresis / timeout must still deserialize.
+    fn minimal_profile_json_uses_default_temporal_fields() {
+        // Module/profile authors should not have to spell out temporal fields
+        // for rules that do not need smoothing, hysteresis, or timeout fallback.
         let json = r#"{
-            "id": "legacy",
-            "name": "Legacy",
+            "id": "minimal",
+            "name": "Minimal",
             "version": 1,
             "rumble_policy": "trigger_overlay",
             "rules": [{
@@ -1250,7 +1248,8 @@ mod tests {
                 }
             }]
         }"#;
-        let profile: Profile = serde_json::from_str(json).expect("legacy profile must deserialize");
+        let profile: Profile =
+            serde_json::from_str(json).expect("minimal profile must deserialize");
         let rule = &profile.rules[0];
         assert!(rule.smoothing.is_none());
         assert!(rule.hysteresis.is_none());

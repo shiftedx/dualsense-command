@@ -1,21 +1,25 @@
 {
   "name": "dualsense-command-center-web",
-  "version": "0.1.9",
+  "version": "0.2.0",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "dev:mock": "vite --host 127.0.0.1 --mode mock",
+    "check": "npm run typecheck && npm run test:button-map && npm run build",
     "build": "vite build",
-    "preview": "vite preview --host 127.0.0.1"
+    "typecheck": "svelte-check --tsconfig ./tsconfig.json",
+    "preview": "vite preview --host 127.0.0.1",
+    "test:button-map": "node --experimental-strip-types scripts/button-mapping-p95.mjs"
   },
-  "dependencies": {},
   "devDependencies": {
     "@lucide/svelte": "^1.16.0",
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@tsconfig/svelte": "^5.0.4",
     "svelte": "^5.55.7",
-    "vite": "^8.0.13",
-    "typescript": "^5.6.3"
+    "svelte-check": "^4.4.8",
+    "typescript": "^5.6.3",
+    "vite": "^8.0.13"
   }
 }

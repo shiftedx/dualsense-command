@@ -7,7 +7,7 @@ interface AgentStatus {
   mode: 'agent';
   health: HealthState;
   activeProfile: string;
-  activeIntegration: string;
+  activeAdapter: string;
 }
 
 export interface AppSettingsResponse {
@@ -70,7 +70,7 @@ export interface ControllerProfileAssignment {
   detail: string;
 }
 
-export interface IntegrationStatus {
+export interface AdapterStatus {
   id: string;
   name: string;
   state: HealthState;
@@ -82,6 +82,7 @@ export interface IntegrationStatus {
 export interface ModuleSummary {
   id: string;
   name: string;
+  kind: 'adapter' | 'game' | string;
   version: string;
   source: 'built_in' | 'community' | string;
   trusted: boolean;
@@ -94,7 +95,7 @@ export interface ModuleSummary {
 export interface ProfileResolution {
   controllerId?: string | null;
   detectedGameId?: string | null;
-  activeIntegrationId?: string | null;
+  activeAdapterId?: string | null;
   selectedProfileId?: string | null;
   reason: string;
   overrideProfileId?: string | null;
@@ -108,6 +109,7 @@ export interface GameDetection {
   confidence: number;
   processName?: string | null;
   moduleId?: string | null;
+  adapterId?: string | null;
   profileId?: string | null;
   supportedGames?: SupportedGame[];
   selectedGame?: SupportedGame | null;
@@ -121,7 +123,7 @@ export interface SupportedGame {
   installPath?: string | null;
   installed: boolean;
   running: boolean;
-  supportLevel: 'telemetry';
+  supportLevel: 'telemetry' | 'custom';
   artwork?: {
     iconUrl?: string | null;
     bannerUrl?: string | null;
@@ -129,6 +131,50 @@ export interface SupportedGame {
     capsuleUrl?: string | null;
   };
   stats?: SteamGameStats;
+}
+
+export interface SteamLibraryEntry {
+  appId: string;
+  name: string;
+  installDir: string;
+  installPath: string;
+  artwork?: {
+    iconUrl?: string | null;
+    bannerUrl?: string | null;
+    heroUrl?: string | null;
+    capsuleUrl?: string | null;
+  };
+  stats?: SteamGameStats;
+  alreadyInCatalog: boolean;
+  suggestedGameId: string;
+  processCandidates: string[];
+}
+
+export interface SteamLibraryResponse {
+  games: SteamLibraryEntry[];
+}
+
+export interface AddCustomGameRequest {
+  appId: string;
+  processNames?: string[];
+}
+
+export interface AddCustomGameResponse {
+  game: SupportedGame;
+}
+
+export interface SteamLibraryBrowseEntry {
+  name: string;
+  kind: 'dir' | 'exe' | string;
+  sizeBytes?: number | null;
+}
+
+export interface SteamLibraryBrowseResponse {
+  appId: string;
+  installPath: string;
+  relativePath: string;
+  entries: SteamLibraryBrowseEntry[];
+  truncated: boolean;
 }
 
 interface SteamGameStats {
@@ -146,6 +192,8 @@ export interface ExportedProfile {
   name: string;
   built_in?: boolean;
   builtIn?: boolean;
+  game_id?: string | null;
+  gameId?: string | null;
   active?: boolean;
   config?: ProfileConfigPayload | null;
 }
@@ -164,6 +212,7 @@ interface GameDetectionCandidate {
   name: string;
   processName: string;
   moduleId: string;
+  adapterId: string;
   profileId: string;
   confidence: number;
 }
@@ -199,7 +248,7 @@ export interface AppSnapshot {
   controllers: ControllerStatus[];
   profiles: ProfileSummary[];
   controllerProfileAssignments: ControllerProfileAssignment[];
-  integrations: IntegrationStatus[];
+  adapters: AdapterStatus[];
   modules: ModuleSummary[];
   steamInput: SteamInputStatus;
   gameDetection: GameDetection;
@@ -256,6 +305,7 @@ interface TriggerConfiguration {
   effect: string;
   intensity: string;
   vibration: string;
+  vibrationMode: string;
 }
 
 interface LightbarConfiguration {
