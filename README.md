@@ -6,7 +6,7 @@ It runs a lightweight background agent, starts from a tray launcher, and serves 
 
 The first supported live telemetry adapter is Forza Data Out. The project is built around adapter modules for protocols and game modules for individual supported games, so future releases can add games without redesigning the app.
 
-<img width="2095" height="1422" alt="image" src="https://github.com/user-attachments/assets/9a6c4e78-2c9a-40ba-bc5a-a658f13dadfb" />
+<img width="2095" height="1422" alt="image" src="https://github.com/user-attachments/assets/a3481779-af9d-46dd-bbc6-c544573d807e" />
 
 ## Current Release
 
