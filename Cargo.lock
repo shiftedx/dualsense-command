@@ -369,6 +369,7 @@ dependencies = [
  "dscc-core",
  "dscc-device",
  "dscc-telemetry",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
@@ -423,6 +424,8 @@ name = "dscc-tray"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "serde",
+ "serde_json",
  "windows-sys 0.61.2",
 ]
 

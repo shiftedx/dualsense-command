@@ -242,6 +242,16 @@ export interface SnapshotPartialError {
   message: string;
 }
 
+export interface AppUpdateCheck {
+  currentVersion: string;
+  latestVersion: string;
+  updateAvailable: boolean;
+  releaseUrl: string;
+  source: 'agent' | 'github';
+  checkedAt?: string | null;
+  message?: string | null;
+}
+
 export interface AppSnapshot {
   status: AgentStatus;
   appSettings: AppSettingsResponse;

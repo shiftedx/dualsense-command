@@ -102,10 +102,14 @@ const MAX_EFFECT_TEST_DURATION_MS: u64 = 1_500;
 const DEFAULT_BASE_FEEL_TEST_DURATION_MS: u64 = 30_000;
 const MAX_BASE_FEEL_TEST_DURATION_MS: u64 = 60_000;
 const UDP_TELEMETRY_PROCESS_INTERVAL: Duration = Duration::from_millis(33);
-const FORZA_SHIFT_EVENT_HOLD: Duration = Duration::from_millis(100);
+const FORZA_SHIFT_EVENT_HOLD: Duration = Duration::from_millis(130);
 const GAME_DETECTION_CACHE_TTL: Duration = Duration::from_secs(5);
 const STEAM_INPUT_CACHE_TTL: Duration = Duration::from_secs(30);
 const STEAM_GAME_CATALOG_CACHE_TTL: Duration = Duration::from_secs(300);
+const UPDATE_CHECK_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
+const UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
+const UPDATE_CHECK_URL: &str =
+    "https://api.github.com/repos/shiftedx/dualsense-command/releases/latest";
 const STEAM_INPUT_LAYOUT_SCAN_LIMIT: usize = 96;
 const TELEMETRY_WS_INVALIDATION_INTERVAL: Duration = Duration::from_millis(500);
 #[cfg(target_os = "windows")]
@@ -115,22 +119,24 @@ const FORZA_THROTTLE_FULL_FORCE_AT: f64 = 252.0 / 255.0;
 const FORZA_BRAKE_BASELINE_FORCE: f64 = 42.0 / 255.0;
 const FORZA_BRAKE_NORMAL_FORCE: f64 = 164.0 / 255.0;
 const FORZA_BRAKE_ENDSTOP_FORCE: f64 = 238.0 / 255.0;
-const FORZA_THROTTLE_BASELINE_FORCE: f64 = 18.0 / 255.0;
+const FORZA_THROTTLE_BASELINE_FORCE: f64 = 8.0 / 255.0;
 const FORZA_THROTTLE_NORMAL_FORCE: f64 = 72.0 / 255.0;
 const FORZA_THROTTLE_ENDSTOP_FORCE: f64 = 106.0 / 255.0;
 const FORZA_HANDBRAKE_FORCE: f64 = 25.0 / 255.0;
-const FORZA_ABS_BRAKE_THRESHOLD: f64 = 80.0 / 255.0;
+const FORZA_ABS_RANGE_START_RATIO: f64 = 0.30;
 const FORZA_ABS_MIN_SPEED_KMH: f64 = 15.0;
 const FORZA_ABS_SLIP_THRESHOLD: f64 = 1.0;
 const FORZA_ABS_PULSE_AMPLITUDE: f64 = 20.0 / 63.0;
 const FORZA_ABS_PULSE_FREQUENCY_HZ: f64 = 10.0;
 const FORZA_BRAKE_CURVE: f64 = 1.35;
 const FORZA_THROTTLE_CURVE: f64 = 2.25;
+const FORZA_ENDSTOP_WALL_OFFSET: f64 = 0.03;
+const FORZA_SHIFT_THUMP_DEFAULT_INTENSITY: u8 = 180;
 const TRIGGER_CURVE_SCALE: f64 = 100.0;
 const TRIGGER_CURVE_MIN: u16 = 50;
 const TRIGGER_CURVE_MAX: u16 = 350;
 const FORZA_REV_LIMIT_RATIO: f64 = 0.93;
-const FORZA_SHIFT_WALL_FORM_AT: f64 = 252.0 / 255.0;
+const FORZA_SHIFT_WALL_FORM_AT: f64 = 0.15;
 const FORZA_SHIFT_FREQUENCY_HZ: f64 = 20.0;
 const FORZA_SHIFT_WALL_ZONES: f64 = 2.0;
 
@@ -185,7 +191,12 @@ fn forza_horizon_preset() -> ForzaTelemetryConfig {
         ("abs_slip_pulse", true, 100, "l2"),
         ("handbrake_wall", true, 100, "l2"),
         ("rev_limiter_buzz", true, 55, "r2"),
-        ("gear_shift_thump", true, 150, "r2_and_body"),
+        (
+            "gear_shift_thump",
+            true,
+            FORZA_SHIFT_THUMP_DEFAULT_INTENSITY,
+            "r2_and_body",
+        ),
         ("road_texture", true, 40, "body_both"),
         ("rumble_strip", false, 55, "body_both"),
         ("tire_slip", false, 65, "body_right"),
@@ -226,7 +237,12 @@ fn forza_horizon_immersive_preset() -> ForzaTelemetryConfig {
         ("abs_slip_pulse", true, 100, "l2"),
         ("handbrake_wall", true, 100, "l2"),
         ("rev_limiter_buzz", true, 62, "r2"),
-        ("gear_shift_thump", true, 150, "r2_and_body"),
+        (
+            "gear_shift_thump",
+            true,
+            FORZA_SHIFT_THUMP_DEFAULT_INTENSITY,
+            "r2_and_body",
+        ),
         ("road_texture", true, 35, "body_both"),
         ("rumble_strip", true, 38, "body_both"),
         ("tire_slip", true, 50, "body_right"),
@@ -253,7 +269,7 @@ fn forza_horizon_trigger_preset() -> TriggerConfig {
         same_range: false,
         l2_from: 0,
         l2_to: 100,
-        r2_from: 0,
+        r2_from: 4,
         r2_to: 100,
         l2_curve: TriggerCurve::from_ratio(FORZA_BRAKE_CURVE),
         r2_curve: TriggerCurve::from_ratio(FORZA_THROTTLE_CURVE),
@@ -298,6 +314,7 @@ struct DiscoveryCache {
     game_detection: AsyncMutex<CachedValue<GameDetectionResponse>>,
     steam_input: AsyncMutex<CachedValue<SteamInputStatus>>,
     steam_game_catalog: AsyncMutex<CachedValue<SteamGameCatalog>>,
+    update_check: AsyncMutex<CachedValue<UpdateCheckResponse>>,
     steam_input_refreshing: AtomicBool,
 }
 
@@ -307,6 +324,7 @@ impl Default for DiscoveryCache {
             game_detection: AsyncMutex::new(CachedValue::default()),
             steam_input: AsyncMutex::new(CachedValue::default()),
             steam_game_catalog: AsyncMutex::new(CachedValue::default()),
+            update_check: AsyncMutex::new(CachedValue::default()),
             steam_input_refreshing: AtomicBool::new(false),
         }
     }
@@ -348,6 +366,21 @@ impl<T: Clone> CachedValue<T> {
         self.refreshed_at = Some(now);
         value
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubReleaseResponse {
+    tag_name: String,
+    html_url: String,
+    name: Option<String>,
+    published_at: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum VersionOrdering {
+    Older,
+    SameOrNewer,
+    Unknown,
 }
 
 #[derive(Debug, Default)]
@@ -609,6 +642,20 @@ pub struct StatusResponse {
     pub uptime_seconds: u64,
     pub active_profile_id: Option<String>,
     pub active_adapter_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCheckResponse {
+    pub current_version: String,
+    pub latest_version: Option<String>,
+    pub release_url: Option<String>,
+    pub release_name: Option<String>,
+    pub published_at: Option<String>,
+    pub state: String,
+    pub checked_at: Option<String>,
+    pub error: Option<String>,
+    pub cached: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -2814,7 +2861,10 @@ fn sanitize_user_game_process_names(raw: &[String]) -> Vec<String> {
         if !name.to_ascii_lowercase().ends_with(".exe") {
             continue;
         }
-        if out.iter().any(|existing| existing.eq_ignore_ascii_case(&name)) {
+        if out
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(&name))
+        {
             continue;
         }
         out.push(name);
@@ -4508,6 +4558,58 @@ impl AgentState {
         );
     }
 
+    fn non_neutral_output_controller_ids(&self) -> Vec<String> {
+        let runtime = self.lock_output_runtime();
+        let neutral = ControllerOutputFrame::default();
+        runtime
+            .last_output_frames
+            .iter()
+            .filter(|(_, last)| last.frame != neutral)
+            .map(|(controller_id, _)| controller_id.clone())
+            .collect()
+    }
+
+    fn clear_recorded_output_frames(&self) {
+        self.lock_output_runtime().last_output_frames.clear();
+    }
+
+    fn release_all_output_sessions(&self) {
+        if let Some(manager) = &self.output_manager {
+            manager.release_all();
+        }
+    }
+
+    async fn release_output_session_for_controller(&self, controller_id: &str) {
+        if let Some(manager) = &self.output_manager {
+            let target = {
+                let inner = self.inner.read().await;
+                controller_output_target_or_reason(&inner, controller_id).ok()
+            };
+            if let Some(target) = target {
+                manager.release(&target);
+            }
+        }
+        let mut runtime = self.lock_output_runtime();
+        runtime.last_output_frames.remove(controller_id);
+    }
+
+    async fn neutralize_active_output_and_release(&self, reason: &str) {
+        let controller_ids = self.non_neutral_output_controller_ids();
+        for controller_id in controller_ids {
+            if let Err(error) = self
+                .write_output_frame_to_controller(&controller_id, &ControllerOutputFrame::default())
+                .await
+            {
+                self.note_hardware_output_error(format!(
+                    "Hardware trigger output could not neutralize controller {controller_id} after {reason}: {error}"
+                ))
+                .await;
+            }
+        }
+        self.release_all_output_sessions();
+        self.clear_recorded_output_frames();
+    }
+
     async fn log_warn(&self, message: String) {
         let mut inner = self.inner.write().await;
         inner.logs.push(LogEntry {
@@ -4551,15 +4653,18 @@ impl AgentState {
     ) -> Result<ControllerOutputWrite, String> {
         let manager = self
             .output_manager
-            .as_ref()
+            .clone()
             .ok_or_else(|| "HID output manager is unavailable".to_string())?;
         let target = {
             let inner = self.inner.read().await;
             controller_output_target_or_reason(&inner, controller_id)?
         };
-        let write = manager
-            .write_frame(&target, frame)
-            .map_err(|error| error.to_string())?;
+        let frame_for_write = frame.clone();
+        let write =
+            tokio::task::spawn_blocking(move || manager.write_frame(&target, &frame_for_write))
+                .await
+                .map_err(|error| format!("HID output task failed: {error}"))?
+                .map_err(|error| error.to_string())?;
         self.record_output_frame_write(controller_id, frame, Instant::now());
         Ok(write)
     }
@@ -4568,16 +4673,20 @@ impl AgentState {
         &self,
         game_detection: Option<&GameDetectionResponse>,
     ) -> Result<Option<ControllerOutputWrite>, String> {
-        let (controller_id, frame) = {
+        let candidate = {
             let inner = self.inner.read().await;
-            self.output_frame_for_current_resolution_cached(
-                &inner,
-                game_detection,
-                EffectEnginePurpose::Hardware,
-            )
-            .ok_or_else(|| {
-                "No connected controller/profile output frame is available".to_string()
-            })?
+            if hardware_output_runtime_allowed(&inner, game_detection) {
+                self.output_frame_for_current_resolution_cached(
+                    &inner,
+                    game_detection,
+                    EffectEnginePurpose::Hardware,
+                )
+            } else {
+                None
+            }
+        };
+        let Some((controller_id, frame)) = candidate else {
+            return Ok(None);
         };
         if !self.output_frame_write_due(&controller_id, &frame, Instant::now()) {
             return Ok(None);
@@ -4659,6 +4768,11 @@ impl AgentState {
         game_detection: Option<&GameDetectionResponse>,
         purpose: EffectEnginePurpose,
     ) -> Option<(String, ControllerOutputFrame)> {
+        if purpose == EffectEnginePurpose::Hardware
+            && !hardware_output_runtime_allowed(inner, game_detection)
+        {
+            return None;
+        }
         let resolution = profile_resolution(inner, game_detection);
         let controller_id = resolution.controller_id.clone()?;
         let config = controller_config_for_resolution(inner, &resolution);
@@ -4776,11 +4890,11 @@ impl AgentState {
         self.event_tx.subscribe()
     }
 
-    async fn cached_game_detection(&self) -> GameDetectionResponse {
+    async fn cached_game_detection_with_ttl(&self, ttl: Duration) -> GameDetectionResponse {
         let now = Instant::now();
         {
             let cache = self.discovery_cache.game_detection.lock().await;
-            if let Some(value) = cache.fresh(GAME_DETECTION_CACHE_TTL, now) {
+            if let Some(value) = cache.fresh(ttl, now) {
                 return value;
             }
         }
@@ -4810,6 +4924,16 @@ impl AgentState {
         }
         let mut cache = self.discovery_cache.game_detection.lock().await;
         cache.store(detection, Instant::now())
+    }
+
+    async fn cached_game_detection(&self) -> GameDetectionResponse {
+        self.cached_game_detection_with_ttl(GAME_DETECTION_CACHE_TTL)
+            .await
+    }
+
+    async fn cached_hardware_game_detection(&self) -> GameDetectionResponse {
+        self.cached_game_detection_with_ttl(HARDWARE_GAME_DETECTION_INTERVAL)
+            .await
     }
 
     async fn cached_steam_game_catalog(&self) -> SteamGameCatalog {
@@ -4885,6 +5009,35 @@ impl AgentState {
                 message: Some("steam-input-updated".to_string()),
             });
         });
+    }
+
+    async fn update_check(&self) -> UpdateCheckResponse {
+        let now = Instant::now();
+        {
+            let cache = self.discovery_cache.update_check.lock().await;
+            if let Some(mut value) = cache.fresh(UPDATE_CHECK_CACHE_TTL, now) {
+                value.cached = true;
+                return value;
+            }
+        }
+
+        match fetch_latest_release_update_check().await {
+            Ok(response) => {
+                let mut cache = self.discovery_cache.update_check.lock().await;
+                cache.store(response, Instant::now())
+            }
+            Err(error) => {
+                let mut response = unavailable_update_check(error.to_string());
+                let cache = self.discovery_cache.update_check.lock().await;
+                if let Some(cached) = cache.value.as_ref() {
+                    response = cached.clone();
+                    response.state = "stale".to_string();
+                    response.error = Some(error.to_string());
+                    response.cached = true;
+                }
+                response
+            }
+        }
     }
 
     fn should_emit_telemetry_invalidation(&self) -> bool {
@@ -5374,7 +5527,11 @@ fn default_forza_effect_configs() -> Vec<ForzaEffectConfig> {
         ("abs_slip_pulse", 100, "l2"),
         ("handbrake_wall", 100, "l2"),
         ("throttle_resistance", 100, "r2"),
-        ("gear_shift_thump", 150, "r2_and_body"),
+        (
+            "gear_shift_thump",
+            FORZA_SHIFT_THUMP_DEFAULT_INTENSITY,
+            "r2_and_body",
+        ),
         ("rev_limiter_buzz", 120, "r2"),
         ("road_texture", 60, "body_both"),
         ("rumble_strip", 72, "body_both"),
@@ -7354,6 +7511,33 @@ fn detected_forza_game(game_detection: Option<&GameDetectionResponse>) -> Option
     ))
 }
 
+fn hardware_output_runtime_allowed(
+    inner: &AgentStateInner,
+    game_detection: Option<&GameDetectionResponse>,
+) -> bool {
+    let Some(detection) = game_detection else {
+        return false;
+    };
+    if detection.active_game_id.is_none() {
+        return false;
+    }
+    let Some(adapter_id) = detection.adapter_id.as_deref() else {
+        return false;
+    };
+    let resolution = profile_resolution(inner, Some(detection));
+    if resolution.controller_id.is_none()
+        || resolution.selected_profile_id.is_none()
+        || resolution.validation != "valid"
+    {
+        return false;
+    }
+    let Some(runtime) = inner.adapter_runtime(adapter_id) else {
+        return false;
+    };
+    runtime.has_recent_packet(Instant::now())
+        && inner.telemetry.text("source.id") == Some(adapter_id)
+}
+
 fn upsert_telemetry_signal(
     signals: &mut Vec<TelemetrySignalResponse>,
     signal: TelemetrySignalResponse,
@@ -7653,7 +7837,7 @@ fn current_effect_response_from_parts(
 
     if hardware_output_enabled {
         warnings.push(
-            "Hardware output is enabled; DSCC is writing guarded adaptive-trigger frames to the controller."
+            "Hardware output is enabled, but DSCC only writes while a supported game profile has live telemetry or during a manual effect test."
                 .to_string(),
         );
     } else {
@@ -7675,7 +7859,7 @@ fn current_effect_response_from_parts(
     if is_forza_runtime_profile(&profile.id, &snapshot) && !telemetry_live {
         if detected_forza_game(game_detection).is_some() {
             warnings.push(
-                "Forza telemetry is stale; keeping configured baseline trigger tension while the game is still running."
+                "Forza telemetry is not live; trigger output stays neutral until fresh Data Out packets arrive."
                     .to_string(),
             );
         } else {
@@ -7848,8 +8032,8 @@ fn forza_rumble_output(
         &mut high,
         &forza.effect("gear_shift_thump"),
         shift,
-        0.80,
-        0.78,
+        0.92,
+        0.84,
     );
     add_forza_rumble_component(
         &mut low,
@@ -8095,6 +8279,9 @@ fn forza_runtime_profile(
     let r2_end = trigger.map_or(FORZA_THROTTLE_FULL_FORCE_AT, |trigger| {
         trigger_range_end_position(trigger.r2_from, trigger.r2_to)
     });
+    let l2_endstop_wall = endstop_wall_position(l2_start, l2_end);
+    let r2_endstop_wall = endstop_wall_position(r2_start, r2_end);
+    let abs_brake_threshold = abs_brake_threshold_for_range(l2_start, l2_end);
     let l2_curve = trigger.map_or(FORZA_BRAKE_CURVE, |trigger| trigger.l2_curve.as_f64());
     let r2_curve = trigger.map_or(FORZA_THROTTLE_CURVE, |trigger| trigger.r2_curve.as_f64());
     let brake = forza.effect("brake_resistance");
@@ -8141,7 +8328,7 @@ fn forza_runtime_profile(
                     number_condition(
                         "input.brake",
                         ComparisonOp::GreaterOrEqual,
-                        FORZA_ABS_BRAKE_THRESHOLD,
+                        abs_brake_threshold,
                     ),
                     number_condition(
                         "vehicle.speed_kmh",
@@ -8198,9 +8385,13 @@ fn forza_runtime_profile(
             timeout: None,
             target: EffectTarget::L2,
             priority: 12,
-            condition: number_condition("input.brake", ComparisonOp::GreaterOrEqual, l2_end),
-            effect: EffectTemplate::AdaptiveResistance {
-                start_position: ValueSource::constant(l2_start),
+            condition: number_condition(
+                "input.brake",
+                ComparisonOp::GreaterOrEqual,
+                l2_endstop_wall,
+            ),
+            effect: EffectTemplate::Wall {
+                position: ValueSource::constant(l2_endstop_wall),
                 strength: ValueSource::constant(brake_endstop_force),
             },
         });
@@ -8249,9 +8440,13 @@ fn forza_runtime_profile(
             timeout: None,
             target: EffectTarget::R2,
             priority: 12,
-            condition: number_condition("input.throttle", ComparisonOp::GreaterOrEqual, r2_end),
-            effect: EffectTemplate::AdaptiveResistance {
-                start_position: ValueSource::constant(r2_start),
+            condition: number_condition(
+                "input.throttle",
+                ComparisonOp::GreaterOrEqual,
+                r2_endstop_wall,
+            ),
+            effect: EffectTemplate::Wall {
+                position: ValueSource::constant(r2_endstop_wall),
                 strength: ValueSource::constant(throttle_endstop_force),
             },
         });
@@ -8289,15 +8484,7 @@ fn forza_runtime_profile(
 }
 
 fn forza_baseline_trigger_condition() -> RuleCondition {
-    RuleCondition::Any {
-        conditions: vec![
-            text_condition("source.id", ComparisonOp::Eq, "forza-data-out"),
-            text_condition("game.state", ComparisonOp::Eq, "driving"),
-            text_condition("game.state", ComparisonOp::Eq, "menu"),
-            text_condition("game.state", ComparisonOp::Eq, "telemetry_stale"),
-            text_condition("game.state", ComparisonOp::Eq, "awaiting_data_out"),
-        ],
-    }
+    text_condition("game.state", ComparisonOp::Eq, "driving")
 }
 
 fn push_routed_pulse_rule(
@@ -8824,6 +9011,15 @@ fn trigger_range_end_position(from: u8, to: u8) -> f64 {
     end.max(start + 0.01)
 }
 
+fn endstop_wall_position(start: f64, end: f64) -> f64 {
+    (end - FORZA_ENDSTOP_WALL_OFFSET).clamp(start, end)
+}
+
+fn abs_brake_threshold_for_range(start: f64, end: f64) -> f64 {
+    let threshold = start + (end - start) * FORZA_ABS_RANGE_START_RATIO;
+    threshold.clamp(start, end)
+}
+
 fn trigger_curve_strength(
     position: f64,
     from: u8,
@@ -8892,6 +9088,107 @@ fn rumble_for_mode(mode: &str, intensity: f64) -> RumbleOutput {
     }
 }
 
+async fn fetch_latest_release_update_check() -> anyhow::Result<UpdateCheckResponse> {
+    let client = reqwest::Client::builder()
+        .timeout(UPDATE_CHECK_TIMEOUT)
+        .user_agent(format!(
+            "DualSenseCommandCenter/{}",
+            env!("CARGO_PKG_VERSION")
+        ))
+        .build()?;
+    let response = client
+        .get(UPDATE_CHECK_URL)
+        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+        .send()
+        .await?;
+    let status = response.status();
+    if !status.is_success() {
+        anyhow::bail!("GitHub Releases request failed with HTTP {status}");
+    }
+    let release = response.json::<GithubReleaseResponse>().await?;
+    Ok(update_check_from_release(
+        env!("CARGO_PKG_VERSION"),
+        release,
+        current_timestamp(),
+    ))
+}
+
+fn update_check_from_release(
+    current_version: &str,
+    release: GithubReleaseResponse,
+    checked_at: String,
+) -> UpdateCheckResponse {
+    let latest_version = normalize_release_version(&release.tag_name);
+    let state = match compare_release_versions(current_version, &latest_version) {
+        VersionOrdering::Older => "update_available",
+        VersionOrdering::SameOrNewer => "up_to_date",
+        VersionOrdering::Unknown => "unknown",
+    };
+    UpdateCheckResponse {
+        current_version: current_version.to_string(),
+        latest_version: Some(latest_version),
+        release_url: Some(release.html_url),
+        release_name: release.name,
+        published_at: release.published_at,
+        state: state.to_string(),
+        checked_at: Some(checked_at),
+        error: None,
+        cached: false,
+    }
+}
+
+fn unavailable_update_check(error: String) -> UpdateCheckResponse {
+    UpdateCheckResponse {
+        current_version: env!("CARGO_PKG_VERSION").to_string(),
+        latest_version: None,
+        release_url: None,
+        release_name: None,
+        published_at: None,
+        state: "unavailable".to_string(),
+        checked_at: Some(current_timestamp()),
+        error: Some(error),
+        cached: false,
+    }
+}
+
+fn normalize_release_version(version: &str) -> String {
+    version.trim().trim_start_matches(['v', 'V']).to_string()
+}
+
+fn compare_release_versions(current: &str, latest: &str) -> VersionOrdering {
+    let Some(current) = parse_version_core(current) else {
+        return VersionOrdering::Unknown;
+    };
+    let Some(latest) = parse_version_core(latest) else {
+        return VersionOrdering::Unknown;
+    };
+    if current < latest {
+        VersionOrdering::Older
+    } else {
+        VersionOrdering::SameOrNewer
+    }
+}
+
+fn parse_version_core(version: &str) -> Option<Vec<u64>> {
+    let normalized = normalize_release_version(version);
+    let core = normalized
+        .split_once(['-', '+'])
+        .map(|(core, _)| core)
+        .unwrap_or(normalized.as_str());
+    let parts: Option<Vec<u64>> = core
+        .split('.')
+        .map(|part| part.parse::<u64>().ok())
+        .collect();
+    let mut parts = parts?;
+    if parts.is_empty() {
+        return None;
+    }
+    while parts.len() < 3 {
+        parts.push(0);
+    }
+    Some(parts)
+}
+
 impl DevicePermissionProblem {
     pub fn for_controller(
         id: ControllerId,
@@ -8921,6 +9218,7 @@ pub fn app(state: AgentState) -> Router {
 
     Router::new()
         .route("/api/status", get(get_status))
+        .route("/api/update-check", get(get_update_check))
         .route(
             "/api/app-settings",
             get(get_app_settings).put(update_app_settings),
@@ -8971,10 +9269,7 @@ pub fn app(state: AgentState) -> Router {
         .route("/api/games/art/:game_id/:kind", get(get_game_art))
         .route("/api/games/steam-art/:app_id/:kind", get(get_steam_app_art))
         .route("/api/games/steam-library", get(list_steam_library))
-        .route(
-            "/api/games/steam-library/browse",
-            get(browse_steam_library),
-        )
+        .route("/api/games/steam-library/browse", get(browse_steam_library))
         .route("/api/games/custom", post(add_custom_game))
         .route("/api/games/custom/:game_id", delete(remove_custom_game))
         .route("/api/effects/current", get(get_current_effect))
@@ -9096,69 +9391,23 @@ async fn device_scan_loop<T>(
 async fn output_watchdog_loop(state: AgentState, interval_duration: Duration) {
     let mut interval = tokio::time::interval(interval_duration);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut neutral_sent_for_stale_stream = false;
 
     loop {
         interval.tick().await;
         if !state.hardware_output_enabled() || state.manual_output_override_active() {
-            neutral_sent_for_stale_stream = false;
             continue;
         }
 
-        let game_detection = state.cached_game_detection().await;
-        let forza_still_running = detected_forza_game(Some(&game_detection)).is_some();
-        let should_send_neutral = {
+        let game_detection = state.cached_hardware_game_detection().await;
+        let should_neutralize = {
             let inner = state.inner.read().await;
-            let now = Instant::now();
-            let live = inner
-                .require_adapter_runtime(FORZA_DATA_OUT_ADAPTER_ID)
-                .has_recent_packet(now);
-            if live || forza_still_running {
-                neutral_sent_for_stale_stream = false;
-                false
-            } else {
-                inner
-                    .require_adapter_runtime(FORZA_DATA_OUT_ADAPTER_ID)
-                    .packet_count
-                    > 0
-                    && !neutral_sent_for_stale_stream
-                    && (inner.active_adapter_id.as_deref() == Some(FORZA_DATA_OUT_ADAPTER_ID)
-                        || inner.telemetry.text("source.id") == Some(FORZA_DATA_OUT_ADAPTER_ID))
-            }
+            !hardware_output_runtime_allowed(&inner, Some(&game_detection))
         };
 
-        if should_send_neutral {
-            let controller_id = {
-                let inner = state.inner.read().await;
-                inner
-                    .controllers
-                    .summaries()
-                    .into_iter()
-                    .find(|controller| controller.connected)
-                    .map(|controller| controller.id)
-            };
-
-            if let Some(controller_id) = controller_id {
-                match state
-                    .write_output_frame_to_controller(
-                        &controller_id,
-                        &ControllerOutputFrame::default(),
-                    )
-                    .await
-                {
-                    Ok(_) => neutral_sent_for_stale_stream = true,
-                    Err(error) => {
-                        let mut inner = state.inner.write().await;
-                        inner.logs.push(LogEntry {
-                            level: "warn".to_string(),
-                            message: format!(
-                                "Hardware trigger watchdog could not neutralize output: {error}"
-                            ),
-                            timestamp: current_timestamp(),
-                        });
-                    }
-                }
-            }
+        if should_neutralize {
+            state
+                .neutralize_active_output_and_release("the supported-game telemetry gate closed")
+                .await;
         }
     }
 }
@@ -9166,7 +9415,7 @@ async fn output_watchdog_loop(state: AgentState, interval_duration: Duration) {
 async fn hardware_output_loop(state: AgentState, interval_duration: Duration) {
     let mut interval = tokio::time::interval(interval_duration);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut game_detection = state.cached_game_detection().await;
+    let mut game_detection = state.cached_hardware_game_detection().await;
     let mut next_detection_refresh = Instant::now() + HARDWARE_GAME_DETECTION_INTERVAL;
     loop {
         interval.tick().await;
@@ -9176,7 +9425,7 @@ async fn hardware_output_loop(state: AgentState, interval_duration: Duration) {
 
         let now = Instant::now();
         if now >= next_detection_refresh {
-            game_detection = state.cached_game_detection().await;
+            game_detection = state.cached_hardware_game_detection().await;
             next_detection_refresh = now + HARDWARE_GAME_DETECTION_INTERVAL;
         }
 
@@ -9317,6 +9566,10 @@ fn web_dist_dir() -> PathBuf {
 async fn get_status(State(state): State<AgentState>) -> Json<StatusResponse> {
     let game_detection = state.cached_game_detection().await;
     Json(state.status_with_detection(Some(&game_detection)).await)
+}
+
+async fn get_update_check(State(state): State<AgentState>) -> Json<UpdateCheckResponse> {
+    Json(state.update_check().await)
 }
 
 async fn get_app_settings(State(state): State<AgentState>) -> Json<AppSettingsResponse> {
@@ -9660,7 +9913,11 @@ async fn read_controller_input_state(
         ));
     };
 
-    match manager.read_input_state(&target) {
+    let read_result = tokio::task::spawn_blocking(move || manager.read_input_state(&target))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    match read_result {
         Ok(Some(input)) => Ok(controller_input_available(id, input)),
         Ok(None) => Ok(controller_input_unavailable(
             id,
@@ -9842,6 +10099,9 @@ async fn run_effect_test_for_controller(
                                     &ControllerOutputFrame::default(),
                                 )
                                 .await;
+                            state_for_reset
+                                .release_output_session_for_controller(&id_for_reset)
+                                .await;
                             state_for_reset.clear_manual_output_override_if_generation(generation);
                         }
                     });
@@ -9850,6 +10110,7 @@ async fn run_effect_test_for_controller(
                         write.bytes, write.report_kind
                     )
                 } else {
+                    state.release_output_session_for_controller(&id).await;
                     format!(
                         "Stopped hardware effect test for controller {id} ({} byte {:?} report)",
                         write.bytes, write.report_kind
@@ -9859,6 +10120,8 @@ async fn run_effect_test_for_controller(
             Err(error) => {
                 if !stop_manual_override {
                     state.clear_manual_output_override();
+                } else {
+                    state.release_output_session_for_controller(&id).await;
                 }
                 accepted = false;
                 status = StatusCode::CONFLICT;
@@ -10449,9 +10712,7 @@ async fn browse_steam_library(
         )),
         Err(BrowseError::OutsideRoot) => Err((
             StatusCode::BAD_REQUEST,
-            Json(
-                serde_json::json!({"error": "path escapes the install folder (rejected)"}),
-            ),
+            Json(serde_json::json!({"error": "path escapes the install folder (rejected)"})),
         )),
         Err(BrowseError::NotADirectory) => Err((
             StatusCode::BAD_REQUEST,
@@ -10547,8 +10808,8 @@ fn read_browse_entries(dir: &FsPath) -> (Vec<SteamLibraryBrowseEntry>, bool) {
         }
     }
 
-    dirs.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
-    exes.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
+    dirs.sort_by_key(|entry| entry.name.to_ascii_lowercase());
+    exes.sort_by_key(|entry| entry.name.to_ascii_lowercase());
 
     let mut combined = dirs;
     combined.extend(exes);
@@ -10981,6 +11242,116 @@ mod tests {
             status.active_profile_id.as_deref(),
             Some(DEFAULT_PROFILE_ID)
         );
+    }
+
+    #[test]
+    fn update_check_version_comparison_handles_tags_and_unknowns() {
+        assert_eq!(
+            compare_release_versions("0.2.0", "v0.3.0"),
+            VersionOrdering::Older
+        );
+        assert_eq!(
+            compare_release_versions("0.2.0", "0.2.0"),
+            VersionOrdering::SameOrNewer
+        );
+        assert_eq!(
+            compare_release_versions("0.2.1", "0.2.0"),
+            VersionOrdering::SameOrNewer
+        );
+        assert_eq!(
+            compare_release_versions("0.2.0", "preview-build"),
+            VersionOrdering::Unknown
+        );
+    }
+
+    #[test]
+    fn update_check_release_payload_reports_available_update() {
+        let response = update_check_from_release(
+            "0.2.0",
+            GithubReleaseResponse {
+                tag_name: "v0.3.0".to_string(),
+                html_url: "https://github.com/shiftedx/dualsense-command/releases/tag/v0.3.0"
+                    .to_string(),
+                name: Some("DualSense Command Center 0.3.0".to_string()),
+                published_at: Some("2026-05-21T12:00:00Z".to_string()),
+            },
+            "2026-05-21T12:30:00Z".to_string(),
+        );
+
+        assert_eq!(response.current_version, "0.2.0");
+        assert_eq!(response.latest_version.as_deref(), Some("0.3.0"));
+        assert_eq!(response.state, "update_available");
+        assert_eq!(response.error, None);
+        assert!(!response.cached);
+    }
+
+    #[test]
+    fn update_check_failure_payload_is_unavailable() {
+        let response = unavailable_update_check("network unavailable".to_string());
+        assert_eq!(response.current_version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(response.latest_version, None);
+        assert_eq!(response.release_url, None);
+        assert_eq!(response.state, "unavailable");
+        assert_eq!(response.error.as_deref(), Some("network unavailable"));
+    }
+
+    #[tokio::test]
+    async fn update_check_route_returns_cached_response_without_network() {
+        let state = AgentState::mock();
+        {
+            let mut cache = state.discovery_cache.update_check.lock().await;
+            cache.store(
+                UpdateCheckResponse {
+                    current_version: env!("CARGO_PKG_VERSION").to_string(),
+                    latest_version: Some("9.9.9".to_string()),
+                    release_url: Some(
+                        "https://github.com/shiftedx/dualsense-command/releases/tag/v9.9.9"
+                            .to_string(),
+                    ),
+                    release_name: Some("Future release".to_string()),
+                    published_at: Some("2026-05-21T12:00:00Z".to_string()),
+                    state: "update_available".to_string(),
+                    checked_at: Some("2026-05-21T12:30:00Z".to_string()),
+                    error: None,
+                    cached: false,
+                },
+                Instant::now(),
+            );
+        }
+
+        let response = app(state)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/update-check")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let update: UpdateCheckResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(update.latest_version.as_deref(), Some("9.9.9"));
+        assert_eq!(update.release_name.as_deref(), Some("Future release"));
+        assert_eq!(update.state, "update_available");
+        assert!(update.cached);
+    }
+
+    #[tokio::test]
+    async fn update_check_route_is_get_only() {
+        let response = app(AgentState::mock())
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/update-check")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
     }
 
     #[tokio::test]
@@ -12740,6 +13111,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cached_game_detection_keeps_standard_five_second_cache() {
+        let state = AgentState::mock();
+        let cached = detect_running_game_from_processes(["ForzaHorizon6.exe"]);
+        let cached_game_id = cached.active_game_id.clone();
+        let cached_at =
+            Instant::now() - HARDWARE_GAME_DETECTION_INTERVAL - Duration::from_millis(25);
+
+        {
+            let mut cache = state.discovery_cache.game_detection.lock().await;
+            cache.store(cached, cached_at);
+        }
+
+        let detection = state.cached_game_detection().await;
+        let refreshed_at = {
+            let cache = state.discovery_cache.game_detection.lock().await;
+            cache.refreshed_at
+        };
+
+        assert_eq!(detection.active_game_id, cached_game_id);
+        assert_eq!(refreshed_at, Some(cached_at));
+    }
+
+    #[tokio::test]
+    async fn cached_hardware_game_detection_refreshes_after_hardware_interval() {
+        let state = AgentState::mock();
+        let cached = detect_running_game_from_processes(["ForzaHorizon6.exe"]);
+        let cached_at =
+            Instant::now() - HARDWARE_GAME_DETECTION_INTERVAL - Duration::from_millis(25);
+
+        {
+            let mut catalog = state.discovery_cache.steam_game_catalog.lock().await;
+            catalog.store(SteamGameCatalog::default(), Instant::now());
+        }
+        {
+            let mut cache = state.discovery_cache.game_detection.lock().await;
+            cache.store(cached, cached_at);
+        }
+
+        let _detection = state.cached_hardware_game_detection().await;
+        let refreshed_at = {
+            let cache = state.discovery_cache.game_detection.lock().await;
+            cache.refreshed_at
+        };
+
+        assert!(refreshed_at.is_some_and(|refreshed_at| refreshed_at > cached_at));
+    }
+
+    #[tokio::test]
     async fn detected_forza_game_materializes_listener_and_profile_resolution() {
         let state = AgentState::from_controller_events([attach_event(
             "edge-forza",
@@ -12859,7 +13278,7 @@ mod tests {
         assert!(!effect_enabled("rpm_leds"));
         assert!(effect_enabled("road_texture"));
         assert_eq!(config.trigger.l2_from, 0);
-        assert_eq!(config.trigger.r2_from, 0);
+        assert_eq!(config.trigger.r2_from, 4);
         assert_eq!(config.lightbar.color, "#f4a261");
         assert_eq!(config.lightbar.brightness, 44);
 
@@ -12921,7 +13340,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stale_forza_effects_keep_baseline_trigger_tension_while_game_runs() {
+    async fn stale_forza_effects_keep_trigger_output_neutral_while_game_runs() {
         let state = AgentState::from_controller_events([attach_event(
             "edge-forza",
             ControllerFamily::DualSenseEdge,
@@ -12958,28 +13377,12 @@ mod tests {
         let inner = state.inner.read().await;
         let response = current_effect_response(&inner, Some(&detection), false);
 
-        match response.output.l2 {
-            TriggerOutput::AdaptiveResistance { strength, .. } => {
-                assert!(
-                    (0.13..0.16).contains(&strength),
-                    "stale Forza should keep baseline brake tension while the game runs, got {strength}"
-                );
-            }
-            other => panic!("expected stale Forza baseline L2 resistance, got {other:?}"),
-        }
-        match response.output.r2 {
-            TriggerOutput::AdaptiveResistance { strength, .. } => {
-                assert!(
-                    (0.06..0.12).contains(&strength),
-                    "stale Forza should keep baseline throttle tension while the game runs, got {strength}"
-                );
-            }
-            other => panic!("expected stale Forza baseline R2 resistance, got {other:?}"),
-        }
+        assert_eq!(response.output.l2, TriggerOutput::Off);
+        assert_eq!(response.output.r2, TriggerOutput::Off);
         assert!(response
             .warnings
             .iter()
-            .any(|warning| { warning.contains("baseline trigger tension") }));
+            .any(|warning| { warning.contains("trigger output stays neutral") }));
         assert!(response
             .parity_effects
             .iter()
@@ -13028,7 +13431,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn forza_menu_effects_keep_baseline_trigger_tension() {
+    async fn forza_menu_effects_keep_trigger_output_neutral() {
         let state = AgentState::from_controller_events([attach_event(
             "edge-forza",
             ControllerFamily::DualSenseEdge,
@@ -13070,24 +13473,75 @@ mod tests {
         let inner = state.inner.read().await;
         let response = current_effect_response(&inner, Some(&detection), true);
 
-        match response.output.l2 {
-            TriggerOutput::AdaptiveResistance { strength, .. } => {
-                assert!(
-                    (0.13..0.16).contains(&strength),
-                    "menu should keep baseline brake tension, got {strength}"
-                );
-            }
-            other => panic!("expected menu baseline L2 resistance, got {other:?}"),
+        assert_eq!(response.output.l2, TriggerOutput::Off);
+        assert_eq!(response.output.r2, TriggerOutput::Off);
+    }
+
+    #[tokio::test]
+    async fn hardware_output_frame_waits_for_supported_game_and_live_packets() {
+        let state = AgentState::from_controller_events([attach_event(
+            "edge-forza",
+            ControllerFamily::DualSenseEdge,
+            ControllerTransportKind::Bluetooth,
+            Some(84),
+        )]);
+
+        let without_game = {
+            let inner = state.inner.read().await;
+            state.output_frame_for_current_resolution_cached(
+                &inner,
+                None,
+                EffectEnginePurpose::Hardware,
+            )
+        };
+        assert!(without_game.is_none());
+
+        let detection = detect_running_game_from_processes(["ForzaHorizon6.exe"]);
+        let without_packets = {
+            let inner = state.inner.read().await;
+            state.output_frame_for_current_resolution_cached(
+                &inner,
+                Some(&detection),
+                EffectEnginePurpose::Hardware,
+            )
+        };
+        assert!(without_packets.is_none());
+
+        {
+            let mut inner = state.inner.write().await;
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .mark_bound("127.0.0.1:5300".parse().unwrap());
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .packet_count = 1;
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .last_packet_at = Some(Instant::now());
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .last_packet_len = Some(324);
+            inner.active_adapter_id = Some("forza-data-out".to_string());
+            inner.telemetry = SignalSnapshot::from_updates([
+                signal_update("source.id", "forza-data-out"),
+                signal_update("game.id", "forza-horizon-6"),
+                signal_update("game.state", "driving"),
+                signal_update("input.brake", 0.20),
+                signal_update("input.throttle", 0.30),
+                signal_update("vehicle.speed_kmh", 30.0),
+                signal_update("drivetrain.shift_event", "none"),
+            ]);
         }
-        match response.output.r2 {
-            TriggerOutput::AdaptiveResistance { strength, .. } => {
-                assert!(
-                    (0.06..0.12).contains(&strength),
-                    "menu should keep baseline throttle tension, got {strength}"
-                );
-            }
-            other => panic!("expected menu baseline R2 resistance, got {other:?}"),
-        }
+
+        let with_live_packets = {
+            let inner = state.inner.read().await;
+            state.output_frame_for_current_resolution_cached(
+                &inner,
+                Some(&detection),
+                EffectEnginePurpose::Hardware,
+            )
+        };
+        assert!(with_live_packets.is_some());
     }
 
     #[tokio::test]
@@ -13288,7 +13742,7 @@ mod tests {
             .find(|effect| effect.id == "gear_shift_thump")
             .expect("default shift tuning exists");
         shift.enabled = true;
-        shift.intensity = 150;
+        shift.intensity = FORZA_SHIFT_THUMP_DEFAULT_INTENSITY;
         shift.route = "body_left".to_string();
         let snapshot = SignalSnapshot::from_updates([
             signal_update("input.throttle", 0.0),
@@ -13311,7 +13765,7 @@ mod tests {
             forza_rumble_output(&forza, &snapshot, 1.0, "Balanced").expect("shift should rumble");
 
         assert!(rumble.low_frequency > 0.85);
-        assert!(rumble.high_frequency < 0.30);
+        assert!(rumble.high_frequency < 0.40);
     }
 
     #[test]
@@ -13370,12 +13824,12 @@ mod tests {
             .rumble
             .expect("body route should produce shift rumble");
         assert!(
-            (0.15..0.17).contains(&rumble.low_frequency),
+            (0.18..0.20).contains(&rumble.low_frequency),
             "35% shift thump should produce reduced low rumble, got {}",
             rumble.low_frequency
         );
         assert!(
-            (0.15..0.17).contains(&rumble.high_frequency),
+            (0.16..0.18).contains(&rumble.high_frequency),
             "35% shift thump should produce reduced high rumble, got {}",
             rumble.high_frequency
         );
@@ -13481,10 +13935,14 @@ mod tests {
         let idle_frame = EffectEngine::new().evaluate(&profile, &idle_throttle);
 
         match idle_frame.r2 {
-            TriggerOutput::AdaptiveResistance { strength, .. } => {
+            TriggerOutput::AdaptiveResistance {
+                start_position,
+                strength,
+            } => {
+                assert!((start_position - 0.04).abs() < f64::EPSILON);
                 assert!(
-                    (0.06..0.12).contains(&strength),
-                    "idle throttle should still feel tensioned, got {strength}"
+                    (0.02..0.04).contains(&strength),
+                    "idle throttle should stay light at the beginning of the pull, got {strength}"
                 );
             }
             other => panic!("expected baseline throttle tension, got {other:?}"),
@@ -13519,7 +13977,7 @@ mod tests {
         match frame.r2 {
             TriggerOutput::AdaptiveResistance { strength, .. } => {
                 assert!(
-                    (0.16..0.28).contains(&strength),
+                    (0.14..0.22).contains(&strength),
                     "partial throttle should have smooth gas-pedal tension, got {strength}"
                 );
             }
@@ -13554,11 +14012,8 @@ mod tests {
         let frame = EffectEngine::new().evaluate(&profile, &snapshot);
 
         match frame.r2 {
-            TriggerOutput::AdaptiveResistance {
-                start_position,
-                strength,
-            } => {
-                assert_eq!(start_position, 0.0);
+            TriggerOutput::Wall { position, strength } => {
+                assert!((position - 0.97).abs() < f64::EPSILON);
                 assert!(
                     (0.33..0.39).contains(&strength),
                     "full throttle should feel firm without becoming a brake pedal, got {strength}"
@@ -13567,11 +14022,8 @@ mod tests {
             other => panic!("expected full throttle force, got {other:?}"),
         }
         match frame.l2 {
-            TriggerOutput::AdaptiveResistance {
-                start_position,
-                strength,
-            } => {
-                assert_eq!(start_position, 0.0);
+            TriggerOutput::Wall { position, strength } => {
+                assert!((position - 0.97).abs() < f64::EPSILON);
                 assert!(
                     (0.78..0.83).contains(&strength),
                     "full brake should be firm but controlled, got {strength}"
@@ -13604,11 +14056,8 @@ mod tests {
         let frame = EffectEngine::new().evaluate(&profile, &snapshot);
 
         match frame.l2 {
-            TriggerOutput::AdaptiveResistance {
-                start_position,
-                strength,
-            } => {
-                assert_eq!(start_position, 0.20);
+            TriggerOutput::Wall { position, strength } => {
+                assert!((position - 0.57).abs() < f64::EPSILON);
                 assert!(
                     (0.78..0.83).contains(&strength),
                     "custom brake end point should arm full force at 60%, got {strength}"
@@ -13617,11 +14066,8 @@ mod tests {
             other => panic!("expected brake end-stop force, got {other:?}"),
         }
         match frame.r2 {
-            TriggerOutput::AdaptiveResistance {
-                start_position,
-                strength,
-            } => {
-                assert_eq!(start_position, 0.10);
+            TriggerOutput::Wall { position, strength } => {
+                assert!((position - 0.47).abs() < f64::EPSILON);
                 assert!(
                     (0.33..0.39).contains(&strength),
                     "custom throttle end point should arm full force at 50%, got {strength}"
@@ -13660,6 +14106,50 @@ mod tests {
                 );
             }
             other => panic!("expected ABS pulse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn forza_abs_threshold_tracks_custom_brake_range() {
+        let mut config = ControllerConfig::default_for("edge-forza", "DualSense Edge");
+        config.trigger.l2_from = 50;
+        config.trigger.l2_to = 100;
+        let profile = forza_runtime_profile("forza-horizon", "Forza", Some(&config));
+
+        let below_threshold = SignalSnapshot::from_updates([
+            signal_update("game.state", "driving"),
+            signal_update("input.throttle", 0.0),
+            signal_update("input.brake", 0.60),
+            signal_update("input.handbrake", 0.0),
+            signal_update("vehicle.rpm_ratio", 0.40),
+            signal_update("vehicle.speed_kmh", 55.0),
+            signal_update("tire.slip_ratio.max", 1.15),
+            signal_update("wheel.slip.max", 0.0),
+            signal_update("drivetrain.shift_event", "none"),
+        ]);
+        let frame = EffectEngine::new().evaluate(&profile, &below_threshold);
+        match frame.l2 {
+            TriggerOutput::AdaptiveResistance { .. } => {}
+            other => panic!("ABS should wait for the adjusted brake range, got {other:?}"),
+        }
+
+        let above_threshold = SignalSnapshot::from_updates([
+            signal_update("game.state", "driving"),
+            signal_update("input.throttle", 0.0),
+            signal_update("input.brake", 0.70),
+            signal_update("input.handbrake", 0.0),
+            signal_update("vehicle.rpm_ratio", 0.40),
+            signal_update("vehicle.speed_kmh", 55.0),
+            signal_update("tire.slip_ratio.max", 1.15),
+            signal_update("wheel.slip.max", 0.0),
+            signal_update("drivetrain.shift_event", "none"),
+        ]);
+        let frame = EffectEngine::new().evaluate(&profile, &above_threshold);
+        match frame.l2 {
+            TriggerOutput::Pulse { frequency_hz, .. } => {
+                assert!((frequency_hz - FORZA_ABS_PULSE_FREQUENCY_HZ).abs() < f64::EPSILON);
+            }
+            other => panic!("expected ABS pulse after adjusted threshold, got {other:?}"),
         }
     }
 
@@ -13735,11 +14225,11 @@ mod tests {
             Some("shift")
         );
         assert_eq!(
-            runtime.latched_shift_event(now + Duration::from_millis(99)),
+            runtime.latched_shift_event(now + Duration::from_millis(129)),
             Some("shift")
         );
         assert_eq!(
-            runtime.latched_shift_event(now + Duration::from_millis(100)),
+            runtime.latched_shift_event(now + Duration::from_millis(130)),
             None
         );
     }
@@ -13763,11 +14253,11 @@ mod tests {
             Some("shift")
         );
         assert_eq!(
-            runtime.latched_shift_event(now + Duration::from_millis(149)),
+            runtime.latched_shift_event(now + Duration::from_millis(179)),
             Some("shift")
         );
         assert_eq!(
-            runtime.latched_shift_event(now + Duration::from_millis(150)),
+            runtime.latched_shift_event(now + Duration::from_millis(180)),
             None
         );
     }
@@ -13839,11 +14329,11 @@ mod tests {
     }
 
     #[test]
-    fn forza_shift_thump_uses_plain_pulse_below_wall_threshold() {
+    fn forza_shift_thump_uses_plain_pulse_near_idle() {
         let config = ControllerConfig::default_for("edge-forza", "DualSense Edge");
         let snapshot = SignalSnapshot::from_updates([
             signal_update("game.state", "driving"),
-            signal_update("input.throttle", 200.0 / 255.0),
+            signal_update("input.throttle", 0.05),
             signal_update("input.brake", 0.0),
             signal_update("input.handbrake", 0.0),
             signal_update("vehicle.rpm_ratio", 0.98),
@@ -14151,7 +14641,7 @@ mod tests {
             .find(|effect| effect.id == "gear_shift_thump")
             .expect("preset must contain 'gear_shift_thump'");
         assert!(shift.enabled);
-        assert_eq!(shift.intensity, 150);
+        assert_eq!(shift.intensity, FORZA_SHIFT_THUMP_DEFAULT_INTENSITY);
         assert_eq!(shift.route, "r2_and_body");
 
         let rpm_leds = preset
@@ -14200,7 +14690,7 @@ mod tests {
 
         let shift = effect("gear_shift_thump");
         assert!(shift.enabled);
-        assert_eq!(shift.intensity, 150);
+        assert_eq!(shift.intensity, FORZA_SHIFT_THUMP_DEFAULT_INTENSITY);
         assert_eq!(shift.route, "r2_and_body");
 
         for (id, intensity, route) in [
@@ -14339,7 +14829,7 @@ mod tests {
             .find(|effect| effect.id == "gear_shift_thump")
             .expect("gear_shift_thump present after activation");
         assert!(shift.enabled);
-        assert_eq!(shift.intensity, 150);
+        assert_eq!(shift.intensity, FORZA_SHIFT_THUMP_DEFAULT_INTENSITY);
         assert_eq!(shift.route, "r2_and_body");
 
         let rpm_leds = config
@@ -14350,7 +14840,7 @@ mod tests {
             .expect("rpm_leds present after activation");
         assert!(!rpm_leds.enabled);
         assert_eq!(config.trigger.l2_from, 0);
-        assert_eq!(config.trigger.r2_from, 0);
+        assert_eq!(config.trigger.r2_from, 4);
         assert_eq!(config.trigger.l2_to, 100);
         assert_eq!(config.trigger.r2_to, 100);
         assert!((config.trigger.l2_curve.as_f64() - FORZA_BRAKE_CURVE).abs() < f64::EPSILON);
@@ -14423,7 +14913,7 @@ mod tests {
             "Immersive should leave gear LEDs and the RPM bar disabled"
         );
         assert_eq!(config.trigger.l2_from, 0);
-        assert_eq!(config.trigger.r2_from, 0);
+        assert_eq!(config.trigger.r2_from, 4);
         assert_eq!(config.trigger.l2_to, 100);
         assert_eq!(config.trigger.r2_to, 100);
         assert!((config.trigger.l2_curve.as_f64() - FORZA_BRAKE_CURVE).abs() < f64::EPSILON);
@@ -15839,7 +16329,10 @@ mod tests {
             .join("BrowseTestGame");
         fs::create_dir_all(install_path.join("Binaries").join("Win64")).expect("nested dirs");
         fs::write(
-            install_path.join("Binaries").join("Win64").join("Game-Shipping.exe"),
+            install_path
+                .join("Binaries")
+                .join("Win64")
+                .join("Game-Shipping.exe"),
             [0_u8; 4],
         )
         .expect("nested exe");

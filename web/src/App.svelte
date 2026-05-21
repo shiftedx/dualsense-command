@@ -1,9 +1,11 @@
 <script lang="ts">
-  import { Cable, RefreshCw, RotateCcw, Save } from '@lucide/svelte';
+  import { Cable, CopyPlus, ExternalLink, RefreshCw, RotateCcw, Save } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import Tooltip from './components/Tooltip.svelte';
   import InitialBadge from './components/InitialBadge.svelte';
   import AddGameDialog from './components/AddGameDialog.svelte';
+  import ControllerCard from './components/ControllerCard.svelte';
+  import { createAppRuntime } from './lib/appRuntime';
   import {
     ButtonMappingView,
     assembleSteamBindingRaw,
@@ -16,6 +18,7 @@
     steamBindingTargetPart,
     steamSlotGlyphs
   } from './lib/features/buttonMapping';
+  import HapticsView from './lib/features/haptics/HapticsView.svelte';
   import type { MappingChipModel, SteamBindingSlot } from './lib/features/buttonMapping';
   import {
     activateProfile,
@@ -26,6 +29,7 @@
     deleteProfile,
     exportProfile,
     getAppSnapshot,
+    getAppUpdateCheck,
     getControllerInput,
     getControllerConfig,
     getSteamLibrary,
@@ -40,6 +44,11 @@
     updateControllerName,
     writeSteamInputBinding
   } from './lib/api';
+  import {
+    controllerBatteryReadable,
+    controllerConnectionText,
+    controllerModelText
+  } from './lib/controllerDisplay';
   import type {
     AppSnapshot,
     ControllerConfiguration,
@@ -75,6 +84,13 @@
     id: number;
     tone: ToastTone;
     message: string;
+  };
+  type UpdateCheckState = {
+    state: 'idle' | 'checking' | 'current' | 'available' | 'error';
+    currentVersion?: string;
+    latestVersion?: string;
+    releaseUrl?: string;
+    message?: string;
   };
   type EditableControllerConfig = Omit<ControllerConfiguration, 'controllerId' | 'model'>;
   type SteamBindingTargetGroup = {
@@ -277,10 +293,12 @@
     { value: 'r2_and_body', label: 'R2 + body' },
     { value: 'light_led', label: 'Light / LEDs' }
   ];
+  const FORZA_SHIFT_THUMP_DEFAULT_INTENSITY = 180;
+
   const shiftThumpPresets = [
     { label: 'Soft', intensity: 35 },
     { label: 'Medium', intensity: 65 },
-    { label: 'Strong', intensity: 150 },
+    { label: 'Strong', intensity: FORZA_SHIFT_THUMP_DEFAULT_INTENSITY },
     { label: 'Max', intensity: 255 }
   ];
 
@@ -387,7 +405,7 @@
       label: 'Paddle shift thump',
       signal: 'drivetrain.shift_pulse',
       group: 'Cue',
-      defaultIntensity: 150,
+      defaultIntensity: FORZA_SHIFT_THUMP_DEFAULT_INTENSITY,
       defaultRoute: 'r2_and_body',
       help: 'Fires a short kick when DSCC detects a gear change. The Base route uses R2 plus a slightly reduced body thump so shifts feel physical without hitting both triggers.'
     },
@@ -462,6 +480,8 @@
   const BASE_FEEL_TEST_REFRESH_INTERVAL_MS = 35;
   const SNAPSHOT_INVALIDATION_DEBOUNCE_MS = 500;
   const LIVE_CONFIG_SYNC_DEBOUNCE_MS = 120;
+  const UPDATE_RELEASE_PAGE_URL = 'https://github.com/shiftedx/dualsense-command/releases/latest';
+  const UPDATE_DISMISSED_VERSION_KEY = 'dscc-update-dismissed-version';
 
   let snapshot: AppSnapshot | null = null;
   let loading = true;
@@ -470,7 +490,6 @@
   let controllerRenameId = '';
   let controllerRenameName = '';
   let controllerRenameBusy = false;
-  let expandedControllerIds = new Set<string>();
   let addGameOpen = false;
   let addGameLoading = false;
   let addGameEntries: SteamLibraryEntry[] = [];
@@ -499,22 +518,25 @@
   let effectActivityUntil: Record<string, number> = {};
   let partialErrorsDismissed = false;
   let lastPartialErrorSignature = '';
+  let updateCheck: UpdateCheckState = { state: 'idle' };
+  let checkedUpdateVersion = '';
+  let updateDismissedVersion = '';
+  let updateDismissalLoaded = false;
   let newProfileName = '';
   let renameProfileId = '';
   let renameProfileName = '';
   let profileRenameBusy = false;
   let profileSaveBusy = false;
+  let saveAsProfileOpen = false;
+  let saveAsProfileName = '';
+  let profileSaveAsBusy = false;
   let profileFileBusy = false;
   let profileImportInput: HTMLInputElement | undefined;
   let profilePanelEl: HTMLDivElement | undefined;
-  let refreshDebounceTimer: number | undefined;
-  let fallbackPollTimer: number | undefined;
-  let stopSnapshotSocket: (() => void) | undefined;
-  let appRuntimeStarted = false;
+  let appRuntime: ReturnType<typeof createAppRuntime> | undefined;
   let liveConfigSyncTimer: number | undefined;
   let liveConfigSyncInFlight = false;
   let liveConfigSyncQueued = false;
-  let pendingVisibilityRefresh = false;
   let baseFeelTestActive = false;
   let baseFeelTestBusy = false;
   let baseFeelTestTimer: number | undefined;
@@ -992,7 +1014,7 @@
             ['abs_slip_pulse', true, 100, 'l2'],
             ['handbrake_wall', true, 100, 'l2'],
             ['rev_limiter_buzz', true, 62, 'r2'],
-            ['gear_shift_thump', true, 150, 'r2_and_body'],
+            ['gear_shift_thump', true, FORZA_SHIFT_THUMP_DEFAULT_INTENSITY, 'r2_and_body'],
             ['road_texture', true, 35, 'body_both'],
             ['rumble_strip', true, 38, 'body_both'],
             ['tire_slip', true, 50, 'body_right'],
@@ -1006,7 +1028,7 @@
             ['abs_slip_pulse', true, 100, 'l2'],
             ['handbrake_wall', true, 100, 'l2'],
             ['rev_limiter_buzz', true, 55, 'r2'],
-            ['gear_shift_thump', true, 150, 'r2_and_body'],
+            ['gear_shift_thump', true, FORZA_SHIFT_THUMP_DEFAULT_INTENSITY, 'r2_and_body'],
             ['road_texture', true, 40, 'body_both'],
             ['rumble_strip', false, 55, 'body_both'],
             ['tire_slip', false, 65, 'body_right'],
@@ -1056,26 +1078,73 @@
     }
   };
 
-  const scheduleRefresh = () => {
-    if (document.hidden) {
-      pendingVisibilityRefresh = true;
-      return;
-    }
-    if (refreshDebounceTimer !== undefined) return;
-    if (typeof window.setTimeout !== 'function') {
-      void refresh();
-      return;
-    }
-    refreshDebounceTimer = window.setTimeout(() => {
-      refreshDebounceTimer = undefined;
-      void refresh();
-    }, SNAPSHOT_INVALIDATION_DEBOUNCE_MS);
-  };
-
   $: partialErrors = snapshot?.partialErrors ?? [];
   $: showPartialErrorBanner = partialErrors.length > 0 && !partialErrorsDismissed;
+  $: showUpdateBanner =
+    updateCheck.state === 'available' &&
+    Boolean(updateCheck.latestVersion) &&
+    updateCheck.latestVersion !== updateDismissedVersion;
+  $: if (status?.version) {
+    void checkForAppUpdate(status.version);
+  }
+
   const dismissPartialErrors = () => {
     partialErrorsDismissed = true;
+  };
+
+  const normalizeVersion = (value: string | undefined | null) => (value ?? '').trim().replace(/^v/i, '');
+
+  const loadDismissedUpdateVersion = () => {
+    if (typeof window === 'undefined' || updateDismissalLoaded) return;
+    updateDismissalLoaded = true;
+    try {
+      updateDismissedVersion = window.localStorage.getItem(UPDATE_DISMISSED_VERSION_KEY) ?? '';
+    } catch {
+      updateDismissedVersion = '';
+    }
+  };
+
+  const dismissUpdateBanner = () => {
+    const version = updateCheck.latestVersion ?? '';
+    updateDismissedVersion = version;
+    if (typeof window === 'undefined' || !version) return;
+    try {
+      window.localStorage.setItem(UPDATE_DISMISSED_VERSION_KEY, version);
+    } catch {
+      // Dismissal is convenience state; failing to persist it should not block use.
+    }
+  };
+
+  const checkForAppUpdate = async (currentVersionRaw: string) => {
+    if (typeof window === 'undefined' || typeof fetch !== 'function') return;
+    const currentVersion = normalizeVersion(currentVersionRaw);
+    if (!currentVersion || currentVersion.toLowerCase() === 'unknown' || checkedUpdateVersion === currentVersion) return;
+
+    checkedUpdateVersion = currentVersion;
+    updateCheck = { state: 'checking', currentVersion };
+    try {
+      const result = await getAppUpdateCheck(currentVersion);
+      updateCheck = result.updateAvailable
+        ? {
+            state: 'available',
+            currentVersion: result.currentVersion,
+            latestVersion: result.latestVersion,
+            releaseUrl: result.releaseUrl
+          }
+        : {
+            state: 'current',
+            currentVersion: result.currentVersion,
+            latestVersion: result.latestVersion,
+            releaseUrl: result.releaseUrl
+          };
+    } catch (caught) {
+      updateCheck = {
+        state: 'error',
+        currentVersion,
+        message: caught instanceof Error ? caught.message : 'Update check failed'
+      };
+      console.warn('DSCC update check failed', caught);
+    }
   };
 
   const clamp = (value: number, min = 0, max = 100) => Math.max(min, Math.min(max, value));
@@ -2031,7 +2100,7 @@
     sameRange: false,
     l2From: 0,
     l2To: 100,
-    r2From: 0,
+    r2From: 4,
     r2To: 100,
     l2Curve: defaultTriggerCurve('l2'),
     r2Curve: defaultTriggerCurve('r2'),
@@ -2323,6 +2392,8 @@
 
   const beginRenameSelectedProfile = () => {
     if (!selectedActionProfile || selectedActionProfile.scope === 'Built-in') return;
+    saveAsProfileOpen = false;
+    saveAsProfileName = '';
     renameProfileId = selectedActionProfile.id;
     renameProfileName = selectedActionProfile.name;
   };
@@ -2383,6 +2454,75 @@
     }
   };
 
+  const beginSaveAsProfile = () => {
+    if (!selectedActionProfile) {
+      setApplyMessage('No profile selected', 'error');
+      return;
+    }
+    cancelRenameProfile();
+    saveAsProfileName = uniqueProfileName(`${selectedActionProfile.name} copy`);
+    saveAsProfileOpen = true;
+  };
+
+  const cancelSaveAsProfile = () => {
+    saveAsProfileOpen = false;
+    saveAsProfileName = '';
+  };
+
+  const submitSaveAsProfile = async () => {
+    const name = saveAsProfileName.trim();
+    if (!selectedActionProfile || profileSaveAsBusy) {
+      if (!selectedActionProfile) setApplyMessage('No profile selected', 'error');
+      return;
+    }
+    if (!name) {
+      setApplyMessage('Profile name cannot be empty', 'error');
+      return;
+    }
+    if (profiles.some((profile) => profile.name.trim().toLowerCase() === name.toLowerCase())) {
+      setApplyMessage('A profile with that name already exists', 'error');
+      return;
+    }
+
+    profileSaveAsBusy = true;
+    try {
+      const config = buildControllerConfig();
+      const created = await createProfile(name, { gameId: selectedTuningScope === 'game' ? profileContextGameId : null });
+      const response = await saveProfileConfig(created.id, config);
+      if (controller) {
+        currentControllerConfig = await saveControllerConfig(controller.id, config);
+      }
+      const resolution = await setProfileOverride({
+        controllerId: controller?.id ?? null,
+        gameId: profileContextGameId,
+        profileId: created.id
+      });
+      if (snapshot) snapshot = { ...snapshot, profileResolution: resolution };
+      profileSaveBaselineSignature = profileConfigSignature(config);
+      selectedOverrideProfileId = created.id;
+      cancelSaveAsProfile();
+      await refresh();
+      selectedOverrideProfileId = created.id;
+      setApplyMessage(response.message || `Saved ${created.name}`, 'success');
+    } catch (caught) {
+      setApplyMessage(caught instanceof Error ? caught.message : 'Unable to save profile copy', 'error');
+      await refresh();
+    } finally {
+      profileSaveAsBusy = false;
+    }
+  };
+
+  const handleSaveAsProfileKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      void submitSaveAsProfile();
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelSaveAsProfile();
+    }
+  };
+
   const deleteProfileById = async (id: string, name: string) => {
     const fallbackProfileId =
       profiles.find((profile) => profile.id === 'forza-horizon')?.id ??
@@ -2408,88 +2548,6 @@
     } finally {
       profileFileBusy = false;
     }
-  };
-
-  const controllerModelText = (item: ControllerStatus | undefined) => {
-    if (!item) return 'No DualSense Connected';
-    if (item.family === 'Unknown Sony') return 'Unknown Sony Controller';
-    return item.name || item.family;
-  };
-
-  const controllerConnectionText = (item: ControllerStatus | undefined) => {
-    if (!item) return 'No controller detected';
-    if (!item.connected) {
-      if (item.diagnosticState === 'permission_denied') return 'Permission denied';
-      if (item.diagnosticState === 'cannot_open') return 'Cannot open controller';
-      return 'Controller disconnected';
-    }
-    return item.transport === 'Unknown' ? 'Connected' : item.transport;
-  };
-
-  const shortControllerId = (id: string) => (id.length > 14 ? `${id.slice(0, 6)}…${id.slice(-5)}` : id);
-
-  const toggleControllerExpansion = (controllerId: string) => {
-    const next = new Set(expandedControllerIds);
-    if (next.has(controllerId)) next.delete(controllerId);
-    else next.add(controllerId);
-    expandedControllerIds = next;
-  };
-
-  const isControllerExpanded = (controllerId: string) => expandedControllerIds.has(controllerId);
-
-  const controllerTransportDetail = (item: ControllerStatus): string => {
-    if (!item.connected) {
-      if (item.diagnosticState === 'permission_denied') return 'Permission denied';
-      if (item.diagnosticState === 'cannot_open') return 'Cannot open';
-      return 'Disconnected';
-    }
-    return item.transport === 'Unknown' ? 'Connected (transport unknown)' : `Connected via ${item.transport}`;
-  };
-
-  const controllerBatteryDetail = (item: ControllerStatus): string => {
-    if (typeof item.battery !== 'number' || item.batteryState === 'unknown') return 'Battery unknown';
-    if (item.batteryState === 'full') return `${item.battery}% / full charge`;
-    if (item.batteryState === 'charging') return `${item.battery}% / charging`;
-    return `${item.battery}% / discharging`;
-  };
-
-  const controllerPermissionDetail = (item: ControllerStatus): string => {
-    if (item.permission === 'granted') return 'HID access granted';
-    if (item.permission === 'denied') return 'HID access denied';
-    return 'HID access status unknown';
-  };
-
-  const controllerDiagnosticDetail = (item: ControllerStatus): string => {
-    switch (item.diagnosticState) {
-      case 'ok':
-        return 'Healthy';
-      case 'disconnected':
-        return 'Disconnected from host';
-      case 'permission_denied':
-        return 'OS denied HID access';
-      case 'cannot_open':
-        return 'Could not open the HID device';
-      case 'unsupported':
-        return 'Hardware not recognised by DSCC';
-      case 'faulted':
-        return 'Device fault reported';
-      default:
-        return 'Unknown';
-    }
-  };
-
-  const controllerBatteryReadable = (item: ControllerStatus | undefined) =>
-    Boolean(item?.connected && typeof item.battery === 'number' && item.batteryState !== 'unknown');
-
-  const controllerBatteryFillWidth = (item: ControllerStatus | undefined) =>
-    controllerBatteryReadable(item) ? Math.max(2, Math.round(((item?.battery ?? 0) / 100) * 20)) : 0;
-
-  const controllerBatteryText = (item: ControllerStatus | undefined) => {
-    const battery = item?.battery;
-    if (!item || typeof battery !== 'number' || item.batteryState === 'unknown') return '';
-    if (item.batteryState === 'full') return `${battery}% / full`;
-    if (item.batteryState === 'charging') return `${battery}% / charging`;
-    return `${battery}% battery`;
   };
 
   const telemetryRateStatusText = (item: AppSnapshot['adapters'][number] | undefined) => {
@@ -2705,8 +2763,23 @@
     stopTriggerInputPolling();
   }
 
+  function shouldPollTriggerInput() {
+    return Boolean(
+      controller?.id &&
+        activeView === 'haptics' &&
+        typeof window !== 'undefined' &&
+        typeof document !== 'undefined' &&
+        !document.hidden
+    );
+  }
+
+  function syncTriggerInputPolling() {
+    if (shouldPollTriggerInput()) startTriggerInputPolling();
+    else stopTriggerInputPolling();
+  }
+
   async function pollTriggerInput() {
-    if (triggerInputBusy || !controller?.id || typeof document === 'undefined' || document.hidden) return;
+    if (triggerInputBusy || !shouldPollTriggerInput()) return;
     triggerInputBusy = true;
     try {
       const input = await getControllerInput(controller?.id);
@@ -2734,7 +2807,7 @@
   }
 
   function startTriggerInputPolling() {
-    if (!controller?.id || typeof document === 'undefined' || document.hidden) return;
+    if (!shouldPollTriggerInput()) return;
     void pollTriggerInput();
     if (triggerInputPollTimer !== undefined) return;
     triggerInputPollTimer = window.setInterval(() => void pollTriggerInput(), TRIGGER_INPUT_POLL_INTERVAL_MS);
@@ -2970,64 +3043,40 @@
   const previewLightbar = async () => previewLightbarColor(lightbarColor, 'Lightbar');
   const previewRpmColor = async () => previewLightbarColor(rpmColor, 'Max RPM');
 
-  const startFallbackPolling = () => {
-    if (typeof window === 'undefined' || fallbackPollTimer !== undefined) return;
-    if (!document.hidden) void refresh();
-    if (typeof window.setInterval !== 'function') return;
-    fallbackPollTimer = window.setInterval(() => {
-      if (!document.hidden) void refresh();
-    }, FALLBACK_POLL_INTERVAL_MS);
-  };
-
-  const handleVisibilityChange = () => {
-    if (document.hidden) {
-      stopTriggerInputPolling();
-      return;
-    }
-    startTriggerInputPolling();
-    if (!pendingVisibilityRefresh) return;
-    pendingVisibilityRefresh = false;
-    void refresh();
-  };
-
-  const handleHashChange = () => {
-    activeView = appViewFromHash();
-  };
-
   const startAppRuntime = () => {
-    if (typeof window === 'undefined' || appRuntimeStarted) return;
-    appRuntimeStarted = true;
-    activeView = appViewFromHash();
-    void refresh();
-    stopSnapshotSocket = connectAppSnapshotSocket({
-      onSnapshot: applySnapshot,
-      onInvalidate: scheduleRefresh,
-      onUnavailable: startFallbackPolling,
-      onClosed: startFallbackPolling
+    if (typeof window === 'undefined' || appRuntime?.isStarted()) return;
+    appRuntime = createAppRuntime({
+      fallbackPollIntervalMs: FALLBACK_POLL_INTERVAL_MS,
+      snapshotInvalidationDebounceMs: SNAPSHOT_INVALIDATION_DEBOUNCE_MS,
+      refresh,
+      applySnapshot,
+      connectSnapshotSocket: connectAppSnapshotSocket,
+      onStart: () => {
+        loadDismissedUpdateVersion();
+        activeView = appViewFromHash();
+        syncTriggerInputPolling();
+      },
+      onVisible: syncTriggerInputPolling,
+      onHidden: syncTriggerInputPolling,
+      onHashChange: () => {
+        activeView = appViewFromHash();
+        syncTriggerInputPolling();
+      },
+      onDocumentMouseDown: handleColorDocClick,
+      onDocumentKeyDown: handleColorKey,
+      onStop: () => {
+        if (liveConfigSyncTimer !== undefined) window.clearTimeout(liveConfigSyncTimer);
+        liveConfigSyncTimer = undefined;
+        clearBaseFeelTestTimers();
+        stopTriggerInputPolling();
+      }
     });
-    document.addEventListener('mousedown', handleColorDocClick);
-    document.addEventListener('keydown', handleColorKey);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('hashchange', handleHashChange);
+    appRuntime.start();
   };
 
   const stopAppRuntime = () => {
-    if (typeof window === 'undefined' || !appRuntimeStarted) return;
-    appRuntimeStarted = false;
-    stopSnapshotSocket?.();
-    stopSnapshotSocket = undefined;
-    if (fallbackPollTimer !== undefined) window.clearInterval(fallbackPollTimer);
-    fallbackPollTimer = undefined;
-    if (refreshDebounceTimer !== undefined) window.clearTimeout(refreshDebounceTimer);
-    refreshDebounceTimer = undefined;
-    if (liveConfigSyncTimer !== undefined) window.clearTimeout(liveConfigSyncTimer);
-    liveConfigSyncTimer = undefined;
-    clearBaseFeelTestTimers();
-    stopTriggerInputPolling();
-    document.removeEventListener('mousedown', handleColorDocClick);
-    document.removeEventListener('keydown', handleColorKey);
-    document.removeEventListener('visibilitychange', handleVisibilityChange);
-    window.removeEventListener('hashchange', handleHashChange);
+    appRuntime?.stop();
+    appRuntime = undefined;
   };
 
   onMount(() => {
@@ -3111,6 +3160,18 @@
       </aside>
     {/if}
 
+    {#if showUpdateBanner}
+      <aside class="ops-warning dm-warning update" role="status" aria-live="polite">
+        <span>Update available: {updateCheck.latestVersion}. Current build {updateCheck.currentVersion}.</span>
+        <div class="dm-warning-actions">
+          <a href={updateCheck.releaseUrl ?? UPDATE_RELEASE_PAGE_URL} target="_blank" rel="noreferrer">
+            <ExternalLink size={13} /> Download
+          </a>
+          <button type="button" aria-label="Dismiss update notice" onclick={dismissUpdateBanner}>dismiss</button>
+        </div>
+      </aside>
+    {/if}
+
     {#if activeView === 'games' || !tuningReady}
       <section class="dm-games-page" aria-label="Supported games and target controller">
         <div class="dm-games-column">
@@ -3121,114 +3182,19 @@
           <div class="dm-controller-choice-list">
             {#if controllers.length}
               {#each controllers as item, index (item.id)}
-                <article
-                  class="dm-controller-card"
-                  class:active={item.id === selectedControllerId}
-                  class:disconnected={!item.connected}
-                >
-                  <button
-                    class="dm-controller-select-zone"
-                    type="button"
-                    aria-pressed={item.id === selectedControllerId}
-                    onclick={() => selectTargetController(item.id)}
-                  >
-                    <span class="dm-controller-card-top">
-                      <code>{index + 1}</code>
-                      {#if controllerBatteryReadable(item)}
-                        <span class="dm-battery-pill compact">
-                          <svg class="dm-battery" viewBox="0 0 32 16" aria-hidden="true">
-                            <rect x="1" y="3" width="26" height="10" rx="2" />
-                            <path d="M28 6h2.5v4H28z" />
-                            <rect class="dm-battery-fill" x="4" y="5.5" width={controllerBatteryFillWidth(item)} height="5" rx="1" />
-                          </svg>
-                          <span>{controllerBatteryText(item)}</span>
-                        </span>
-                      {/if}
-                    </span>
-                    <span class="dm-controller-glyph controller-card" aria-hidden="true"></span>
-                    <span class="dm-controller-copy">
-                      <strong>{controllerModelText(item)}</strong>
-                      <small>{controllerConnectionText(item)}</small>
-                      <small class="dm-controller-id" title={item.id}>{shortControllerId(item.id)}</small>
-                      <span class="dm-controller-capabilities" aria-hidden="true">
-                        {#each item.capabilities.slice(0, 3) as capability}
-                          <em>{capability}</em>
-                        {/each}
-                      </span>
-                    </span>
-                  </button>
-                  {#if controllerRenameId === item.id}
-                    <span class="dm-controller-rename-wrap">
-                      <input
-                        bind:value={controllerRenameName}
-                        class="dm-controller-rename-input"
-                        disabled={controllerRenameBusy}
-                        maxlength="64"
-                        spellcheck="false"
-                        aria-label="Controller name"
-                        onclick={(event) => event.stopPropagation()}
-                        onkeydown={handleControllerRenameKeydown}
-                      />
-                      <span class="dm-controller-rename-actions">
-                        <button type="button" disabled={controllerRenameBusy || !controllerRenameName.trim()} onclick={(event) => { event.stopPropagation(); void submitControllerRename(); }}>Save</button>
-                        <button type="button" disabled={controllerRenameBusy} onclick={(event) => { event.stopPropagation(); cancelControllerRename(); }}>Cancel</button>
-                      </span>
-                    </span>
-                  {:else}
-                    <span class="dm-controller-card-actions">
-                      <button class="dm-controller-rename-button" type="button" onclick={() => beginControllerRename(item)}>Rename</button>
-                      <button
-                        class="dm-controller-expand-button"
-                        type="button"
-                        aria-expanded={isControllerExpanded(item.id)}
-                        aria-controls={`dm-controller-details-${item.id}`}
-                        onclick={() => toggleControllerExpansion(item.id)}
-                      >{isControllerExpanded(item.id) ? 'Hide details' : 'Show details'}</button>
-                    </span>
-                  {/if}
-                  {#if isControllerExpanded(item.id)}
-                    <div class="dm-controller-details" id={`dm-controller-details-${item.id}`}>
-                      <dl class="dm-controller-details-grid">
-                        <div>
-                          <dt>Family</dt>
-                          <dd>{item.family}</dd>
-                        </div>
-                        <div>
-                          <dt>Connection</dt>
-                          <dd>{controllerTransportDetail(item)}</dd>
-                        </div>
-                        <div>
-                          <dt>Battery</dt>
-                          <dd>{controllerBatteryDetail(item)}</dd>
-                        </div>
-                        <div>
-                          <dt>Permission</dt>
-                          <dd>{controllerPermissionDetail(item)}</dd>
-                        </div>
-                        <div>
-                          <dt>Diagnostics</dt>
-                          <dd>{controllerDiagnosticDetail(item)}</dd>
-                        </div>
-                        <div class="wide">
-                          <dt>HID ID</dt>
-                          <dd class="mono">{item.id}</dd>
-                        </div>
-                        {#if item.capabilities.length}
-                          <div class="wide">
-                            <dt>Capabilities ({item.capabilities.length})</dt>
-                            <dd>
-                              <span class="dm-controller-capabilities expanded">
-                                {#each item.capabilities as capability}
-                                  <em>{capability}</em>
-                                {/each}
-                              </span>
-                            </dd>
-                          </div>
-                        {/if}
-                      </dl>
-                    </div>
-                  {/if}
-                </article>
+                <ControllerCard
+                  {item}
+                  {index}
+                  selected={item.id === selectedControllerId}
+                  renameActive={controllerRenameId === item.id}
+                  bind:renameName={controllerRenameName}
+                  renameBusy={controllerRenameBusy}
+                  onSelect={selectTargetController}
+                  onBeginRename={beginControllerRename}
+                  onSubmitRename={submitControllerRename}
+                  onCancelRename={cancelControllerRename}
+                  onRenameKeydown={handleControllerRenameKeydown}
+                />
               {/each}
             {:else}
               <div class="dm-empty-choice">
@@ -3506,12 +3472,8 @@
         </div>
       </section>
 
-      <section
-        class:dm-view-hidden={activeView !== 'haptics'}
-        class="dm-deck"
-        aria-label="Adaptive triggers and haptics"
-        aria-hidden={activeView !== 'haptics'}
-      >
+      {#if activeView === 'haptics'}
+      <HapticsView active>
       <section class="dm-physics" aria-label="Actuation curve tuning">
         <div class="dm-section-head">
           <div>
@@ -3983,6 +3945,13 @@
               <input bind:this={profileImportInput} class="ops-hidden-file" type="file" accept="application/json,.json,.dscc-profile" onchange={(event) => void handleProfileImport(event)} />
               <button class="dm-mini-button" type="button" disabled={!activeProfileId || profileFileBusy} onclick={() => void exportSelectedProfile()}>Export</button>
               <button
+                class="dm-mini-button wide"
+                type="button"
+                disabled={!selectedActionProfile || profileSaveAsBusy}
+                title="Save the current tuning into a new profile"
+                onclick={beginSaveAsProfile}
+              ><CopyPlus size={14} /> Save As</button>
+              <button
                 class="dm-mini-button"
                 type="button"
                 disabled={!canRenameSelectedProfile || profileRenameBusy || !selectedActionProfile}
@@ -4006,6 +3975,27 @@
               ><Save size={14} /> {profileSaveBusy ? 'Saving' : 'Save'}</button>
             </div>
           </div>
+          {#if saveAsProfileOpen}
+            <div class="dm-profile-rename">
+              <label>
+                <span>Save As</span>
+                <input
+                  bind:value={saveAsProfileName}
+                  disabled={profileSaveAsBusy}
+                  maxlength="80"
+                  spellcheck="false"
+                  onkeydown={handleSaveAsProfileKeydown}
+                  aria-label="New profile name"
+                />
+              </label>
+              <div class="dm-action-row">
+                <button class="dm-mini-button" type="button" disabled={profileSaveAsBusy} onclick={cancelSaveAsProfile}>Cancel</button>
+                <button class="dm-mini-button primary" type="button" disabled={profileSaveAsBusy || !saveAsProfileName.trim()} onclick={() => void submitSaveAsProfile()}>
+                  {profileSaveAsBusy ? 'Saving' : 'Create'}
+                </button>
+              </div>
+            </div>
+          {/if}
           {#if renameProfileId}
             <div class="dm-profile-rename">
               <label>
@@ -4029,7 +4019,8 @@
           {/if}
         </div>
       </aside>
-    </section>
+      </HapticsView>
+      {/if}
     <ButtonMappingView
       active={activeView === 'buttonMapping'}
       steamInputRunning={Boolean(steamInputStatus?.running)}

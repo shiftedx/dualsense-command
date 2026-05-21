@@ -1,4 +1,4 @@
-# DualSense Command Center
+﻿# DualSense Command Center
 
 DualSense Command Center is a local Windows app for PlayStation DualSense and DualSense Edge controllers.
 
@@ -26,6 +26,8 @@ The installer adds:
 - Bundled web UI served locally by the agent
 
 The MSI is currently unsigned, so Windows may show a SmartScreen or publisher warning during install.
+
+Profile and controller settings are stored in the user's DSCC config directory, not in the install folder. During install or upgrade, the MSI backs up an existing `state.json` to `state.preinstall-<version>.json` before launching the updated tray app.
 
 ## Features
 
@@ -94,7 +96,7 @@ packaging/         Windows MSI packaging scripts
 
 Draft public module format notes live in `docs/module-manifest-format.md`. Community modules are planned as data-only manifest packs; the installer/loader is not implemented yet. Native telemetry parsers stay built in until a parser sandbox/signing model exists.
 
-Contributor docs live in `docs/contributing.md`, with a backend/frontend map in `docs/architecture.md`.
+Contributor docs live in `docs/contributing.md`, with a backend/frontend map in `docs/architecture.md`. Release readiness gates and unsigned-beta guidance live in `docs/production-readiness-plan.md`.
 
 Local research notes, planning documents, assistant files, generated builds, release archives, `target/`, `web/dist/`, and `web/node_modules/` are intentionally ignored and should not be committed.
 

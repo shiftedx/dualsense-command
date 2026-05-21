@@ -30,6 +30,7 @@ struct MockTransportInner {
     devices: Vec<RawHidDevice>,
     read_reports: BTreeMap<RawDeviceId, VecDeque<Vec<u8>>>,
     writes: BTreeMap<RawDeviceId, Vec<Vec<u8>>>,
+    write_results: BTreeMap<RawDeviceId, VecDeque<Result<usize, DeviceError>>>,
     enumerate_error: Option<DeviceError>,
     open_errors: BTreeMap<RawDeviceId, DeviceError>,
 }
@@ -59,6 +60,14 @@ impl MockTransport {
 
     pub fn writes_for(&self, id: &RawDeviceId) -> Vec<Vec<u8>> {
         self.lock().writes.get(id).cloned().unwrap_or_default()
+    }
+
+    pub fn push_write_result(&self, id: RawDeviceId, result: Result<usize, DeviceError>) {
+        self.lock()
+            .write_results
+            .entry(id)
+            .or_default()
+            .push_back(result);
     }
 
     pub fn fail_enumeration(&self, error: DeviceError) {
@@ -143,12 +152,17 @@ impl DeviceHandle for MockDeviceHandle {
     }
 
     fn write(&mut self, report: &[u8]) -> Result<usize, DeviceError> {
-        self.lock()
+        let mut inner = self.lock();
+        inner
             .writes
             .entry(self.id.clone())
             .or_default()
             .push(report.to_vec());
-        Ok(report.len())
+        inner
+            .write_results
+            .get_mut(&self.id)
+            .and_then(VecDeque::pop_front)
+            .unwrap_or(Ok(report.len()))
     }
 }
 

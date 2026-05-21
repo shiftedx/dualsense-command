@@ -1,6 +1,6 @@
 use std::{
-    collections::BTreeMap,
-    sync::{Mutex, MutexGuard},
+    collections::{btree_map::Entry, BTreeMap},
+    sync::{Arc, Mutex, MutexGuard},
     time::Duration,
 };
 
@@ -82,7 +82,7 @@ pub struct ControllerOutputWrite {
 pub struct ControllerOutputManager<T: DeviceTransport> {
     transport: T,
     output_mode: OutputMode,
-    sessions: Mutex<BTreeMap<RawDeviceId, OutputSession>>,
+    sessions: Mutex<BTreeMap<RawDeviceId, Arc<Mutex<OutputSession>>>>,
 }
 
 struct OutputSession {
@@ -112,34 +112,35 @@ impl<T: DeviceTransport> ControllerOutputManager<T> {
         target: &ControllerOutputTarget,
         frame: &ControllerOutputFrame,
     ) -> Result<ControllerOutputWrite, DeviceError> {
-        let mut sessions = self.lock_sessions();
-        if !sessions.contains_key(&target.raw_device_id) {
-            let handle = self.transport.open(&target.raw_device_id)?;
-            sessions.insert(
-                target.raw_device_id.clone(),
-                OutputSession {
-                    handle,
-                    sequence: 0,
-                },
-            );
-        }
+        let session = self.session_for(target)?;
+        let write_result = {
+            let mut session = lock_session(&session);
+            let report = encode_controller_output_frame(frame, target.transport, session.sequence)?;
+            if report.kind == OutputReportKind::Bluetooth {
+                session.sequence = (session.sequence + 1) & 0x0f;
+            }
 
-        let session = sessions
-            .get_mut(&target.raw_device_id)
-            .expect("session was inserted above");
-        let report = encode_controller_output_frame(frame, target.transport, session.sequence)?;
-        if report.kind == OutputReportKind::Bluetooth {
-            session.sequence = (session.sequence + 1) & 0x0f;
-        }
+            let write_result = session.handle.write(&report.bytes);
+            (report, write_result)
+        };
 
-        match session.handle.write(&report.bytes) {
-            Ok(_backend_bytes) => Ok(ControllerOutputWrite {
+        let (report, write_result) = write_result;
+        match write_result {
+            Ok(backend_bytes) if backend_bytes == report.bytes.len() => Ok(ControllerOutputWrite {
                 bytes: report.bytes.len(),
                 hardware_output: self.hardware_writes_enabled(),
                 report_kind: report.kind,
             }),
+            Ok(backend_bytes) => {
+                self.release(target);
+                Err(DeviceError::TransportFault(format!(
+                    "short {:?} output report write: expected {} bytes, wrote {backend_bytes}",
+                    report.kind,
+                    report.bytes.len()
+                )))
+            }
             Err(error) => {
-                sessions.remove(&target.raw_device_id);
+                self.release(target);
                 Err(error)
             }
         }
@@ -149,44 +150,79 @@ impl<T: DeviceTransport> ControllerOutputManager<T> {
         &self,
         target: &ControllerOutputTarget,
     ) -> Result<Option<ControllerInputState>, DeviceError> {
-        let mut sessions = self.lock_sessions();
-        if !sessions.contains_key(&target.raw_device_id) {
-            let handle = self.transport.open(&target.raw_device_id)?;
-            sessions.insert(
-                target.raw_device_id.clone(),
-                OutputSession {
-                    handle,
-                    sequence: 0,
-                },
-            );
-        }
-
-        let session = sessions
-            .get_mut(&target.raw_device_id)
-            .expect("session was inserted above");
-        for _ in 0..INPUT_READ_ATTEMPTS {
-            match session.handle.read_timeout(Duration::from_millis(3)) {
-                Ok(Some(report)) => {
-                    if let Some(input) = parse_dualsense_input_state(&report) {
-                        return Ok(Some(input));
+        let session = self.session_for(target)?;
+        let read_result = {
+            let mut session = lock_session(&session);
+            let mut input = None;
+            let mut fault = None;
+            for _ in 0..INPUT_READ_ATTEMPTS {
+                match session.handle.read_timeout(Duration::from_millis(3)) {
+                    Ok(Some(report)) => {
+                        if let Some(parsed) = parse_dualsense_input_state(&report) {
+                            input = Some(parsed);
+                            break;
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        fault = Some(error);
+                        break;
                     }
                 }
-                Ok(None) => {}
-                Err(error) => {
-                    sessions.remove(&target.raw_device_id);
-                    return Err(error);
-                }
+            }
+            fault.map_or(Ok(input), Err)
+        };
+
+        if read_result.is_err() {
+            self.release(target);
+        }
+        read_result
+    }
+
+    pub fn release(&self, target: &ControllerOutputTarget) {
+        self.lock_sessions().remove(&target.raw_device_id);
+    }
+
+    pub fn release_all(&self) {
+        self.lock_sessions().clear();
+    }
+
+    fn session_for(
+        &self,
+        target: &ControllerOutputTarget,
+    ) -> Result<Arc<Mutex<OutputSession>>, DeviceError> {
+        {
+            let sessions = self.lock_sessions();
+            if let Some(session) = sessions.get(&target.raw_device_id) {
+                return Ok(session.clone());
             }
         }
 
-        Ok(None)
+        let handle = self.transport.open(&target.raw_device_id)?;
+        let mut sessions = self.lock_sessions();
+        match sessions.entry(target.raw_device_id.clone()) {
+            Entry::Occupied(entry) => Ok(entry.get().clone()),
+            Entry::Vacant(entry) => Ok(entry
+                .insert(Arc::new(Mutex::new(OutputSession {
+                    handle,
+                    sequence: 0,
+                })))
+                .clone()),
+        }
     }
 
-    fn lock_sessions(&self) -> MutexGuard<'_, BTreeMap<RawDeviceId, OutputSession>> {
+    fn lock_sessions(&self) -> MutexGuard<'_, BTreeMap<RawDeviceId, Arc<Mutex<OutputSession>>>> {
         match self.sessions.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
         }
+    }
+}
+
+fn lock_session(session: &Mutex<OutputSession>) -> MutexGuard<'_, OutputSession> {
+    match session.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
     }
 }
 
@@ -434,9 +470,17 @@ fn crc32_le_update(mut crc: u32, byte: u8) -> u32 {
 #[cfg(test)]
 mod tests {
     use dscc_core::{LightbarOutput, RgbColor};
+    use std::{
+        sync::{mpsc, Condvar},
+        thread,
+    };
 
     use super::*;
-    use crate::{enumeration::RawHidDevice, status::DeviceFamily, transport::MockTransport};
+    use crate::{
+        enumeration::RawHidDevice,
+        status::DeviceFamily,
+        transport::{DeviceHandle, DeviceTransport, MockTransport},
+    };
 
     #[test]
     fn usb_report_encodes_trigger_blocks_and_lightbar() {
@@ -624,5 +668,174 @@ mod tests {
         assert!(!write.hardware_output);
         assert_eq!(writes.len(), 1);
         assert_eq!(writes[0][0], USB_REPORT_ID);
+    }
+
+    #[test]
+    fn output_manager_rejects_partial_hid_write_and_releases_session() {
+        let device = RawHidDevice::mock("mock://edge-partial")
+            .with_family_hint(DeviceFamily::DualSenseEdge)
+            .with_transport_hint(DeviceTransportKind::Usb);
+        let raw_id = device.id.clone();
+        let transport = MockTransport::with_devices(vec![device]);
+        transport.push_write_result(raw_id.clone(), Ok(USB_REPORT_LEN - 1));
+        let manager = ControllerOutputManager::new(transport.clone(), OutputMode::DryRunHid);
+        let target = ControllerOutputTarget {
+            raw_device_id: raw_id.clone(),
+            transport: DeviceTransportKind::Usb,
+        };
+
+        let error = manager
+            .write_frame(
+                &target,
+                &ControllerOutputFrame {
+                    r2: TriggerOutput::AdaptiveResistance {
+                        start_position: 0.1,
+                        strength: 0.8,
+                    },
+                    ..ControllerOutputFrame::default()
+                },
+            )
+            .expect_err("short write should be rejected");
+
+        assert!(matches!(error, DeviceError::TransportFault(_)));
+        assert!(error.to_string().contains("expected 63 bytes"));
+        transport.fail_open(
+            raw_id,
+            DeviceError::TransportFault("session reopened after short write".to_string()),
+        );
+        let reopen_error = manager
+            .write_frame(&target, &ControllerOutputFrame::default())
+            .expect_err("short write should have released the failed session");
+        assert!(reopen_error
+            .to_string()
+            .contains("session reopened after short write"));
+    }
+
+    #[derive(Clone)]
+    struct BlockingWriteTransport {
+        devices: Vec<RawHidDevice>,
+        blocked_id: RawDeviceId,
+        state: Arc<(Mutex<BlockingWriteState>, Condvar)>,
+    }
+
+    #[derive(Debug, Default)]
+    struct BlockingWriteState {
+        blocked_write_started: bool,
+        release_blocked_write: bool,
+    }
+
+    struct BlockingWriteHandle {
+        id: RawDeviceId,
+        blocked_id: RawDeviceId,
+        state: Arc<(Mutex<BlockingWriteState>, Condvar)>,
+    }
+
+    impl DeviceTransport for BlockingWriteTransport {
+        fn enumerate(&self) -> Result<Vec<RawHidDevice>, DeviceError> {
+            Ok(self.devices.clone())
+        }
+
+        fn open(&self, id: &RawDeviceId) -> Result<Box<dyn DeviceHandle>, DeviceError> {
+            if self.devices.iter().any(|device| &device.id == id) {
+                Ok(Box::new(BlockingWriteHandle {
+                    id: id.clone(),
+                    blocked_id: self.blocked_id.clone(),
+                    state: self.state.clone(),
+                }))
+            } else {
+                Err(DeviceError::DeviceNotFound(id.clone()))
+            }
+        }
+    }
+
+    impl DeviceHandle for BlockingWriteHandle {
+        fn read_timeout(&mut self, _timeout: Duration) -> Result<Option<Vec<u8>>, DeviceError> {
+            Ok(None)
+        }
+
+        fn write(&mut self, report: &[u8]) -> Result<usize, DeviceError> {
+            if self.id == self.blocked_id {
+                let (state, condition) = &*self.state;
+                let mut state = state.lock().unwrap();
+                state.blocked_write_started = true;
+                condition.notify_all();
+                while !state.release_blocked_write {
+                    state = condition.wait(state).unwrap();
+                }
+            }
+            Ok(report.len())
+        }
+    }
+
+    #[test]
+    fn output_manager_does_not_block_other_devices_behind_one_device_write() {
+        let blocked = RawHidDevice::mock("mock://blocked")
+            .with_family_hint(DeviceFamily::DualSenseEdge)
+            .with_transport_hint(DeviceTransportKind::Usb);
+        let other = RawHidDevice::mock("mock://other")
+            .with_family_hint(DeviceFamily::DualSenseEdge)
+            .with_transport_hint(DeviceTransportKind::Usb);
+        let blocked_id = blocked.id.clone();
+        let other_id = other.id.clone();
+        let state = Arc::new((Mutex::new(BlockingWriteState::default()), Condvar::new()));
+        let transport = BlockingWriteTransport {
+            devices: vec![blocked, other],
+            blocked_id: blocked_id.clone(),
+            state: state.clone(),
+        };
+        let manager = Arc::new(ControllerOutputManager::new(
+            transport,
+            OutputMode::DryRunHid,
+        ));
+        let blocked_target = ControllerOutputTarget {
+            raw_device_id: blocked_id,
+            transport: DeviceTransportKind::Usb,
+        };
+        let other_target = ControllerOutputTarget {
+            raw_device_id: other_id,
+            transport: DeviceTransportKind::Usb,
+        };
+
+        let blocked_manager = manager.clone();
+        let blocked_thread = thread::spawn(move || {
+            blocked_manager
+                .write_frame(&blocked_target, &ControllerOutputFrame::default())
+                .expect("blocked device write eventually succeeds");
+        });
+
+        {
+            let (state_lock, condition) = &*state;
+            let mut state_guard = state_lock.lock().unwrap();
+            while !state_guard.blocked_write_started {
+                state_guard = condition.wait(state_guard).unwrap();
+            }
+        }
+
+        let (done_tx, done_rx) = mpsc::channel();
+        let other_manager = manager.clone();
+        let other_thread = thread::spawn(move || {
+            let result =
+                other_manager.write_frame(&other_target, &ControllerOutputFrame::default());
+            done_tx
+                .send(result)
+                .expect("test receiver should stay alive");
+        });
+
+        let other_finished_before_release =
+            done_rx.recv_timeout(Duration::from_millis(200)).is_ok();
+
+        {
+            let (state_lock, condition) = &*state;
+            let mut state_guard = state_lock.lock().unwrap();
+            state_guard.release_blocked_write = true;
+            condition.notify_all();
+        }
+
+        blocked_thread.join().expect("blocked writer should join");
+        other_thread.join().expect("other writer should join");
+        assert!(
+            other_finished_before_release,
+            "other controller writes should not wait for the blocked controller session"
+        );
     }
 }

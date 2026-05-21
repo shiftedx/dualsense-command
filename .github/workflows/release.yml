@@ -1,0 +1,236 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  WINDOWS_TARGET: x86_64-pc-windows-gnu
+
+jobs:
+  rust-checks:
+    name: Rust release checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: ""
+            target-arg: ""
+          - os: windows-latest
+            target: x86_64-pc-windows-gnu
+            target-arg: --target x86_64-pc-windows-gnu
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Add Windows Rust target
+        if: runner.os == 'Windows'
+        run: rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Add MinGW to PATH
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: '"C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append'
+      - name: Install Linux build deps
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - name: Format check
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets ${{ matrix.target-arg }} -- -D warnings
+      - name: Test
+        run: cargo test --workspace ${{ matrix.target-arg }}
+
+  web-checks:
+    name: Web release checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:button-map
+      - run: npm run build
+
+  windows-artifacts:
+    name: Windows unsigned beta artifacts
+    runs-on: windows-latest
+    needs:
+      - rust-checks
+      - web-checks
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Add MinGW to PATH
+        shell: pwsh
+        run: '"C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append'
+      - name: Add Windows Rust target
+        shell: pwsh
+        run: rustup target add $env:WINDOWS_TARGET
+      - name: Resolve release version
+        id: version
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          if ($tag -notmatch '^v?([0-9]+\.[0-9]+)(?:\.([0-9]+))?(?:[-+].*)?$') {
+            throw "Release tag '$tag' must look like v0.2, v0.2.0, or v0.2.0-beta.1."
+          }
+          $patch = if ([string]::IsNullOrWhiteSpace($Matches[2])) { '0' } else { $Matches[2] }
+          "msi_version=$($Matches[1]).$patch" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "artifact_suffix=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Build web assets
+        shell: pwsh
+        run: |
+          npm.cmd --prefix web ci
+          npm.cmd --prefix web run build
+      - name: Build Windows GNU binaries
+        shell: pwsh
+        run: cargo build -p dscc-agent -p dscc-tray --release --target $env:WINDOWS_TARGET
+      - name: Build unsigned MSI
+        shell: pwsh
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File packaging\package-msi.ps1 `
+            -Version '${{ steps.version.outputs.msi_version }}' `
+            -TargetTriple $env:WINDOWS_TARGET `
+            -SkipWebBuild
+      - name: Stage Windows artifacts and checksums
+        shell: pwsh
+        run: |
+          $suffix = '${{ steps.version.outputs.artifact_suffix }}'
+          $artifactRoot = Join-Path $PWD 'target\release-artifacts\windows'
+          New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
+
+          $msiSource = Join-Path $PWD "target\installer\DualSenseCommandCenter-${{ steps.version.outputs.msi_version }}.msi"
+          $msiDest = Join-Path $artifactRoot "DualSenseCommandCenter-$suffix-windows-x86_64-unsigned.msi"
+          Copy-Item -LiteralPath $msiSource -Destination $msiDest -Force
+
+          $binaryStage = Join-Path $PWD 'target\release-artifacts\windows-bin'
+          if (Test-Path -LiteralPath $binaryStage) {
+            Remove-Item -LiteralPath $binaryStage -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $binaryStage -Force | Out-Null
+          Copy-Item -LiteralPath "target\$env:WINDOWS_TARGET\release\dscc-agent.exe" -Destination $binaryStage -Force
+          Copy-Item -LiteralPath "target\$env:WINDOWS_TARGET\release\dscc-tray.exe" -Destination $binaryStage -Force
+          Set-Content -LiteralPath (Join-Path $binaryStage 'README.txt') -Encoding ASCII -Value @(
+            'DualSense Command Center unsigned Windows beta binaries.'
+            'Install the MSI for normal testing; these raw binaries are provided for diagnostics.'
+          )
+          $zipDest = Join-Path $artifactRoot "DualSenseCommandCenter-$suffix-windows-x86_64-binaries.zip"
+          Compress-Archive -Path (Join-Path $binaryStage '*') -DestinationPath $zipDest -Force
+
+          $checksumPath = Join-Path $artifactRoot 'SHA256SUMS-windows.txt'
+          Get-ChildItem -LiteralPath $artifactRoot -File |
+            Sort-Object Name |
+            ForEach-Object {
+              $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              "$hash  $($_.Name)"
+            } |
+            Set-Content -LiteralPath $checksumPath -Encoding ASCII
+      - uses: actions/upload-artifact@v6
+        with:
+          name: windows-unsigned-beta
+          path: target/release-artifacts/windows/*
+          if-no-files-found: error
+
+  linux-artifacts:
+    name: Linux experimental raw binaries
+    runs-on: ubuntu-latest
+    needs:
+      - rust-checks
+      - web-checks
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Linux build deps
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - name: Build Linux binaries
+        run: cargo build -p dscc-agent -p dscc-cli --release
+      - name: Stage Linux artifacts and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          artifact_root="$PWD/target/release-artifacts/linux"
+          stage="$PWD/target/release-artifacts/linux-bin"
+          rm -rf "$artifact_root" "$stage"
+          mkdir -p "$artifact_root" "$stage"
+          cp target/release/dscc-agent "$stage/"
+          cp target/release/dscc-cli "$stage/"
+          cat > "$stage/README.txt" <<'README'
+          DualSense Command Center Linux artifact.
+
+          Experimental raw binaries only: Linux HID permissions, runtime docs,
+          and hardware smoke tests are not production-ready yet.
+          README
+          tar -C "$stage" -czf "$artifact_root/DualSenseCommandCenter-$tag-linux-x86_64-experimental.tar.gz" .
+          (
+            cd "$artifact_root"
+            sha256sum * > SHA256SUMS-linux.txt
+          )
+      - uses: actions/upload-artifact@v6
+        with:
+          name: linux-experimental-raw-binaries
+          path: target/release-artifacts/linux/*
+          if-no-files-found: error
+
+  draft-release:
+    name: Create draft prerelease
+    runs-on: ubuntu-latest
+    needs:
+      - windows-artifacts
+      - linux-artifacts
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          path: release-artifacts
+          merge-multiple: true
+      - name: Create release notes
+        shell: bash
+        run: |
+          cat > release-notes.md <<'EOF'
+          Unsigned beta artifacts for DualSense Command Center.
+
+          Windows MSI and raw binary artifacts are unsigned. Windows SmartScreen
+          or managed endpoint policy may warn or block installation. Verify the
+          downloaded files against the published SHA256 checksum files.
+
+          The Linux archive is experimental raw binaries only. Linux HID
+          permissions, runtime documentation, and hardware validation remain
+          beta-readiness work.
+          EOF
+      - name: Create draft prerelease and upload artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find release-artifacts -type f | sort)
+          gh release create "${GITHUB_REF_NAME}" "${files[@]}" \
+            --draft \
+            --prerelease \
+            --title "DualSense Command Center ${GITHUB_REF_NAME}" \
+            --notes-file release-notes.md
