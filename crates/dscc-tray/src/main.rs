@@ -16,6 +16,7 @@ fn main() -> Result<()> {
 #[cfg(windows)]
 mod windows_tray {
     use anyhow::{anyhow, Context, Result};
+    use serde::Deserialize;
     use std::{
         env,
         ffi::OsStr,
@@ -27,46 +28,58 @@ mod windows_tray {
         ptr::{null, null_mut},
         sync::{
             atomic::{AtomicU32, Ordering},
-            Mutex, OnceLock,
+            mpsc::{self, Receiver, SyncSender, TrySendError},
+            Arc, Mutex, OnceLock,
         },
         thread,
-        time::Duration,
+        time::{Duration, Instant},
     };
     use windows_sys::Win32::{
         Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
         Graphics::Gdi::{
-            CreateFontW, CreateSolidBrush, DeleteObject, DrawTextW, Ellipse, FillRect,
-            SelectObject, SetBkMode, SetTextColor, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS,
+            BeginPaint, CreateFontW, CreatePen, CreateRoundRectRgn, CreateSolidBrush, DeleteObject,
+            DrawTextW, Ellipse, EndPaint, FillRect, InvalidateRect, RoundRect, SelectObject,
+            SetBkMode, SetTextColor, SetWindowRgn, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS,
             DEFAULT_CHARSET, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER,
-            FF_DONTCARE, FW_NORMAL, FW_SEMIBOLD, OUT_DEFAULT_PRECIS, TRANSPARENT,
+            FF_DONTCARE, FW_NORMAL, FW_SEMIBOLD, OUT_DEFAULT_PRECIS, PAINTSTRUCT, PS_SOLID,
+            TRANSPARENT,
         },
         System::{LibraryLoader::GetModuleHandleW, Threading::CREATE_NO_WINDOW},
         UI::{
-            Controls::{DRAWITEMSTRUCT, MEASUREITEMSTRUCT, ODS_GRAYED, ODS_SELECTED, ODT_MENU},
+            Controls::WM_MOUSELEAVE,
+            Input::KeyboardAndMouse::{TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT},
             Shell::{
                 ShellExecuteW, Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP,
                 NIM_ADD, NIM_DELETE, NIM_SETVERSION, NIN_SELECT, NOTIFYICONDATAW,
                 NOTIFYICON_VERSION_4,
             },
             WindowsAndMessaging::{
-                AppendMenuW, CreateIconFromResourceEx, CreatePopupMenu, CreateWindowExW,
-                DefWindowProcW, DestroyMenu, DispatchMessageW, FindWindowW, GetCursorPos,
-                GetMessageW, LoadIconW, MessageBoxW, PostMessageW, PostQuitMessage, RegisterClassW,
-                RegisterWindowMessageW, SetForegroundWindow, TrackPopupMenu, CS_HREDRAW,
-                CS_VREDRAW, CW_USEDEFAULT, HICON, HMENU, IDI_APPLICATION, MB_ICONERROR, MB_OK,
-                MF_DISABLED, MF_GRAYED, MF_OWNERDRAW, MSG, SW_SHOWNORMAL, TPM_RIGHTBUTTON, WM_APP,
-                WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_DRAWITEM, WM_LBUTTONDBLCLK,
-                WM_LBUTTONUP, WM_MEASUREITEM, WM_NULL, WM_RBUTTONUP, WNDCLASSW,
+                CreateIconFromResourceEx, CreateWindowExW, DefWindowProcW, DestroyWindow,
+                DispatchMessageW, FindWindowW, GetCursorPos, GetMessageW, GetSystemMetrics,
+                GetWindowLongPtrW, LoadCursorW, LoadIconW, MessageBoxW, PostMessageW,
+                PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetCursor,
+                SetForegroundWindow, SetWindowLongPtrW, ShowWindow, CREATESTRUCTW, CS_DROPSHADOW,
+                CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, HICON, IDC_ARROW,
+                IDI_APPLICATION, MB_ICONERROR, MB_OK, MSG, SM_CXSCREEN, SM_CYSCREEN, SW_SHOW,
+                SW_SHOWNORMAL, WA_INACTIVE, WM_ACTIVATE, WM_APP, WM_COMMAND, WM_CONTEXTMENU,
+                WM_DESTROY, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_MOUSEMOVE,
+                WM_NCCREATE, WM_NCDESTROY, WM_NULL, WM_PAINT, WM_RBUTTONUP, WM_SETCURSOR,
+                WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
             },
         },
     };
 
     const TRAY_ICON_ICO: &[u8] = include_bytes!("../assets/dscc-tray.ico");
-    const DASHBOARD_URL: &str = "http://127.0.0.1:43473/#/adaptive-triggers-haptics";
+    const DASHBOARD_URL: &str = "http://127.0.0.1:43473/#/games";
+    const HAPTICS_URL: &str = "http://127.0.0.1:43473/#/adaptive-triggers-haptics";
     const BUTTON_MAPPING_URL: &str = "http://127.0.0.1:43473/#/button-mapping";
     const STATUS_PATH: &str = "/api/status";
-    const DIAGNOSTICS_PATH: &str = "/api/diagnostics";
+    const SNAPSHOT_PATH: &str = "/api/snapshot";
     const API_HOST: &str = "127.0.0.1:43473";
+    const RELEASES_URL: &str = "https://github.com/shiftedx/dualsense-command/releases/latest";
+    const OPEN_UI_DEBOUNCE_MS: u64 = 650;
+    const TRAY_HEALTH_STALE_AFTER: Duration = Duration::from_secs(4);
+    const TRAY_HEALTH_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
     const TRAY_ICON_ID: u32 = 1;
     const WM_TRAYICON: u32 = WM_APP + 1;
     const CMD_OPEN_UI: usize = 1001;
@@ -75,22 +88,25 @@ mod windows_tray {
     const CMD_RESTART: usize = 1004;
     const CMD_QUIT: usize = 1005;
     const CMD_OPEN_BUTTON_MAPPING: usize = 1006;
+    const CMD_CHECK_UPDATES: usize = 1007;
+    const CMD_OPEN_HAPTICS: usize = 1008;
     const NIN_KEYSELECT: u32 = NIN_SELECT + 1;
-    const MENU_WIDTH: u32 = 286;
-    const MENU_HEADER_HEIGHT: u32 = 58;
-    const MENU_READOUT_HEIGHT: u32 = 44;
-    const MENU_ITEM_HEIGHT: u32 = 36;
-    const MENU_SEPARATOR_HEIGHT: u32 = 10;
-    const COLOR_OBSIDIAN: COLORREF = rgb(10, 10, 12);
-    const COLOR_CARBON: COLORREF = rgb(18, 18, 20);
-    const COLOR_SELECTED: COLORREF = rgb(11, 34, 54);
+    const MENU_WIDTH: u32 = 248;
+    const MENU_HEADER_HEIGHT: u32 = 36;
+    const MENU_READOUT_HEIGHT: u32 = 32;
+    const MENU_ITEM_HEIGHT: u32 = 30;
+    const MENU_SEPARATOR_HEIGHT: u32 = 6;
+    const MENU_CORNER_RADIUS: i32 = 12;
+    const COLOR_OBSIDIAN: COLORREF = rgb(18, 19, 22);
+    const COLOR_CARBON: COLORREF = rgb(30, 31, 35);
+    const COLOR_SELECTED: COLORREF = rgb(48, 50, 57);
     const COLOR_ACTUATION: COLORREF = rgb(0, 112, 204);
-    const COLOR_HAPTIC: COLORREF = rgb(226, 232, 240);
-    const COLOR_TUNGSTEN: COLORREF = rgb(113, 113, 122);
+    const COLOR_HAPTIC: COLORREF = rgb(242, 243, 245);
+    const COLOR_TUNGSTEN: COLORREF = rgb(181, 186, 193);
     const COLOR_OVERDRIVE: COLORREF = rgb(240, 62, 62);
     const COLOR_READY: COLORREF = rgb(34, 197, 94);
-    const COLOR_LINE: COLORREF = rgb(54, 57, 66);
-    const COLOR_DISABLED: COLORREF = rgb(86, 86, 96);
+    const COLOR_LINE: COLORREF = rgb(62, 64, 72);
+    const COLOR_DISABLED: COLORREF = rgb(118, 122, 132);
     const COLOR_WHITE: COLORREF = rgb(255, 255, 255);
 
     static STATE: OnceLock<Mutex<TrayState>> = OnceLock::new();
@@ -176,25 +192,149 @@ mod windows_tray {
         disabled: bool,
     }
 
+    #[derive(Debug)]
+    struct TrayPopupState {
+        owner: HWND,
+        entries: Vec<TrayMenuEntry>,
+        hover_index: Option<usize>,
+    }
+
+    impl TrayPopupState {
+        fn new(owner: HWND, entries: Vec<TrayMenuEntry>) -> Self {
+            Self {
+                owner,
+                entries,
+                hover_index: None,
+            }
+        }
+
+        fn height(&self) -> i32 {
+            tray_menu_height(&self.entries)
+        }
+
+        fn item_rect(&self, index: usize) -> Option<RECT> {
+            if index >= self.entries.len() {
+                return None;
+            }
+
+            let top = self
+                .entries
+                .iter()
+                .take(index)
+                .map(|entry| menu_item_height(entry.descriptor.kind) as i32)
+                .sum::<i32>();
+            let bottom = top + menu_item_height(self.entries[index].descriptor.kind) as i32;
+            Some(RECT {
+                left: 0,
+                top,
+                right: MENU_WIDTH as i32,
+                bottom,
+            })
+        }
+
+        fn item_at(&self, y: i32) -> Option<usize> {
+            let mut top = 0;
+            for (index, entry) in self.entries.iter().enumerate() {
+                let bottom = top + menu_item_height(entry.descriptor.kind) as i32;
+                if y >= top && y < bottom {
+                    return Some(index);
+                }
+                top = bottom;
+            }
+            None
+        }
+    }
+
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct TrayHealthSummary {
         agent_running: bool,
         agent_label: String,
         agent_detail: String,
         agent_accent: TrayMenuAccent,
+        profile_label: String,
+        profile_detail: String,
+        profile_accent: TrayMenuAccent,
+        controller_label: String,
+        controller_detail: String,
+        controller_accent: TrayMenuAccent,
         diagnostics_label: String,
         diagnostics_detail: String,
         diagnostics_accent: TrayMenuAccent,
     }
 
-    fn tray_menu_entries(summary: &TrayHealthSummary) -> Vec<TrayMenuEntry> {
-        vec![
+    #[derive(Debug, Clone)]
+    struct TrayHealthCache {
+        summary: TrayHealthSummary,
+        refreshed_at: Instant,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct TraySnapshotDto {
+        status: TraySnapshotStatusDto,
+        #[serde(default)]
+        profiles: Vec<TraySnapshotProfileDto>,
+        #[serde(default)]
+        controllers: Vec<TraySnapshotControllerDto>,
+        #[serde(default, alias = "profileResolution")]
+        profile_resolution: TraySnapshotProfileResolutionDto,
+        diagnostics: TraySnapshotDiagnosticsDto,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct TraySnapshotStatusDto {
+        #[serde(default)]
+        version: String,
+        #[serde(default)]
+        active_profile_id: Option<String>,
+        #[serde(default)]
+        active_adapter_id: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct TraySnapshotProfileDto {
+        id: String,
+        name: String,
+        #[serde(default)]
+        active: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct TraySnapshotControllerDto {
+        id: String,
+        name: String,
+        #[serde(default)]
+        model: String,
+        #[serde(default)]
+        transport: String,
+        #[serde(default)]
+        connected: bool,
+    }
+
+    #[derive(Debug, Default, Deserialize)]
+    struct TraySnapshotProfileResolutionDto {
+        #[serde(default, alias = "controllerId")]
+        controller_id: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct TraySnapshotDiagnosticsDto {
+        #[serde(default)]
+        checks: Vec<TraySnapshotHealthCheckDto>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct TraySnapshotHealthCheckDto {
+        status: String,
+    }
+
+    fn tray_menu_entries(summary: &TrayHealthSummary, owned_agent: bool) -> Vec<TrayMenuEntry> {
+        let mut entries = vec![
             TrayMenuEntry {
                 command: 0,
                 descriptor: TrayMenuDescriptor::new(
                     TrayMenuKind::Header,
                     "DualSense Command Center",
-                    "",
+                    "Local haptics control",
                     TrayMenuAccent::Brand,
                 ),
                 disabled: true,
@@ -206,6 +346,29 @@ mod windows_tray {
                     summary.agent_label.clone(),
                     summary.agent_detail.clone(),
                     summary.agent_accent,
+                ),
+                disabled: true,
+            },
+        ];
+
+        entries.extend([
+            TrayMenuEntry {
+                command: 0,
+                descriptor: TrayMenuDescriptor::new(
+                    TrayMenuKind::Readout,
+                    summary.profile_label.clone(),
+                    summary.profile_detail.clone(),
+                    summary.profile_accent,
+                ),
+                disabled: true,
+            },
+            TrayMenuEntry {
+                command: 0,
+                descriptor: TrayMenuDescriptor::new(
+                    TrayMenuKind::Readout,
+                    summary.controller_label.clone(),
+                    summary.controller_detail.clone(),
+                    summary.controller_accent,
                 ),
                 disabled: true,
             },
@@ -228,8 +391,18 @@ mod windows_tray {
                 command: CMD_OPEN_UI,
                 descriptor: TrayMenuDescriptor::new(
                     TrayMenuKind::Action,
-                    "Open Dashboard",
-                    "Adaptive triggers and haptics",
+                    "Dashboard",
+                    "Open controller and profile overview",
+                    TrayMenuAccent::Brand,
+                ),
+                disabled: false,
+            },
+            TrayMenuEntry {
+                command: CMD_OPEN_HAPTICS,
+                descriptor: TrayMenuDescriptor::new(
+                    TrayMenuKind::Action,
+                    "Triggers & Haptics",
+                    "Open adaptive trigger tuning",
                     TrayMenuAccent::Brand,
                 ),
                 disabled: false,
@@ -239,8 +412,18 @@ mod windows_tray {
                 descriptor: TrayMenuDescriptor::new(
                     TrayMenuKind::Action,
                     "Button Mapping",
-                    "Steam Input helper view",
+                    "Open button layout editor",
                     TrayMenuAccent::Brand,
+                ),
+                disabled: false,
+            },
+            TrayMenuEntry {
+                command: CMD_CHECK_UPDATES,
+                descriptor: TrayMenuDescriptor::new(
+                    TrayMenuKind::Action,
+                    "Check for Updates...",
+                    "Open latest GitHub release",
+                    TrayMenuAccent::Neutral,
                 ),
                 disabled: false,
             },
@@ -249,52 +432,71 @@ mod windows_tray {
                 descriptor: separator_descriptor(),
                 disabled: true,
             },
-            TrayMenuEntry {
-                command: CMD_START,
-                descriptor: TrayMenuDescriptor::new(
-                    TrayMenuKind::Action,
-                    "Start Agent",
-                    "Launch local runtime",
-                    TrayMenuAccent::Ready,
-                ),
-                disabled: summary.agent_running,
-            },
-            TrayMenuEntry {
-                command: CMD_STOP,
-                descriptor: TrayMenuDescriptor::new(
-                    TrayMenuKind::Action,
-                    "Stop Agent",
-                    "Stops DSCC runtime",
-                    TrayMenuAccent::Danger,
-                ),
-                disabled: !summary.agent_running,
-            },
-            TrayMenuEntry {
-                command: CMD_RESTART,
-                descriptor: TrayMenuDescriptor::new(
-                    TrayMenuKind::Action,
-                    "Restart Agent",
-                    "Refresh local runtime",
-                    TrayMenuAccent::Brand,
-                ),
-                disabled: false,
-            },
-            TrayMenuEntry {
-                command: 0,
-                descriptor: separator_descriptor(),
-                disabled: true,
-            },
-            TrayMenuEntry {
-                command: CMD_QUIT,
-                descriptor: TrayMenuDescriptor::new(
-                    TrayMenuKind::Action,
-                    "Quit DSCC",
-                    "Stop agent and tray",
-                    TrayMenuAccent::Danger,
-                ),
-                disabled: false,
-            },
-        ]
+        ]);
+
+        if summary.agent_running && owned_agent {
+            entries.extend([
+                TrayMenuEntry {
+                    command: CMD_STOP,
+                    descriptor: TrayMenuDescriptor::new(
+                        TrayMenuKind::Action,
+                        "Stop Agent",
+                        "Stop local runtime",
+                        TrayMenuAccent::Danger,
+                    ),
+                    disabled: false,
+                },
+                TrayMenuEntry {
+                    command: CMD_RESTART,
+                    descriptor: TrayMenuDescriptor::new(
+                        TrayMenuKind::Action,
+                        "Restart Agent",
+                        "Refresh local runtime",
+                        TrayMenuAccent::Brand,
+                    ),
+                    disabled: false,
+                },
+                TrayMenuEntry {
+                    command: 0,
+                    descriptor: separator_descriptor(),
+                    disabled: true,
+                },
+            ]);
+        } else if !summary.agent_running {
+            entries.extend([
+                TrayMenuEntry {
+                    command: CMD_START,
+                    descriptor: TrayMenuDescriptor::new(
+                        TrayMenuKind::Action,
+                        "Start Agent",
+                        "Launch local runtime",
+                        TrayMenuAccent::Ready,
+                    ),
+                    disabled: false,
+                },
+                TrayMenuEntry {
+                    command: 0,
+                    descriptor: separator_descriptor(),
+                    disabled: true,
+                },
+            ]);
+        }
+
+        entries.push(TrayMenuEntry {
+            command: CMD_QUIT,
+            descriptor: TrayMenuDescriptor::new(
+                TrayMenuKind::Action,
+                "Quit DSCC",
+                if owned_agent {
+                    "Stop owned agent and tray"
+                } else {
+                    "Close tray"
+                },
+                TrayMenuAccent::Danger,
+            ),
+            disabled: false,
+        });
+        entries
     }
 
     fn separator_descriptor() -> TrayMenuDescriptor {
@@ -304,6 +506,9 @@ mod windows_tray {
     struct TrayState {
         agent: Option<Child>,
         install_dir: PathBuf,
+        last_open_ui: Option<(Instant, String)>,
+        health_cache: Arc<Mutex<TrayHealthCache>>,
+        health_refresh_tx: SyncSender<()>,
     }
 
     impl TrayState {
@@ -313,10 +518,31 @@ mod windows_tray {
                 .parent()
                 .ok_or_else(|| anyhow!("tray executable has no parent directory"))?
                 .to_path_buf();
+            let health_cache = Arc::new(Mutex::new(TrayHealthCache {
+                summary: refreshing_health_summary(),
+                refreshed_at: Instant::now() - TRAY_HEALTH_STALE_AFTER,
+            }));
+            let (health_refresh_tx, health_refresh_rx) = mpsc::sync_channel(1);
+            spawn_tray_health_worker(health_cache.clone(), health_refresh_rx);
             Ok(Self {
                 agent: None,
                 install_dir,
+                last_open_ui: None,
+                health_cache,
+                health_refresh_tx,
             })
+        }
+
+        fn claim_open_ui(&mut self, url: &str) -> bool {
+            let now = Instant::now();
+            if self.last_open_ui.as_ref().is_some_and(|(last, last_url)| {
+                last_url == url
+                    && now.duration_since(*last) < Duration::from_millis(OPEN_UI_DEBOUNCE_MS)
+            }) {
+                return false;
+            }
+            self.last_open_ui = Some((now, url.to_string()));
+            true
         }
 
         fn agent_path(&self) -> PathBuf {
@@ -339,9 +565,37 @@ mod windows_tray {
             }
         }
 
+        fn owns_agent(&mut self) -> bool {
+            self.prune_exited_child();
+            self.agent.is_some()
+        }
+
+        fn request_health_refresh(&self) {
+            match self.health_refresh_tx.try_send(()) {
+                Ok(()) | Err(TrySendError::Full(())) | Err(TrySendError::Disconnected(())) => {}
+            }
+        }
+
+        fn cached_health_summary(&self) -> TrayHealthSummary {
+            let cached = match self.health_cache.lock() {
+                Ok(cache) => cache.clone(),
+                Err(poisoned) => poisoned.into_inner().clone(),
+            };
+            if cached.refreshed_at.elapsed() >= TRAY_HEALTH_STALE_AFTER {
+                self.request_health_refresh();
+            }
+            cached.summary
+        }
+
+        fn menu_health(&mut self) -> (TrayHealthSummary, bool) {
+            let owned_agent = self.owns_agent();
+            (self.cached_health_summary(), owned_agent)
+        }
+
         fn ensure_agent(&mut self) -> Result<()> {
             self.prune_exited_child();
             if agent_is_healthy() {
+                self.request_health_refresh();
                 return Ok(());
             }
 
@@ -359,6 +613,7 @@ mod windows_tray {
 
             self.agent = Some(command.spawn().context("could not start dscc-agent.exe")?);
             wait_for_agent(Duration::from_secs(4));
+            self.request_health_refresh();
             Ok(())
         }
 
@@ -367,17 +622,7 @@ mod windows_tray {
                 let _ = child.kill();
                 let _ = child.wait();
             }
-
-            let taskkill = env::var_os("SystemRoot")
-                .map(PathBuf::from)
-                .map(|root| root.join("System32").join("taskkill.exe"))
-                .filter(|path| path.exists())
-                .unwrap_or_else(|| PathBuf::from(r"C:\Windows\System32\taskkill.exe"));
-
-            let _ = Command::new(taskkill)
-                .args(["/IM", "dscc-agent.exe", "/F", "/T"])
-                .creation_flags(CREATE_NO_WINDOW)
-                .status();
+            self.request_health_refresh();
         }
 
         fn restart_agent(&mut self) -> Result<()> {
@@ -398,6 +643,7 @@ mod windows_tray {
             .map_err(|_| anyhow!("tray state was already initialized"))?;
 
         TASKBAR_CREATED_MESSAGE.store(register_taskbar_created_message(), Ordering::Relaxed);
+        register_popup_window_class()?;
         let hwnd = create_hidden_window()?;
         add_tray_icon_with_retry(hwnd)?;
 
@@ -423,6 +669,7 @@ mod windows_tray {
                 hInstance: instance,
                 lpszClassName: class_name.as_ptr(),
                 hIcon: load_tray_icon(32),
+                hCursor: arrow_cursor(),
                 ..Default::default()
             };
 
@@ -449,6 +696,28 @@ mod windows_tray {
             }
 
             Ok(hwnd)
+        }
+    }
+
+    fn register_popup_window_class() -> Result<()> {
+        unsafe {
+            let instance = GetModuleHandleW(null());
+            let class_name = wide_null("DSCCTrayPopupWindow");
+            let wndclass = WNDCLASSW {
+                style: CS_HREDRAW | CS_VREDRAW | CS_DROPSHADOW,
+                lpfnWndProc: Some(popup_window_proc),
+                hInstance: instance,
+                lpszClassName: class_name.as_ptr(),
+                hIcon: load_tray_icon(16),
+                hCursor: arrow_cursor(),
+                ..Default::default()
+            };
+
+            if RegisterClassW(&wndclass) == 0 {
+                return Err(anyhow!("could not register tray popup window class"));
+            }
+
+            Ok(())
         }
     }
 
@@ -544,6 +813,10 @@ mod windows_tray {
             .unwrap_or_else(|| unsafe { LoadIconW(null_mut(), IDI_APPLICATION) })
     }
 
+    unsafe fn arrow_cursor() -> windows_sys::Win32::UI::WindowsAndMessaging::HCURSOR {
+        LoadCursorW(null_mut(), IDC_ARROW)
+    }
+
     fn icon_image_from_ico(data: &'static [u8], desired_size: i32) -> Option<&'static [u8]> {
         if data.len() < 6 || u16::from_le_bytes([data[2], data[3]]) != 1 {
             return None;
@@ -604,8 +877,6 @@ mod windows_tray {
                 handle_command(hwnd, wparam & 0xffff);
                 0
             }
-            WM_MEASUREITEM => measure_menu_item(lparam),
-            WM_DRAWITEM => draw_menu_item(lparam),
             WM_TRAYICON => {
                 if let Some(action) = tray_icon_action(wparam, lparam) {
                     handle_tray_icon_action(hwnd, action);
@@ -619,6 +890,147 @@ mod windows_tray {
             }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam),
         }
+    }
+
+    unsafe extern "system" fn popup_window_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        match msg {
+            WM_NCCREATE => {
+                let create = &*(lparam as *const CREATESTRUCTW);
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, create.lpCreateParams as isize);
+                1
+            }
+            WM_PAINT => {
+                paint_tray_popup(hwnd);
+                0
+            }
+            WM_MOUSEMOVE => {
+                update_popup_hover(hwnd, mouse_y(lparam));
+                let mut event = TRACKMOUSEEVENT {
+                    cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                    dwFlags: TME_LEAVE,
+                    hwndTrack: hwnd,
+                    dwHoverTime: 0,
+                };
+                TrackMouseEvent(&mut event);
+                0
+            }
+            WM_MOUSELEAVE => {
+                if let Some(state) = popup_state_mut(hwnd) {
+                    if state.hover_index.take().is_some() {
+                        InvalidateRect(hwnd, null(), 0);
+                    }
+                }
+                0
+            }
+            WM_SETCURSOR => {
+                SetCursor(arrow_cursor());
+                1
+            }
+            WM_LBUTTONUP => {
+                let command = popup_state_mut(hwnd)
+                    .and_then(|state| state.item_at(mouse_y(lparam)).map(|index| (state, index)))
+                    .and_then(|(state, index)| {
+                        let entry = &state.entries[index];
+                        (!entry.disabled && entry.command != 0)
+                            .then_some((state.owner, entry.command))
+                    });
+                DestroyWindow(hwnd);
+                if let Some((owner, command)) = command {
+                    PostMessageW(owner, WM_COMMAND, command, 0);
+                }
+                0
+            }
+            WM_ACTIVATE => {
+                if loword(wparam) == WA_INACTIVE {
+                    DestroyWindow(hwnd);
+                }
+                0
+            }
+            WM_KILLFOCUS => {
+                DestroyWindow(hwnd);
+                0
+            }
+            WM_NCDESTROY => {
+                let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut TrayPopupState;
+                if !ptr.is_null() {
+                    drop(Box::from_raw(ptr));
+                    SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+                }
+                0
+            }
+            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+        }
+    }
+
+    unsafe fn popup_state_mut(hwnd: HWND) -> Option<&'static mut TrayPopupState> {
+        let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut TrayPopupState;
+        if ptr.is_null() {
+            None
+        } else {
+            Some(&mut *ptr)
+        }
+    }
+
+    unsafe fn paint_tray_popup(hwnd: HWND) {
+        let mut paint = PAINTSTRUCT::default();
+        let hdc = BeginPaint(hwnd, &mut paint);
+        if !hdc.is_null() {
+            if let Some(state) = popup_state_mut(hwnd) {
+                draw_tray_popup(hdc, state);
+            }
+        }
+        EndPaint(hwnd, &paint);
+    }
+
+    unsafe fn update_popup_hover(hwnd: HWND, y: i32) {
+        let Some(state) = popup_state_mut(hwnd) else {
+            return;
+        };
+        let next = state.item_at(y).filter(|index| {
+            let entry = &state.entries[*index];
+            entry.command != 0 && !entry.disabled
+        });
+        if state.hover_index != next {
+            state.hover_index = next;
+            InvalidateRect(hwnd, null(), 0);
+        }
+    }
+
+    unsafe fn draw_tray_popup(hdc: windows_sys::Win32::Graphics::Gdi::HDC, state: &TrayPopupState) {
+        let panel_rect = RECT {
+            left: 0,
+            top: 0,
+            right: MENU_WIDTH as i32,
+            bottom: state.height(),
+        };
+        draw_round_panel(hdc, panel_rect, COLOR_CARBON, COLOR_LINE);
+        for (index, entry) in state.entries.iter().enumerate() {
+            let Some(rect) = state.item_rect(index) else {
+                continue;
+            };
+            match entry.descriptor.kind {
+                TrayMenuKind::Header => draw_menu_header(hdc, rect, &entry.descriptor),
+                TrayMenuKind::Readout => draw_menu_readout(hdc, rect, &entry.descriptor),
+                TrayMenuKind::Action => draw_menu_action(
+                    hdc,
+                    rect,
+                    &entry.descriptor,
+                    state.hover_index == Some(index),
+                    entry.disabled,
+                ),
+                TrayMenuKind::Separator => draw_menu_separator(hdc, rect),
+            }
+        }
+        draw_round_panel_outline(hdc, panel_rect, COLOR_LINE);
+    }
+
+    fn mouse_y(lparam: LPARAM) -> i32 {
+        (((lparam as u32) >> 16) as i16) as i32
     }
 
     fn tray_icon_action(wparam: WPARAM, lparam: LPARAM) -> Option<TrayIconAction> {
@@ -663,208 +1075,198 @@ mod windows_tray {
 
     fn show_menu(hwnd: HWND) {
         unsafe {
-            let menu = CreatePopupMenu();
-            if menu.is_null() {
-                return;
-            }
-
-            let summary = tray_health_summary();
-            let entries = tray_menu_entries(&summary);
-            for entry in &entries {
-                append_menu_item(menu, entry);
-            }
+            let (summary, owned_agent) = with_state(|state| Ok(state.menu_health()))
+                .unwrap_or_else(|_| (refreshing_health_summary(), false));
+            let entries = tray_menu_entries(&summary, owned_agent);
+            let popup_state = Box::new(TrayPopupState::new(hwnd, entries));
+            let height = popup_state.height();
+            let width = MENU_WIDTH as i32;
 
             let mut point = POINT { x: 0, y: 0 };
             if GetCursorPos(&mut point) != 0 {
+                let screen_width = GetSystemMetrics(SM_CXSCREEN);
+                let screen_height = GetSystemMetrics(SM_CYSCREEN);
+                let x = (point.x - width + 12).clamp(6, (screen_width - width - 6).max(6));
+                let y = (point.y - height - 8).clamp(6, (screen_height - height - 6).max(6));
+                let popup_ptr = Box::into_raw(popup_state);
+                let class_name = wide_null("DSCCTrayPopupWindow");
+                let window_title = wide_null("DualSense Command Center");
+                let popup = CreateWindowExW(
+                    WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+                    class_name.as_ptr(),
+                    window_title.as_ptr(),
+                    WS_POPUP,
+                    x,
+                    y,
+                    width,
+                    height,
+                    hwnd,
+                    null_mut(),
+                    GetModuleHandleW(null()),
+                    popup_ptr.cast(),
+                );
+                if popup.is_null() {
+                    drop(Box::from_raw(popup_ptr));
+                    return;
+                }
+                apply_popup_shape(popup, width, height);
                 SetForegroundWindow(hwnd);
-                TrackPopupMenu(menu, TPM_RIGHTBUTTON, point.x, point.y, 0, hwnd, null());
+                ShowWindow(popup, SW_SHOW);
+                SetForegroundWindow(popup);
                 PostMessageW(hwnd, WM_NULL, 0, 0);
             }
-            DestroyMenu(menu);
         }
     }
 
-    fn append_menu_item(menu: HMENU, entry: &TrayMenuEntry) {
-        let mut flags = MF_OWNERDRAW;
-        if entry.disabled {
-            flags |= MF_GRAYED | MF_DISABLED;
+    unsafe fn apply_popup_shape(hwnd: HWND, width: i32, height: i32) {
+        let region = CreateRoundRectRgn(
+            0,
+            0,
+            width + 1,
+            height + 1,
+            MENU_CORNER_RADIUS,
+            MENU_CORNER_RADIUS,
+        );
+        if region.is_null() {
+            return;
         }
-        let item_data = &entry.descriptor as *const TrayMenuDescriptor as *const u16;
-        unsafe {
-            AppendMenuW(menu, flags, entry.command, item_data);
+
+        if SetWindowRgn(hwnd, region, 1) == 0 {
+            DeleteObject(region);
         }
     }
 
-    fn measure_menu_item(lparam: LPARAM) -> LRESULT {
-        if lparam == 0 {
-            return 0;
-        }
-        unsafe {
-            let measure = &mut *(lparam as *mut MEASUREITEMSTRUCT);
-            if measure.CtlType != ODT_MENU {
-                return 0;
-            }
-            let Some(descriptor) = descriptor_from_item_data(measure.itemData) else {
-                return 0;
-            };
-            measure.itemWidth = MENU_WIDTH;
-            measure.itemHeight = match descriptor.kind {
-                TrayMenuKind::Header => MENU_HEADER_HEIGHT,
-                TrayMenuKind::Readout => MENU_READOUT_HEIGHT,
-                TrayMenuKind::Action => MENU_ITEM_HEIGHT,
-                TrayMenuKind::Separator => MENU_SEPARATOR_HEIGHT,
-            };
-            1
+    fn menu_item_height(kind: TrayMenuKind) -> u32 {
+        match kind {
+            TrayMenuKind::Header => MENU_HEADER_HEIGHT,
+            TrayMenuKind::Readout => MENU_READOUT_HEIGHT,
+            TrayMenuKind::Action => MENU_ITEM_HEIGHT,
+            TrayMenuKind::Separator => MENU_SEPARATOR_HEIGHT,
         }
     }
 
-    fn draw_menu_item(lparam: LPARAM) -> LRESULT {
-        if lparam == 0 {
-            return 0;
-        }
-        unsafe {
-            let draw = &*(lparam as *const DRAWITEMSTRUCT);
-            if draw.CtlType != ODT_MENU {
-                return 0;
-            }
-            let Some(descriptor) = descriptor_from_item_data(draw.itemData) else {
-                return 0;
-            };
-            match descriptor.kind {
-                TrayMenuKind::Header => draw_menu_header(draw, descriptor),
-                TrayMenuKind::Readout => draw_menu_readout(draw, descriptor),
-                TrayMenuKind::Action => draw_menu_action(draw, descriptor),
-                TrayMenuKind::Separator => draw_menu_separator(draw),
-            }
-            1
-        }
+    fn tray_menu_height(entries: &[TrayMenuEntry]) -> i32 {
+        entries
+            .iter()
+            .map(|entry| menu_item_height(entry.descriptor.kind) as i32)
+            .sum()
     }
 
-    unsafe fn descriptor_from_item_data(item_data: usize) -> Option<&'static TrayMenuDescriptor> {
-        if item_data == 0 {
-            None
-        } else {
-            Some(&*(item_data as *const TrayMenuDescriptor))
-        }
-    }
-
-    unsafe fn draw_menu_header(draw: &DRAWITEMSTRUCT, descriptor: &TrayMenuDescriptor) {
-        let rect = draw.rcItem;
-        fill_rect(draw.hDC, rect, COLOR_OBSIDIAN);
+    unsafe fn draw_menu_header(
+        hdc: windows_sys::Win32::Graphics::Gdi::HDC,
+        rect: RECT,
+        descriptor: &TrayMenuDescriptor,
+    ) {
+        fill_rect(hdc, rect, COLOR_OBSIDIAN);
         fill_rect(
-            draw.hDC,
+            hdc,
             RECT {
                 left: rect.left,
-                top: rect.top,
-                right: rect.left + 4,
+                top: rect.bottom - 1,
+                right: rect.right,
                 bottom: rect.bottom,
             },
-            COLOR_ACTUATION,
+            COLOR_LINE,
         );
 
         let title_rect = RECT {
-            left: rect.left + 18,
-            top: rect.top + 8,
+            left: rect.left + 28,
+            top: rect.top + 4,
             right: rect.right - 14,
-            bottom: rect.top + 30,
+            bottom: rect.top + 20,
         };
         draw_text_line(
-            draw.hDC,
+            hdc,
             &descriptor.label,
             title_rect,
             COLOR_WHITE,
-            16,
-            FW_SEMIBOLD,
-        );
-
-        draw_dot(draw.hDC, rect.left + 20, rect.top + 38, 8, COLOR_ACTUATION);
-        let status_rect = RECT {
-            left: rect.left + 34,
-            top: rect.top + 31,
-            right: rect.right - 14,
-            bottom: rect.bottom - 6,
-        };
-        draw_text_line(
-            draw.hDC,
-            "Tray controls and live health",
-            status_rect,
-            COLOR_TUNGSTEN,
-            12,
-            FW_NORMAL,
-        );
-    }
-
-    unsafe fn draw_menu_readout(draw: &DRAWITEMSTRUCT, descriptor: &TrayMenuDescriptor) {
-        let rect = draw.rcItem;
-        fill_rect(draw.hDC, rect, COLOR_CARBON);
-        draw_dot(
-            draw.hDC,
-            rect.left + 18,
-            rect.top + 15,
-            10,
-            menu_accent_color(descriptor.accent),
-        );
-
-        let label_rect = RECT {
-            left: rect.left + 38,
-            top: rect.top + 5,
-            right: rect.right - 14,
-            bottom: rect.top + 23,
-        };
-        draw_text_line(
-            draw.hDC,
-            &descriptor.label,
-            label_rect,
-            COLOR_HAPTIC,
             13,
             FW_SEMIBOLD,
         );
 
-        let detail_rect = RECT {
-            left: rect.left + 38,
-            top: rect.top + 22,
+        draw_dot(hdc, rect.left + 14, rect.top + 12, 9, COLOR_ACTUATION);
+        let status_rect = RECT {
+            left: rect.left + 28,
+            top: rect.top + 19,
             right: rect.right - 14,
-            bottom: rect.bottom - 4,
+            bottom: rect.bottom - 3,
         };
         draw_text_line(
-            draw.hDC,
+            hdc,
             &descriptor.detail,
-            detail_rect,
+            status_rect,
             COLOR_TUNGSTEN,
-            11,
+            9,
             FW_NORMAL,
         );
     }
 
-    unsafe fn draw_menu_action(draw: &DRAWITEMSTRUCT, descriptor: &TrayMenuDescriptor) {
-        let rect = draw.rcItem;
-        let selected = draw.itemState & ODS_SELECTED != 0;
-        let disabled = draw.itemState & ODS_GRAYED != 0;
-        let background = if selected && !disabled {
-            COLOR_SELECTED
-        } else {
-            COLOR_CARBON
-        };
-        fill_rect(draw.hDC, rect, background);
+    unsafe fn draw_menu_readout(
+        hdc: windows_sys::Win32::Graphics::Gdi::HDC,
+        rect: RECT,
+        descriptor: &TrayMenuDescriptor,
+    ) {
+        fill_rect(hdc, rect, COLOR_CARBON);
+        draw_dot(
+            hdc,
+            rect.left + 16,
+            rect.top + 12,
+            8,
+            menu_accent_color(descriptor.accent),
+        );
 
-        let accent = if disabled {
-            COLOR_LINE
-        } else {
-            menu_accent_color(descriptor.accent)
+        let label_rect = RECT {
+            left: rect.left + 32,
+            top: rect.top + 2,
+            right: rect.right - 14,
+            bottom: rect.top + 17,
         };
+        draw_text_line(
+            hdc,
+            &descriptor.label,
+            label_rect,
+            COLOR_HAPTIC,
+            11,
+            FW_SEMIBOLD,
+        );
+
+        let detail_rect = RECT {
+            left: rect.left + 32,
+            top: rect.top + 16,
+            right: rect.right - 14,
+            bottom: rect.bottom - 3,
+        };
+        draw_text_line(
+            hdc,
+            &descriptor.detail,
+            detail_rect,
+            COLOR_TUNGSTEN,
+            9,
+            FW_NORMAL,
+        );
+    }
+
+    unsafe fn draw_menu_action(
+        hdc: windows_sys::Win32::Graphics::Gdi::HDC,
+        rect: RECT,
+        descriptor: &TrayMenuDescriptor,
+        selected: bool,
+        disabled: bool,
+    ) {
         fill_rect(
-            draw.hDC,
-            RECT {
-                left: rect.left + 8,
-                top: rect.top + 9,
-                right: rect.left + 12,
-                bottom: rect.bottom - 9,
+            hdc,
+            rect,
+            if selected {
+                COLOR_SELECTED
+            } else {
+                COLOR_CARBON
             },
-            accent,
         );
 
         let label_color = if disabled {
             COLOR_DISABLED
+        } else if descriptor.accent == TrayMenuAccent::Danger {
+            COLOR_OVERDRIVE
         } else {
             COLOR_HAPTIC
         };
@@ -874,49 +1276,135 @@ mod windows_tray {
             COLOR_TUNGSTEN
         };
         let label_rect = RECT {
-            left: rect.left + 22,
-            top: rect.top + 3,
+            left: rect.left + 18,
+            top: rect.top + 1,
             right: rect.right - 14,
-            bottom: rect.top + 20,
+            bottom: rect.top + 16,
         };
         draw_text_line(
-            draw.hDC,
+            hdc,
             &descriptor.label,
             label_rect,
             label_color,
-            13,
+            11,
             FW_SEMIBOLD,
         );
 
         let detail_rect = RECT {
-            left: rect.left + 22,
-            top: rect.top + 18,
+            left: rect.left + 18,
+            top: rect.top + 15,
             right: rect.right - 14,
-            bottom: rect.bottom - 3,
+            bottom: rect.bottom - 1,
         };
         draw_text_line(
-            draw.hDC,
+            hdc,
             &descriptor.detail,
             detail_rect,
             detail_color,
-            11,
+            9,
             FW_NORMAL,
         );
     }
 
-    unsafe fn draw_menu_separator(draw: &DRAWITEMSTRUCT) {
-        let rect = draw.rcItem;
-        fill_rect(draw.hDC, rect, COLOR_CARBON);
+    unsafe fn draw_menu_separator(hdc: windows_sys::Win32::Graphics::Gdi::HDC, rect: RECT) {
+        fill_rect(hdc, rect, COLOR_CARBON);
         let top = rect.top + ((rect.bottom - rect.top) / 2);
         fill_rect(
-            draw.hDC,
+            hdc,
             RECT {
-                left: rect.left + 16,
+                left: rect.left + 12,
                 top,
-                right: rect.right - 16,
+                right: rect.right - 12,
                 bottom: top + 1,
             },
             COLOR_LINE,
+        );
+    }
+
+    unsafe fn draw_round_panel(
+        hdc: windows_sys::Win32::Graphics::Gdi::HDC,
+        rect: RECT,
+        fill: COLORREF,
+        stroke: COLORREF,
+    ) {
+        let brush = CreateSolidBrush(fill);
+        let pen = CreatePen(PS_SOLID, 1, stroke);
+        if brush.is_null() || pen.is_null() {
+            if !brush.is_null() {
+                DeleteObject(brush);
+            }
+            if !pen.is_null() {
+                DeleteObject(pen);
+            }
+            fill_rect(hdc, rect, fill);
+            return;
+        }
+
+        let previous_brush = SelectObject(hdc, brush);
+        let previous_pen = SelectObject(hdc, pen);
+        RoundRect(
+            hdc,
+            rect.left,
+            rect.top,
+            rect.right,
+            rect.bottom,
+            MENU_CORNER_RADIUS,
+            MENU_CORNER_RADIUS,
+        );
+        if !previous_pen.is_null() {
+            SelectObject(hdc, previous_pen);
+        }
+        if !previous_brush.is_null() {
+            SelectObject(hdc, previous_brush);
+        }
+        DeleteObject(pen);
+        DeleteObject(brush);
+    }
+
+    unsafe fn draw_round_panel_outline(
+        hdc: windows_sys::Win32::Graphics::Gdi::HDC,
+        rect: RECT,
+        color: COLORREF,
+    ) {
+        fill_rect(
+            hdc,
+            RECT {
+                left: rect.left,
+                top: rect.top,
+                right: rect.right,
+                bottom: rect.top + 1,
+            },
+            color,
+        );
+        fill_rect(
+            hdc,
+            RECT {
+                left: rect.left,
+                top: rect.bottom - 1,
+                right: rect.right,
+                bottom: rect.bottom,
+            },
+            color,
+        );
+        fill_rect(
+            hdc,
+            RECT {
+                left: rect.left,
+                top: rect.top,
+                right: rect.left + 1,
+                bottom: rect.bottom,
+            },
+            color,
+        );
+        fill_rect(
+            hdc,
+            RECT {
+                left: rect.right - 1,
+                top: rect.top,
+                right: rect.right,
+                bottom: rect.bottom,
+            },
+            color,
         );
     }
 
@@ -1004,102 +1492,274 @@ mod windows_tray {
         }
     }
 
-    fn tray_health_summary() -> TrayHealthSummary {
-        let Some(status_body) = http_get_body(STATUS_PATH, Duration::from_millis(450)) else {
-            return TrayHealthSummary {
-                agent_running: false,
-                agent_label: "Agent Offline".to_string(),
-                agent_detail: "Start the agent to enable controller control".to_string(),
-                agent_accent: TrayMenuAccent::Danger,
-                diagnostics_label: "Diagnostics Unavailable".to_string(),
-                diagnostics_detail: "Waiting for the local runtime".to_string(),
-                diagnostics_accent: TrayMenuAccent::Neutral,
-            };
-        };
+    fn refreshing_health_summary() -> TrayHealthSummary {
+        TrayHealthSummary {
+            agent_running: false,
+            agent_label: "Agent Status".to_string(),
+            agent_detail: "Refreshing local runtime state".to_string(),
+            agent_accent: TrayMenuAccent::Neutral,
+            profile_label: "Profile Pending".to_string(),
+            profile_detail: "Waiting for snapshot".to_string(),
+            profile_accent: TrayMenuAccent::Neutral,
+            controller_label: "Controller Pending".to_string(),
+            controller_detail: "Waiting for snapshot".to_string(),
+            controller_accent: TrayMenuAccent::Neutral,
+            diagnostics_label: "Diagnostics Pending".to_string(),
+            diagnostics_detail: "Waiting for health checks".to_string(),
+            diagnostics_accent: TrayMenuAccent::Neutral,
+        }
+    }
 
-        let version =
-            json_string_value(&status_body, "version").unwrap_or_else(|| "0.1.9".to_string());
-        let active_profile = json_string_value(&status_body, "active_profile_id");
-        let active_adapter = json_string_value(&status_body, "active_adapter_id");
-        let agent_detail = match (active_profile.as_deref(), active_adapter.as_deref()) {
+    fn offline_health_summary() -> TrayHealthSummary {
+        TrayHealthSummary {
+            agent_running: false,
+            agent_label: "Agent Offline".to_string(),
+            agent_detail: "Start the agent to enable controller control".to_string(),
+            agent_accent: TrayMenuAccent::Danger,
+            profile_label: "Profile Unavailable".to_string(),
+            profile_detail: "Start the agent to read profile state".to_string(),
+            profile_accent: TrayMenuAccent::Neutral,
+            controller_label: "Controller Unavailable".to_string(),
+            controller_detail: "Start the agent to read controller state".to_string(),
+            controller_accent: TrayMenuAccent::Neutral,
+            diagnostics_label: "Diagnostics Unavailable".to_string(),
+            diagnostics_detail: "Waiting for the local runtime".to_string(),
+            diagnostics_accent: TrayMenuAccent::Neutral,
+        }
+    }
+
+    fn spawn_tray_health_worker(cache: Arc<Mutex<TrayHealthCache>>, refresh_rx: Receiver<()>) {
+        thread::spawn(move || {
+            refresh_tray_health_cache(&cache);
+            while let Ok(()) | Err(mpsc::RecvTimeoutError::Timeout) =
+                refresh_rx.recv_timeout(TRAY_HEALTH_REFRESH_INTERVAL)
+            {
+                while refresh_rx.try_recv().is_ok() {}
+                refresh_tray_health_cache(&cache);
+            }
+        });
+    }
+
+    fn refresh_tray_health_cache(cache: &Arc<Mutex<TrayHealthCache>>) {
+        let summary = fetch_tray_health_summary().unwrap_or_else(offline_health_summary);
+        let mut cache = match cache.lock() {
+            Ok(cache) => cache,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        cache.summary = summary;
+        cache.refreshed_at = Instant::now();
+    }
+
+    fn fetch_tray_health_summary() -> Option<TrayHealthSummary> {
+        let body = http_get_body(SNAPSHOT_PATH, Duration::from_millis(900))?;
+        let snapshot = serde_json::from_str::<TraySnapshotDto>(&body).ok()?;
+        Some(tray_health_summary_from_snapshot(&snapshot))
+    }
+
+    fn tray_health_summary_from_snapshot(snapshot: &TraySnapshotDto) -> TrayHealthSummary {
+        let version = if snapshot.status.version.trim().is_empty() {
+            "unknown"
+        } else {
+            snapshot.status.version.trim()
+        };
+        let active_profile_id = snapshot.status.active_profile_id.as_deref().or_else(|| {
+            snapshot
+                .profiles
+                .iter()
+                .find(|profile| profile.active)
+                .map(|profile| profile.id.as_str())
+        });
+        let active_adapter = snapshot.status.active_adapter_id.as_deref();
+        let (profile_label, profile_detail, profile_accent) =
+            active_profile_summary(active_profile_id, &snapshot.profiles);
+        let (controller_label, controller_detail, controller_accent) = active_controller_summary(
+            snapshot.profile_resolution.controller_id.as_deref(),
+            &snapshot.controllers,
+        );
+        let agent_detail = match (active_profile_id, active_adapter) {
             (_, Some(adapter)) => format!("v{version} - telemetry via {adapter}"),
             (Some(_), None) => format!("v{version} - profile ready"),
             _ => format!("v{version} - local runtime ready"),
         };
 
-        let (diagnostics_label, diagnostics_detail, diagnostics_accent) = diagnostics_summary()
-            .unwrap_or_else(|| {
-                (
-                    "Diagnostics Warming Up".to_string(),
-                    "Health checks are warming up".to_string(),
-                    TrayMenuAccent::Neutral,
-                )
-            });
+        let statuses = snapshot
+            .diagnostics
+            .checks
+            .iter()
+            .map(|check| check.status.as_str())
+            .collect::<Vec<_>>();
+        let (diagnostics_label, diagnostics_detail, diagnostics_accent) =
+            diagnostics_summary_from_statuses(&statuses);
 
         TrayHealthSummary {
             agent_running: true,
             agent_label: "Agent Online".to_string(),
             agent_detail,
             agent_accent: TrayMenuAccent::Ready,
+            profile_label,
+            profile_detail,
+            profile_accent,
+            controller_label,
+            controller_detail,
+            controller_accent,
             diagnostics_label,
             diagnostics_detail,
             diagnostics_accent,
         }
     }
 
-    fn diagnostics_summary() -> Option<(String, String, TrayMenuAccent)> {
-        let body = http_get_body(DIAGNOSTICS_PATH, Duration::from_millis(700))?;
-        let statuses = json_string_values(&body, "status");
+    fn diagnostics_summary_from_statuses(statuses: &[&str]) -> (String, String, TrayMenuAccent) {
         if statuses.is_empty() {
-            return Some((
+            return (
                 "Diagnostics Warming Up".to_string(),
                 "No checks reported yet".to_string(),
                 TrayMenuAccent::Neutral,
-            ));
+            );
         }
 
         let pending = statuses
             .iter()
-            .filter(|status| status.as_str() == "pending")
+            .filter(|status| **status == "pending")
             .count();
         let attention = statuses
             .iter()
             .filter(|status| {
                 !matches!(
-                    status.as_str(),
+                    **status,
                     "ok" | "hidapi" | "pending" | "ready" | "connected"
                 )
             })
             .count();
 
         if attention > 0 {
-            Some((
+            (
                 "Diagnostics Need Attention".to_string(),
                 format!("{attention} of {} checks need review", statuses.len()),
                 TrayMenuAccent::Danger,
-            ))
+            )
         } else if pending > 0 {
-            Some((
+            (
                 "Diagnostics Warming Up".to_string(),
                 format!(
                     "{pending} check warming up, {} checks healthy",
                     statuses.len() - pending
                 ),
                 TrayMenuAccent::Neutral,
-            ))
+            )
         } else {
-            Some((
+            (
                 "Diagnostics Clear".to_string(),
                 format!("{} checks healthy", statuses.len()),
                 TrayMenuAccent::Ready,
-            ))
+            )
+        }
+    }
+
+    fn active_profile_summary(
+        active_profile_id: Option<&str>,
+        profiles: &[TraySnapshotProfileDto],
+    ) -> (String, String, TrayMenuAccent) {
+        let Some(profile_id) = active_profile_id else {
+            return (
+                "Profile: None".to_string(),
+                "No active profile selected".to_string(),
+                TrayMenuAccent::Neutral,
+            );
+        };
+        let profile_name = profiles
+            .iter()
+            .find(|profile| profile.id == profile_id)
+            .map(|profile| profile.name.clone())
+            .unwrap_or_else(|| fallback_profile_name(profile_id));
+        (
+            format!("Profile: {profile_name}"),
+            profile_id.to_string(),
+            TrayMenuAccent::Ready,
+        )
+    }
+
+    fn active_controller_summary(
+        active_controller_id: Option<&str>,
+        controllers: &[TraySnapshotControllerDto],
+    ) -> (String, String, TrayMenuAccent) {
+        let controller = active_controller_id
+            .and_then(|id| controllers.iter().find(|controller| controller.id == id))
+            .or_else(|| controllers.iter().find(|controller| controller.connected))
+            .or_else(|| controllers.first());
+
+        let Some(controller) = controller else {
+            return (
+                "Controller: None".to_string(),
+                "No controller detected".to_string(),
+                TrayMenuAccent::Neutral,
+            );
+        };
+
+        let label = if controller.name.trim().is_empty() {
+            fallback_controller_name(&controller.model)
+        } else {
+            controller.name.trim().to_string()
+        };
+        let detail = [
+            fallback_controller_name(&controller.model),
+            transport_label(&controller.transport),
+        ]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" / ");
+
+        (
+            format!("Controller: {label}"),
+            if detail.is_empty() {
+                controller.id.clone()
+            } else {
+                detail
+            },
+            if controller.connected {
+                TrayMenuAccent::Ready
+            } else {
+                TrayMenuAccent::Neutral
+            },
+        )
+    }
+
+    fn fallback_controller_name(model: &str) -> String {
+        let normalized = model.trim();
+        if normalized.is_empty() {
+            "DualSense".to_string()
+        } else if normalized.eq_ignore_ascii_case("dualsense_edge") {
+            "DualSense Edge".to_string()
+        } else if normalized.eq_ignore_ascii_case("dualsense") {
+            "DualSense".to_string()
+        } else {
+            normalized.replace('_', " ")
+        }
+    }
+
+    fn transport_label(transport: &str) -> String {
+        match transport.trim().to_ascii_lowercase().as_str() {
+            "usb" => "USB".to_string(),
+            "bluetooth" => "Bluetooth".to_string(),
+            "" | "unknown" => String::new(),
+            value => value.to_string(),
+        }
+    }
+
+    fn fallback_profile_name(profile_id: &str) -> String {
+        match profile_id {
+            "forza-horizon" => "Base".to_string(),
+            "forza-horizon-immersive" => "Immersive".to_string(),
+            _ => profile_id.to_string(),
         }
     }
 
     fn handle_command(hwnd: HWND, command: usize) {
         match command {
             CMD_OPEN_UI => open_ui(hwnd),
+            CMD_OPEN_HAPTICS => open_ui_url(hwnd, HAPTICS_URL),
             CMD_OPEN_BUTTON_MAPPING => open_ui_url(hwnd, BUTTON_MAPPING_URL),
+            CMD_CHECK_UPDATES => open_url(hwnd, RELEASES_URL),
             CMD_START => {
                 if let Err(error) = with_state(|state| state.ensure_agent()) {
                     show_error(hwnd, &error.to_string());
@@ -1134,16 +1794,18 @@ mod windows_tray {
     }
 
     fn open_ui_url(hwnd: HWND, url: &str) {
-        if let Err(error) = with_state(|state| state.ensure_agent()) {
-            show_error(hwnd, &error.to_string());
-            return;
+        match with_state(|state| {
+            state.ensure_agent()?;
+            Ok(state.claim_open_ui(url))
+        }) {
+            Ok(true) => open_url(hwnd, url),
+            Ok(false) => {}
+            Err(error) => show_error(hwnd, &error.to_string()),
         }
-
-        open_url(hwnd, url);
     }
 
     fn open_browser(hwnd: HWND) {
-        open_url(hwnd, DASHBOARD_URL);
+        open_ui_url(hwnd, DASHBOARD_URL);
     }
 
     fn open_url(hwnd: HWND, url: &str) {
@@ -1213,26 +1875,6 @@ mod windows_tray {
             .split_once("\r\n\r\n")
             .map(|(_, body)| body.to_string())
             .or(Some(response))
-    }
-
-    fn json_string_value(body: &str, key: &str) -> Option<String> {
-        json_string_values(body, key).into_iter().next()
-    }
-
-    fn json_string_values(body: &str, key: &str) -> Vec<String> {
-        let needle = format!("\"{key}\":\"");
-        let mut values = Vec::new();
-        let mut rest = body;
-        while let Some(offset) = rest.find(&needle) {
-            let value_start = offset + needle.len();
-            let value_rest = &rest[value_start..];
-            let Some(value_end) = value_rest.find('"') else {
-                break;
-            };
-            values.push(value_rest[..value_end].to_string());
-            rest = &value_rest[value_end + 1..];
-        }
-        values
     }
 
     fn agent_spawn_addr() -> String {
@@ -1344,17 +1986,53 @@ mod windows_tray {
         }
 
         #[test]
+        fn tray_state_debounces_duplicate_open_ui_requests() {
+            let (health_refresh_tx, _health_refresh_rx) = mpsc::sync_channel(1);
+            let mut state = TrayState {
+                agent: None,
+                install_dir: PathBuf::new(),
+                last_open_ui: None,
+                health_cache: Arc::new(Mutex::new(TrayHealthCache {
+                    summary: refreshing_health_summary(),
+                    refreshed_at: Instant::now(),
+                })),
+                health_refresh_tx,
+            };
+
+            assert!(state.claim_open_ui(DASHBOARD_URL));
+            assert!(!state.claim_open_ui(DASHBOARD_URL));
+            assert!(state.claim_open_ui(HAPTICS_URL));
+            assert!(state.claim_open_ui(BUTTON_MAPPING_URL));
+
+            state.last_open_ui = Some((
+                Instant::now() - Duration::from_millis(OPEN_UI_DEBOUNCE_MS + 1),
+                BUTTON_MAPPING_URL.to_string(),
+            ));
+            assert!(state.claim_open_ui(BUTTON_MAPPING_URL));
+        }
+
+        #[test]
         fn tray_menu_exposes_useful_actions_and_agent_state() {
+            assert!(DASHBOARD_URL.ends_with("#/games"));
+            assert!(HAPTICS_URL.ends_with("#/adaptive-triggers-haptics"));
+            assert!(BUTTON_MAPPING_URL.ends_with("#/button-mapping"));
+
             let running_summary = TrayHealthSummary {
                 agent_running: true,
                 agent_label: "Agent Online".to_string(),
                 agent_detail: "v0.1.9 - local runtime ready".to_string(),
                 agent_accent: TrayMenuAccent::Ready,
+                profile_label: "Profile: Base".to_string(),
+                profile_detail: "forza-horizon".to_string(),
+                profile_accent: TrayMenuAccent::Ready,
+                controller_label: "Controller: Edge".to_string(),
+                controller_detail: "DualSense Edge / Bluetooth".to_string(),
+                controller_accent: TrayMenuAccent::Ready,
                 diagnostics_label: "Diagnostics Clear".to_string(),
                 diagnostics_detail: "7 checks healthy".to_string(),
                 diagnostics_accent: TrayMenuAccent::Ready,
             };
-            let running = tray_menu_entries(&running_summary);
+            let running = tray_menu_entries(&running_summary, true);
             assert!(running
                 .iter()
                 .any(|entry| entry.command == CMD_OPEN_BUTTON_MAPPING && !entry.disabled));
@@ -1364,8 +2042,22 @@ mod windows_tray {
                     && entry.descriptor.kind == TrayMenuKind::Readout));
             assert!(running
                 .iter()
+                .any(|entry| entry.descriptor.label == "Profile: Base"
+                    && entry.descriptor.detail == "forza-horizon"));
+            assert!(running.iter().any(|entry| {
+                entry.descriptor.label == "Controller: Edge"
+                    && entry.descriptor.detail == "DualSense Edge / Bluetooth"
+            }));
+            assert!(running
+                .iter()
                 .any(|entry| entry.descriptor.label == "Diagnostics Clear"
                     && entry.descriptor.kind == TrayMenuKind::Readout));
+            assert!(running.iter().any(|entry| {
+                entry.command == CMD_OPEN_UI && entry.descriptor.label == "Dashboard"
+            }));
+            assert!(running.iter().any(|entry| {
+                entry.command == CMD_OPEN_HAPTICS && entry.descriptor.label == "Triggers & Haptics"
+            }));
             assert!(running
                 .iter()
                 .all(|entry| entry.descriptor.label != "Diagnostics Waiting"));
@@ -1378,29 +2070,88 @@ mod windows_tray {
                     "Open Install Folder" | "Open Config Folder"
                 )
             }));
-            assert!(running
-                .iter()
-                .any(|entry| entry.command == CMD_START && entry.disabled));
+            assert!(running.iter().all(|entry| entry.command != CMD_START));
             assert!(running
                 .iter()
                 .any(|entry| entry.command == CMD_STOP && !entry.disabled));
+            assert!(running
+                .iter()
+                .any(|entry| entry.command == CMD_CHECK_UPDATES && !entry.disabled));
+            assert!(tray_menu_height(&running) < 400);
 
             let offline_summary = TrayHealthSummary {
                 agent_running: false,
                 agent_label: "Agent Offline".to_string(),
                 agent_detail: "Start the agent to enable controller control".to_string(),
                 agent_accent: TrayMenuAccent::Danger,
+                profile_label: "Profile Unavailable".to_string(),
+                profile_detail: "Start the agent to read profile state".to_string(),
+                profile_accent: TrayMenuAccent::Neutral,
+                controller_label: "Controller Unavailable".to_string(),
+                controller_detail: "Start the agent to read controller state".to_string(),
+                controller_accent: TrayMenuAccent::Neutral,
                 diagnostics_label: "Diagnostics Unavailable".to_string(),
                 diagnostics_detail: "Waiting for the local runtime".to_string(),
                 diagnostics_accent: TrayMenuAccent::Neutral,
             };
-            let offline = tray_menu_entries(&offline_summary);
+            let offline = tray_menu_entries(&offline_summary, false);
             assert!(offline
                 .iter()
                 .any(|entry| entry.command == CMD_START && !entry.disabled));
-            assert!(offline
-                .iter()
-                .any(|entry| entry.command == CMD_STOP && entry.disabled));
+            assert!(offline.iter().all(|entry| entry.command != CMD_STOP));
+            assert!(tray_menu_height(&offline) < 370);
+
+            let external = tray_menu_entries(&running_summary, false);
+            assert!(external.iter().all(|entry| entry.command != CMD_STOP));
+            assert!(external.iter().all(|entry| entry.command != CMD_RESTART));
+            assert!(external.iter().all(|entry| entry.command != CMD_START));
+            assert!(external.iter().any(|entry| {
+                entry.command == CMD_QUIT && entry.descriptor.detail == "Close tray"
+            }));
+        }
+
+        #[test]
+        fn tray_snapshot_summary_reads_active_profile_and_diagnostics() {
+            let snapshot = serde_json::from_str::<TraySnapshotDto>(
+                r#"{
+                    "status":{
+                        "version":"0.2.0",
+                        "healthy":true,
+                        "active_profile_id":"forza-horizon",
+                        "active_adapter_id":null
+                    },
+                    "profiles":[
+                        {"id":"forza-horizon","name":"Base","built_in":true,"active":true},
+                        {"id":"forza-horizon-immersive","name":"Immersive","built_in":true,"active":false}
+                    ],
+                    "controllers":[
+                        {"id":"controller-0001","name":"Edge","model":"dualsense_edge","transport":"bluetooth","connected":true}
+                    ],
+                    "profileResolution":{"controllerId":"controller-0001"},
+                    "diagnostics":{
+                        "loopback_only":true,
+                        "hardware_required":false,
+                        "checks":[
+                            {"name":"agent","status":"ok","detail":"ready"},
+                            {"name":"hid","status":"connected","detail":"ready"}
+                        ]
+                    }
+                }"#,
+            )
+            .expect("snapshot subset parses");
+            let summary = tray_health_summary_from_snapshot(&snapshot);
+
+            assert_eq!(summary.agent_label, "Agent Online");
+            assert_eq!(summary.agent_detail, "v0.2.0 - profile ready");
+            assert_eq!(summary.profile_label, "Profile: Base");
+            assert_eq!(summary.profile_detail, "forza-horizon");
+            assert_eq!(summary.controller_label, "Controller: Edge");
+            assert_eq!(summary.controller_detail, "DualSense Edge / Bluetooth");
+            assert_eq!(summary.diagnostics_label, "Diagnostics Clear");
+            assert_eq!(
+                fallback_profile_name("forza-horizon-immersive"),
+                "Immersive"
+            );
         }
 
         #[test]

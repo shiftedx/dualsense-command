@@ -75,6 +75,7 @@ pnpm-debug.log*
 /docs/*experiment*.md
 /docs/*validation*.md
 /docs/*handoff*.md
+!/docs/production-readiness-plan.md
 
 # Release/signing artifacts
 /release/

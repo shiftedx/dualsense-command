@@ -1218,6 +1218,38 @@ small.dm-scope-chip-detail {
   font-size: 11px;
 }
 
+.dm-warning.update {
+  border-left-color: var(--actuation);
+  color: #D8ECFF;
+  background: rgba(0, 112, 204, 0.1);
+}
+
+.dm-warning-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.dm-warning a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(216, 236, 255, 0.32);
+  border-radius: 4px;
+  color: #D8ECFF;
+  font-size: 11px;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.dm-warning.update button {
+  border-color: rgba(216, 236, 255, 0.32);
+  color: #D8ECFF;
+}
+
 .dm-toast-stack {
   position: fixed;
   right: clamp(14px, 2vw, 28px);
@@ -3946,6 +3978,11 @@ small.dm-scope-chip-detail {
 .dm-action-row .dm-apply-button {
   flex: 0 0 70px;
   width: 70px;
+}
+
+.dm-action-row .dm-mini-button.wide {
+  flex-basis: 94px;
+  width: 94px;
 }
 
 .dm-mini-button {

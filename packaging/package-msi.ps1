@@ -294,6 +294,33 @@ $stopScript = @"
 "%SystemRoot%\System32\taskkill.exe" /IM dscc-tray.exe /F /T >nul 2>nul
 "@
 
+$backupStateScript = @"
+@echo off
+setlocal
+set "DSCC_VERSION=%~1"
+if "%DSCC_VERSION%"=="" set "DSCC_VERSION=unknown"
+
+call :BackupState "%APPDATA%\DualSenseCommand\DualSenseCommandCenter\config"
+
+if not "%DSCC_CONFIG_DIR%"=="" (
+    call :BackupState "%DSCC_CONFIG_DIR%"
+)
+
+exit /b 0
+
+:BackupState
+set "CONFIG_DIR=%~1"
+if "%CONFIG_DIR%"=="" exit /b 0
+set "STATE_FILE=%CONFIG_DIR%\state.json"
+if not exist "%STATE_FILE%" exit /b 0
+set "BACKUP_FILE=%CONFIG_DIR%\state.preinstall-%DSCC_VERSION%.json"
+if exist "%BACKUP_FILE%" (
+    set "BACKUP_FILE=%CONFIG_DIR%\state.preinstall-%DSCC_VERSION%-%RANDOM%.json"
+)
+copy /Y "%STATE_FILE%" "%BACKUP_FILE%" >nul 2>nul
+exit /b 0
+"@
+
 $readme = @"
 DualSense Command Center test build
 
@@ -305,9 +332,11 @@ DualSense Command Center test build
 6. Hardware output is enabled by default when the agent starts.
 7. For Forza testing, enable Data Out in-game and point it at 127.0.0.1 port 5300.
 8. The local UI opens at http://127.0.0.1:43473/.
+9. During install/upgrade, DSCC backs up persisted user state to state.preinstall-$Version.json when state.json exists.
 "@
 
 Add-TextFile -Path (Join-Path $stagingRoot "Stop DSCC.cmd") -Content $stopScript
+Add-TextFile -Path (Join-Path $stagingRoot "Backup DSCC State.cmd") -Content $backupStateScript
 Add-TextFile -Path (Join-Path $stagingRoot "README_TESTING.txt") -Content $readme
 
 $componentRefs = [System.Collections.Generic.List[string]]::new()
@@ -373,11 +402,13 @@ $componentRefText
 
     <CustomAction Id="StopExistingAgent" Directory="TARGETDIR" ExeCommand="&quot;[SystemFolder]taskkill.exe&quot; /IM dscc-agent.exe /F /T" Execute="immediate" Return="ignore" Impersonate="yes" />
     <CustomAction Id="StopExistingTray" Directory="TARGETDIR" ExeCommand="&quot;[SystemFolder]taskkill.exe&quot; /IM dscc-tray.exe /F /T" Execute="immediate" Return="ignore" Impersonate="yes" />
+    <CustomAction Id="BackupPersistedState" Directory="INSTALLFOLDER" ExeCommand="&quot;[INSTALLFOLDER]Backup DSCC State.cmd&quot; &quot;$Version&quot;" Execute="immediate" Return="ignore" Impersonate="yes" />
     <CustomAction Id="LaunchTrayAfterInstall" Directory="INSTALLFOLDER" ExeCommand="&quot;[INSTALLFOLDER]dscc-tray.exe&quot;" Return="asyncNoWait" Impersonate="yes" />
     <InstallExecuteSequence>
       <Custom Action="StopExistingAgent" Before="InstallValidate">NOT REMOVE</Custom>
       <Custom Action="StopExistingTray" After="StopExistingAgent">NOT REMOVE</Custom>
-      <Custom Action="LaunchTrayAfterInstall" After="InstallFinalize">NOT Installed</Custom>
+      <Custom Action="BackupPersistedState" After="InstallFinalize">NOT REMOVE</Custom>
+      <Custom Action="LaunchTrayAfterInstall" After="BackupPersistedState">NOT Installed</Custom>
     </InstallExecuteSequence>
   </Product>
 </Wix>
@@ -392,7 +423,7 @@ $wixObjPath = Join-Path $wixRoot "DualSenseCommandCenter.wixobj"
 if ($LASTEXITCODE -ne 0) {
     throw "WiX candle failed with exit code $LASTEXITCODE."
 }
-& $wixTools.Light -nologo -spdb -sice:ICE91 -out $msiPath $wixObjPath
+& $wixTools.Light -nologo -spdb -sice:ICE61 -sice:ICE91 -out $msiPath $wixObjPath
 if ($LASTEXITCODE -ne 0) {
     throw "WiX light failed with exit code $LASTEXITCODE."
 }
