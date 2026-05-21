@@ -204,6 +204,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v6
       - uses: actions/download-artifact@v6
         with:
           path: release-artifacts
@@ -230,6 +231,7 @@ jobs:
           set -euo pipefail
           mapfile -t files < <(find release-artifacts -type f | sort)
           gh release create "${GITHUB_REF_NAME}" "${files[@]}" \
+            --repo "${GITHUB_REPOSITORY}" \
             --draft \
             --prerelease \
             --title "DualSense Command Center ${GITHUB_REF_NAME}" \
