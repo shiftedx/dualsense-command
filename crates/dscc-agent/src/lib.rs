@@ -9910,15 +9910,24 @@ fn udp_adapter_bind_addr(adapter: &UdpTelemetryAdapter) -> SocketAddr {
     }
 }
 
+#[cfg(any(target_os = "windows", test))]
 const ASSETTO_PHYSICS_MIN_LEN: usize = 120;
+#[cfg(any(target_os = "windows", test))]
 const ASSETTO_GRAPHICS_MIN_LEN: usize = 12;
+#[cfg(any(target_os = "windows", test))]
 const ASSETTO_STATIC_MAX_RPM_OFFSET: usize = 412;
+#[cfg(any(target_os = "windows", test))]
 const ASSETTO_STATIC_MIN_LEN: usize = ASSETTO_STATIC_MAX_RPM_OFFSET + 4;
+#[cfg(any(target_os = "windows", test))]
 const ASSETTO_AC_LIVE: i32 = 2;
+#[cfg(any(target_os = "windows", test))]
 const ASSETTO_AC_PAUSE: i32 = 3;
+#[cfg(any(target_os = "windows", test))]
 const ASSETTO_DEFAULT_MAX_RPM: f64 = 8_000.0;
+#[cfg(any(target_os = "windows", test))]
 const STANDARD_GRAVITY_MS2: f64 = 9.80665;
 
+#[cfg(any(target_os = "windows", test))]
 #[derive(Clone, Copy)]
 struct AssettoSharedMemoryPages<'a> {
     physics: &'a [u8],
@@ -9926,6 +9935,7 @@ struct AssettoSharedMemoryPages<'a> {
     static_page: Option<&'a [u8]>,
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn parse_assetto_shared_memory_pages(
     pages: AssettoSharedMemoryPages<'_>,
     sequence: u64,
@@ -10021,6 +10031,7 @@ fn parse_assetto_shared_memory_pages(
     Some((pages.physics.len(), updates))
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn assetto_game_state(
     graphics_status: Option<i32>,
     speed_kmh: f64,
@@ -10039,14 +10050,17 @@ fn assetto_game_state(
     }
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn assetto_display_gear(raw_gear: i32) -> f64 {
     f64::from(raw_gear.saturating_sub(1).max(0))
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn assetto_steer_unit(steer_angle: f64) -> f64 {
     (steer_angle / 0.75).clamp(-1.0, 1.0)
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn read_f32_array_abs(packet: &[u8], offset: usize, count: usize) -> Option<Vec<f64>> {
     (0..count)
         .map(|index| read_le_f32_f64(packet, offset + index * 4).map(|value| value.abs()))
@@ -10060,14 +10074,17 @@ fn signal_scaled_value(value: f64, input_min: f64, input_max: f64) -> f64 {
     ((value - input_min) / (input_max - input_min)).clamp(0.0, 1.0)
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn finite_unit(value: f32) -> f64 {
     finite_f64(f64::from(value)).clamp(0.0, 1.0)
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn finite_non_negative(value: f64) -> f64 {
     finite_f64(value).max(0.0)
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn finite_f64(value: f64) -> f64 {
     if value.is_finite() {
         value
@@ -10076,18 +10093,22 @@ fn finite_f64(value: f64) -> f64 {
     }
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn read_le_bytes<const N: usize>(packet: &[u8], offset: usize) -> Option<[u8; N]> {
     packet.get(offset..offset + N)?.try_into().ok()
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn read_le_i32(packet: &[u8], offset: usize) -> Option<i32> {
     Some(i32::from_le_bytes(read_le_bytes(packet, offset)?))
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn read_le_f32(packet: &[u8], offset: usize) -> Option<f32> {
     Some(f32::from_le_bytes(read_le_bytes(packet, offset)?))
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn read_le_f32_f64(packet: &[u8], offset: usize) -> Option<f64> {
     Some(finite_f64(f64::from(read_le_f32(packet, offset)?)))
 }
