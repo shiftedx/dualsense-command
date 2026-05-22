@@ -3602,6 +3602,27 @@ small.dm-scope-chip-detail {
   vector-effect: non-scaling-stroke;
 }
 
+.dm-trigger-curve .curve-control-point {
+  cursor: grab;
+  fill: #f8fafc;
+  stroke: var(--actuation);
+  stroke-width: 1.05;
+  vector-effect: non-scaling-stroke;
+}
+
+.dm-trigger-curve .curve-control-point.active {
+  cursor: grabbing;
+  fill: var(--actuation);
+  stroke: #f8fafc;
+  stroke-width: 1.25;
+}
+
+.dm-trigger-curve .curve-control-point.locked {
+  cursor: default;
+  fill: rgba(226, 232, 240, 0.72);
+  opacity: 0.72;
+}
+
 .dm-trigger-curve .curve-crosshair {
   stroke: rgba(226, 232, 240, 0.48);
   stroke-width: 0.85;
@@ -3624,7 +3645,7 @@ small.dm-scope-chip-detail {
 
 .dm-slider-bank {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -3650,6 +3671,60 @@ small.dm-scope-chip-detail {
   color: var(--haptic);
   font-size: 12px;
   text-align: right;
+}
+
+.dm-curve-point-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.dm-curve-point-row > span {
+  color: var(--tungsten);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.dm-curve-point-actions {
+  align-items: center;
+  display: grid;
+  gap: 7px;
+  grid-template-columns: 26px minmax(28px, auto) 26px;
+  justify-content: end;
+  min-width: 0;
+}
+
+.dm-curve-point-actions code {
+  color: var(--haptic);
+  font-size: 12px;
+  text-align: center;
+}
+
+.dm-icon-button {
+  align-items: center;
+  aspect-ratio: 1;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--text);
+  cursor: pointer;
+  display: inline-grid;
+  height: 26px;
+  justify-content: center;
+  padding: 0;
+}
+
+.dm-icon-button:hover:not(:disabled) {
+  border-color: rgba(0, 112, 204, 0.78);
+  color: #ffffff;
+}
+
+.dm-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
 }
 
 .dm-range,
@@ -4473,6 +4548,10 @@ small.dm-scope-chip-detail {
   .dm-curve-frame {
     height: 180px;
   }
+
+  .dm-slider-bank {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 720px) {
@@ -4496,6 +4575,10 @@ small.dm-scope-chip-detail {
     width: 100%;
     padding: 0 8px;
     font-size: 11px;
+  }
+
+  .dm-slider-bank {
+    grid-template-columns: 1fr;
   }
 
   .dm-curve-module {

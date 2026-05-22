@@ -357,10 +357,17 @@ interface TriggerConfiguration {
   r2To: number;
   l2Curve: number;
   r2Curve: number;
+  l2CurvePoints: TriggerCurvePoint[];
+  r2CurvePoints: TriggerCurvePoint[];
   effect: string;
   intensity: string;
   vibration: string;
   vibrationMode: string;
+}
+
+export interface TriggerCurvePoint {
+  input: number;
+  output: number;
 }
 
 interface LightbarConfiguration {

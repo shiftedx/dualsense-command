@@ -112,6 +112,20 @@ export const mockControllerConfig: ControllerConfiguration = {
     r2To: 100,
     l2Curve: 1.45,
     r2Curve: 2.1,
+    l2CurvePoints: [
+      { input: 0, output: 0 },
+      { input: 25, output: 13 },
+      { input: 50, output: 37 },
+      { input: 75, output: 66 },
+      { input: 100, output: 100 }
+    ],
+    r2CurvePoints: [
+      { input: 0, output: 0 },
+      { input: 25, output: 5 },
+      { input: 50, output: 23 },
+      { input: 75, output: 55 },
+      { input: 100, output: 100 }
+    ],
     effect: 'Adaptive resistance',
     intensity: 'Strong (Standard)',
     vibration: 'Medium',
@@ -153,6 +167,20 @@ export const mockProfileConfigs: Record<string, MockEditableControllerConfig> = 
       ...mockControllerConfig.trigger,
       l2Curve: 1.2,
       r2Curve: 1.65,
+      l2CurvePoints: [
+        { input: 0, output: 0 },
+        { input: 30, output: 24 },
+        { input: 60, output: 54 },
+        { input: 85, output: 82 },
+        { input: 100, output: 100 }
+      ],
+      r2CurvePoints: [
+        { input: 0, output: 0 },
+        { input: 35, output: 18 },
+        { input: 70, output: 56 },
+        { input: 90, output: 82 },
+        { input: 100, output: 100 }
+      ],
       intensity: 'Medium',
       vibration: 'Low',
       vibrationMode: 'Deep thump'

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Cable, CopyPlus, ExternalLink, RefreshCw, RotateCcw, Save } from '@lucide/svelte';
+  import { Cable, CopyPlus, ExternalLink, Minus, Plus, RefreshCw, RotateCcw, Save } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import Tooltip from './components/Tooltip.svelte';
   import InitialBadge from './components/InitialBadge.svelte';
@@ -69,7 +69,8 @@
     SteamInputBinding,
     SteamInputLayout,
     SteamLibraryEntry,
-    SupportedGame
+    SupportedGame,
+    TriggerCurvePoint
   } from './lib/types';
 
   type ForzaEffectMeta = {
@@ -608,8 +609,11 @@
   let r2To = 100;
   let l2Curve = 1.35;
   let r2Curve = 2.25;
+  let l2CurvePoints: TriggerCurvePoint[] = [];
+  let r2CurvePoints: TriggerCurvePoint[] = [];
   let curveHover: { side: TriggerSide; x: number; y: number; left: number; top: number } | null = null;
   let curveDragSide: TriggerSide | null = null;
+  let curveDragPoint: { side: TriggerSide; index: number } | null = null;
   let triggerCurveDisplayMode: TriggerCurveDisplayMode = 'base';
   let activeView: AppView = 'games';
   let triggerEffect = 'Adaptive resistance';
@@ -1213,8 +1217,11 @@
     baselineForce: number;
     normalForce: number;
     endstopForce: number;
+    points: TriggerCurvePoint[];
   };
   const defaultTriggerCurve = (side: TriggerSide) => (side === 'l2' ? 1.35 : 2.25);
+  const TRIGGER_CURVE_POINT_MIN = 4;
+  const TRIGGER_CURVE_POINT_MAX = 8;
 
   const appViewFromHash = (): AppView => {
     if (typeof window === 'undefined') return 'games';
@@ -1245,6 +1252,51 @@
     const numeric = typeof value === 'number' ? value : Number(value);
     const safe = Number.isFinite(numeric) ? numeric : fallback;
     return Math.round(clamp(safe, 0.5, 3.5) * 100) / 100;
+  };
+
+  const triggerCurvePointsFromCurve = (curve: number): TriggerCurvePoint[] =>
+    [0, 25, 50, 75, 100].map((input) => ({
+      input,
+      output: normalizeTriggerPercent(Math.pow(input / 100, curve) * 100)
+    }));
+
+  const normalizeTriggerCurvePoints = (
+    points: TriggerCurvePoint[] | undefined,
+    fallbackCurve = 1.35
+  ): TriggerCurvePoint[] => {
+    if (!points || points.length < TRIGGER_CURVE_POINT_MIN) {
+      return triggerCurvePointsFromCurve(fallbackCurve);
+    }
+
+    const deduped = new Map<number, TriggerCurvePoint>();
+    for (const point of points) {
+      const input = normalizeTriggerPercent(point?.input ?? 0);
+      const output = normalizeTriggerPercent(point?.output ?? 0);
+      deduped.set(input, { input, output });
+    }
+    deduped.set(0, { input: 0, output: 0 });
+    deduped.set(100, { input: 100, output: 100 });
+    const sorted = [...deduped.values()].sort((a, b) => a.input - b.input);
+    if (sorted.length < TRIGGER_CURVE_POINT_MIN) return triggerCurvePointsFromCurve(fallbackCurve);
+    if (sorted.length <= TRIGGER_CURVE_POINT_MAX) return sorted;
+    return [sorted[0], ...sorted.slice(1, TRIGGER_CURVE_POINT_MAX - 1), sorted[sorted.length - 1]];
+  };
+
+  const triggerCurvePointOutput = (points: TriggerCurvePoint[], active: number) => {
+    const normalized = normalizeTriggerCurvePoints(points, 1);
+    const x = clampUnit(active);
+    for (let index = 0; index < normalized.length - 1; index += 1) {
+      const left = normalized[index];
+      const right = normalized[index + 1];
+      const leftInput = left.input / 100;
+      const rightInput = right.input / 100;
+      if (x >= leftInput && x <= rightInput) {
+        if (rightInput <= leftInput) return right.output / 100;
+        const ratio = (x - leftInput) / (rightInput - leftInput);
+        return (left.output + (right.output - left.output) * ratio) / 100;
+      }
+    }
+    return (normalized[normalized.length - 1]?.output ?? 0) / 100;
   };
 
   const toastToneForMessage = (message: string, fallback: ToastTone = 'success'): ToastTone => {
@@ -1447,8 +1499,10 @@
     const value = normalizeTriggerCurve(rawValue, defaultTriggerCurve(side));
     if (side === 'l2') {
       l2Curve = value;
+      l2CurvePoints = triggerCurvePointsFromCurve(value);
     } else {
       r2Curve = value;
+      r2CurvePoints = triggerCurvePointsFromCurve(value);
     }
     scheduleBaseFeelTestRefresh();
     scheduleLiveControllerConfigSync();
@@ -1808,6 +1862,8 @@
         r2To: normalizeTriggerPercent(config.trigger.r2To),
         l2Curve: normalizeTriggerCurve(config.trigger.l2Curve, defaultTriggerCurve('l2')),
         r2Curve: normalizeTriggerCurve(config.trigger.r2Curve, defaultTriggerCurve('r2')),
+        l2CurvePoints: normalizeTriggerCurvePoints(config.trigger.l2CurvePoints, normalizeTriggerCurve(config.trigger.l2Curve, defaultTriggerCurve('l2'))),
+        r2CurvePoints: normalizeTriggerCurvePoints(config.trigger.r2CurvePoints, normalizeTriggerCurve(config.trigger.r2Curve, defaultTriggerCurve('r2'))),
         effect: config.trigger.effect,
         intensity: config.trigger.intensity,
         vibration: config.trigger.vibration,
@@ -1955,6 +2011,7 @@
     fromRaw: number | string,
     toRaw: number | string,
     curveRaw: number | string,
+    pointsRaw: TriggerCurvePoint[],
     fallbackCurve: number,
     effect: string,
     intensity: string,
@@ -1965,6 +2022,7 @@
 
     const { start, end } = triggerRangeUnitValuesFor(fromRaw, toRaw);
     const curve = normalizeTriggerCurve(curveRaw, fallbackCurve);
+    const points = normalizeTriggerCurvePoints(pointsRaw, curve);
 
     if (side === 'l2') {
       const brake = forzaEffectForGraph('brake_resistance', effects);
@@ -1976,6 +2034,7 @@
         end,
         wall: brakeOvertravelWallPosition(start, end),
         curve,
+        points,
         baselineForce: scaledUnitForGraph(FORZA_BRAKE_BASELINE_FORCE, scalar),
         normalForce: scaledUnitForGraph(FORZA_BRAKE_NORMAL_FORCE, scalar),
         endstopForce: scaledUnitForGraph(FORZA_BRAKE_ENDSTOP_FORCE, scalar * FORZA_BRAKE_ENDSTOP_FORCE_BOOST)
@@ -1994,6 +2053,7 @@
       wall,
       rampStart,
       curve,
+      points,
       baselineForce: scaledUnitForGraph(FORZA_THROTTLE_BASELINE_FORCE, scalar),
       normalForce: scaledUnitForGraph(FORZA_THROTTLE_NORMAL_FORCE, scalar),
       endstopForce: scaledUnitForGraph(FORZA_THROTTLE_ENDSTOP_FORCE, scalar * FORZA_THROTTLE_ENDSTOP_FORCE_BOOST)
@@ -2008,7 +2068,10 @@
     if (side === 'r2' && model.rampStart !== undefined && model.rampStart < model.wall && x >= model.rampStart) {
       return clampUnit(signalCurveForGraph(x, model.rampStart, model.wall, model.normalForce, model.endstopForce, FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE));
     }
-    return clampUnit(signalCurveForGraph(x, model.start, model.end, model.baselineForce, model.normalForce, model.curve));
+    const editableEnd = side === 'r2' && model.rampStart !== undefined ? model.rampStart : model.wall;
+    const active = clampUnit((x - model.start) / (Math.max(model.start + 0.01, editableEnd) - model.start));
+    const curved = triggerCurvePointOutput(model.points, active);
+    return clampUnit(model.baselineForce + (model.normalForce - model.baselineForce) * curved);
   };
 
   const triggerCurveValueFor = (
@@ -2017,6 +2080,7 @@
     fromRaw: number | string,
     toRaw: number | string,
     curveRaw: number | string,
+    pointsRaw: TriggerCurvePoint[],
     fallbackCurve: number,
     effect: string,
     intensity: string,
@@ -2027,7 +2091,7 @@
       return forzaTriggerCurveValueFor(
         side,
         position,
-        forzaTriggerForceModelFor(side, fromRaw, toRaw, curveRaw, fallbackCurve, effect, intensity, effects)
+        forzaTriggerForceModelFor(side, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, effects)
       );
     }
 
@@ -2035,23 +2099,25 @@
     const start = range.from / 100;
     const end = Math.max(start + 0.01, range.to / 100);
     const curve = normalizeTriggerCurve(curveRaw, fallbackCurve);
+    const points = normalizeTriggerCurvePoints(pointsRaw, curve);
     const strength = triggerStrengthScalarFor(effect, intensity);
     if (strength <= 0) return 0;
     const x = clampUnit(position);
-    const active = x <= start ? 0 : Math.pow(clampUnit((x - start) / (end - start)), curve);
+    const active = x <= start ? 0 : triggerCurvePointOutput(points, clampUnit((x - start) / (end - start)));
     return clampUnit(active * strength);
   };
 
   const triggerCurveValue = (side: TriggerSide, position: number) =>
     side === 'l2'
-      ? triggerCurveValueFor(side, position, l2From, l2To, l2Curve, defaultTriggerCurve('l2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects)
-      : triggerCurveValueFor(side, position, r2From, r2To, r2Curve, defaultTriggerCurve('r2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects);
+      ? triggerCurveValueFor(side, position, l2From, l2To, l2Curve, l2CurvePoints, defaultTriggerCurve('l2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects)
+      : triggerCurveValueFor(side, position, r2From, r2To, r2Curve, r2CurvePoints, defaultTriggerCurve('r2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects);
 
   const triggerCurvePathFor = (
     side: TriggerSide,
     fromRaw: number | string,
     toRaw: number | string,
     curveRaw: number | string,
+    pointsRaw: TriggerCurvePoint[],
     fallbackCurve: number,
     effect: string,
     intensity: string,
@@ -2062,7 +2128,7 @@
     const samplePositions = Array.from({ length: 101 }, (_, index) => index / 100);
     const model =
       displayMode === 'forza'
-        ? forzaTriggerForceModelFor(side, fromRaw, toRaw, curveRaw, fallbackCurve, effect, intensity, effects)
+        ? forzaTriggerForceModelFor(side, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, effects)
         : null;
     if (model) {
       samplePositions.push(model.start, model.end, model.wall);
@@ -2074,10 +2140,53 @@
     const points = [...new Set(samplePositions)]
       .sort((a, b) => a - b)
       .map((x) => {
-        const y = 1 - triggerCurveValueFor(side, x, fromRaw, toRaw, curveRaw, fallbackCurve, effect, intensity, displayMode, effects);
+        const y = 1 - triggerCurveValueFor(side, x, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, displayMode, effects);
         return `${(x * 100).toFixed(2)},${(y * 100).toFixed(2)}`;
       });
     return `M ${points.join(' L ')}`;
+  };
+
+  const curveControlPointsFor = (
+    side: TriggerSide,
+    fromRaw: number | string,
+    toRaw: number | string,
+    curveRaw: number | string,
+    pointsRaw: TriggerCurvePoint[],
+    fallbackCurve: number,
+    effect: string,
+    intensity: string,
+    displayMode: TriggerCurveDisplayMode,
+    effects: ForzaEffectConfiguration[]
+  ) => {
+    const range = triggerRangeValuesFor(fromRaw, toRaw);
+    const start = range.from / 100;
+    const end = Math.max(start + 0.01, range.to / 100);
+    const curve = normalizeTriggerCurve(curveRaw, fallbackCurve);
+    const points = normalizeTriggerCurvePoints(pointsRaw, curve);
+    const model =
+      displayMode === 'forza'
+        ? forzaTriggerForceModelFor(side, fromRaw, toRaw, curveRaw, points, fallbackCurve, effect, intensity, effects)
+        : null;
+    const editableEnd = model
+      ? side === 'r2' && model.rampStart !== undefined
+        ? model.rampStart
+        : model.wall
+      : end;
+    const span = Math.max(0.01, editableEnd - start);
+
+    return points.map((point, index) => {
+      const active = point.input / 100;
+      const x = clampUnit(start + span * active);
+      const y = 1 - triggerCurveValueFor(side, x, fromRaw, toRaw, curveRaw, points, fallbackCurve, effect, intensity, displayMode, effects);
+      return {
+        index,
+        input: point.input,
+        output: point.output,
+        locked: index === 0 || index === points.length - 1,
+        x: (x * 100).toFixed(2),
+        y: (clampUnit(y) * 100).toFixed(2)
+      };
+    });
   };
 
   const triggerCurveView = (
@@ -2085,6 +2194,7 @@
     fromRaw: number | string,
     toRaw: number | string,
     curveRaw: number | string,
+    pointsRaw: TriggerCurvePoint[],
     fallbackCurve: number,
     livePress: number,
     effect: string,
@@ -2094,19 +2204,21 @@
   ) => {
     const range = triggerRangeValuesFor(fromRaw, toRaw);
     const liveX = clampUnit(livePress) * 100;
-    const liveY = 100 - triggerCurveValueFor(side, livePress, fromRaw, toRaw, curveRaw, fallbackCurve, effect, intensity, displayMode, effects) * 100;
+    const liveY = 100 - triggerCurveValueFor(side, livePress, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, displayMode, effects) * 100;
+    const curvePoints = curveControlPointsFor(side, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, displayMode, effects);
     return {
       rangeStart: range.from.toFixed(2),
       rangeEnd: range.to.toFixed(2),
       rangeWidth: range.width.toFixed(2),
-      path: triggerCurvePathFor(side, fromRaw, toRaw, curveRaw, fallbackCurve, effect, intensity, displayMode, effects, livePress),
+      path: triggerCurvePathFor(side, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, displayMode, effects, livePress),
+      curvePoints,
       liveX: liveX.toFixed(2),
       liveY: liveY.toFixed(2)
     };
   };
 
-  $: l2CurveView = triggerCurveView('l2', l2From, l2To, l2Curve, defaultTriggerCurve('l2'), l2LivePress, triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects);
-  $: r2CurveView = triggerCurveView('r2', r2From, r2To, r2Curve, defaultTriggerCurve('r2'), r2LivePress, triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects);
+  $: l2CurveView = triggerCurveView('l2', l2From, l2To, l2Curve, l2CurvePoints, defaultTriggerCurve('l2'), l2LivePress, triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects);
+  $: r2CurveView = triggerCurveView('r2', r2From, r2To, r2Curve, r2CurvePoints, defaultTriggerCurve('r2'), r2LivePress, triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects);
 
   const triggerPressLabel = (value: number) => `${Math.round(clampUnit(value) * 100)}%`;
   const showTriggerPress = (_side: 'l2' | 'r2', value: number) =>
@@ -2130,7 +2242,7 @@
         : `${side} reaches full configured force at ${value}% trigger travel. Throttle stays light first, then ramps hard from about ${throttleOvertravelGuardPoint(value)}% into the end wall so shift thumps keep travel to punch through.`;
 
   const triggerCurveTooltip = (side: 'L2' | 'R2', value: number) =>
-    `${side} curve is ${value.toFixed(2)}. 1.00 is linear; lower values bring resistance in earlier, while higher values keep the pedal lighter at first and ramp harder near the end.`;
+    `${side} curve is ${value.toFixed(2)}. Drag the dots for a custom response, or move this slider to regenerate a smooth exponent curve.`;
 
   const curveGraphPointFromPointer = (event: PointerEvent, target: HTMLElement) => {
     const rect = target.getBoundingClientRect();
@@ -2150,31 +2262,119 @@
     };
   };
 
-  const curveValueFromGraphPoint = (side: TriggerSide, input: number, output: number) => {
+  const curvePointFromGraphPoint = (side: TriggerSide, input: number, output: number) => {
     const range = triggerRangeValues(side);
     const start = range.from / 100;
     const end = Math.max(start + 0.01, range.to / 100);
-    let activeTravel = clamp((input - start) / (end - start), 0.03, 0.97);
+    let activeTravel = clamp((input - start) / (end - start), 0.01, 0.99);
     let normalizedOutput = output;
 
     if (triggerCurveDisplayMode === 'forza') {
       const model =
         side === 'l2'
-          ? forzaTriggerForceModelFor(side, l2From, l2To, l2Curve, defaultTriggerCurve(side), triggerEffect, triggerIntensity, forzaEffects)
-          : forzaTriggerForceModelFor(side, r2From, r2To, r2Curve, defaultTriggerCurve(side), triggerEffect, triggerIntensity, forzaEffects);
+          ? forzaTriggerForceModelFor(side, l2From, l2To, l2Curve, l2CurvePoints, defaultTriggerCurve(side), triggerEffect, triggerIntensity, forzaEffects)
+          : forzaTriggerForceModelFor(side, r2From, r2To, r2Curve, r2CurvePoints, defaultTriggerCurve(side), triggerEffect, triggerIntensity, forzaEffects);
       if (model && model.normalForce > model.baselineForce) {
-        const editableEnd = Math.min(model.end, model.rampStart ?? model.wall);
+        const editableEnd = model.rampStart ?? model.wall;
         const editableInput = clamp(input, model.start + 0.0001, Math.max(model.start + 0.0001, editableEnd - 0.0001));
-        activeTravel = clamp((editableInput - model.start) / (model.end - model.start), 0.03, 0.97);
-        normalizedOutput = clamp((Math.min(output, model.normalForce) - model.baselineForce) / (model.normalForce - model.baselineForce), 0.02, 0.98);
+        activeTravel = clamp((editableInput - model.start) / (editableEnd - model.start), 0.01, 0.99);
+        normalizedOutput = clamp((Math.min(output, model.normalForce) - model.baselineForce) / (model.normalForce - model.baselineForce), 0.01, 0.99);
       }
     } else {
       const strength = triggerStrengthScalar();
-      normalizedOutput = clamp(strength > 0 ? output / strength : output, 0.02, 0.98);
+      normalizedOutput = clamp(strength > 0 ? output / strength : output, 0.01, 0.99);
     }
 
-    normalizedOutput = clamp(normalizedOutput, 0.02, 0.98);
-    return normalizeTriggerCurve(Math.log(normalizedOutput) / Math.log(activeTravel), defaultTriggerCurve(side));
+    return {
+      input: normalizeTriggerPercent(activeTravel * 100),
+      output: normalizeTriggerPercent(normalizedOutput * 100)
+    };
+  };
+
+  const pointsForSide = (side: TriggerSide) => (side === 'l2' ? l2CurvePoints : r2CurvePoints);
+  const setPointsForSide = (side: TriggerSide, points: TriggerCurvePoint[]) => {
+    const normalized = normalizeTriggerCurvePoints(points, side === 'l2' ? l2Curve : r2Curve);
+    if (side === 'l2') {
+      l2CurvePoints = normalized;
+    } else {
+      r2CurvePoints = normalized;
+    }
+    scheduleBaseFeelTestRefresh();
+    scheduleLiveControllerConfigSync();
+  };
+
+  const setCurvePoint = (side: TriggerSide, index: number, point: TriggerCurvePoint) => {
+    const current = normalizeTriggerCurvePoints(pointsForSide(side), side === 'l2' ? l2Curve : r2Curve);
+    if (index <= 0 || index >= current.length - 1) return index;
+    const previous = current[index - 1];
+    const next = current[index + 1];
+    current[index] = {
+      input: normalizeTriggerPercent(clamp(point.input, previous.input + 1, next.input - 1)),
+      output: normalizeTriggerPercent(point.output)
+    };
+    setPointsForSide(side, current);
+    return index;
+  };
+
+  const addOrSelectCurvePoint = (side: TriggerSide, point: TriggerCurvePoint) => {
+    const current = normalizeTriggerCurvePoints(pointsForSide(side), side === 'l2' ? l2Curve : r2Curve);
+    if (current.length >= TRIGGER_CURVE_POINT_MAX) {
+      let nearest = 1;
+      let distance = Number.POSITIVE_INFINITY;
+      for (let index = 1; index < current.length - 1; index += 1) {
+        const nextDistance = Math.abs(current[index].input - point.input);
+        if (nextDistance < distance) {
+          distance = nextDistance;
+          nearest = index;
+        }
+      }
+      return setCurvePoint(side, nearest, point);
+    }
+
+    const nextPoints = [...current, point].sort((a, b) => a.input - b.input);
+    const index = Math.max(1, Math.min(nextPoints.length - 2, nextPoints.findIndex((candidate) => candidate === point)));
+    setPointsForSide(side, nextPoints);
+    return index;
+  };
+
+  const addCurvePoint = (side: TriggerSide) => {
+    const current = normalizeTriggerCurvePoints(pointsForSide(side), side === 'l2' ? l2Curve : r2Curve);
+    if (current.length >= TRIGGER_CURVE_POINT_MAX) return;
+
+    let bestIndex = 0;
+    let bestGap = 0;
+    for (let index = 0; index < current.length - 1; index += 1) {
+      const gap = current[index + 1].input - current[index].input;
+      if (gap > bestGap) {
+        bestGap = gap;
+        bestIndex = index;
+      }
+    }
+    const left = current[bestIndex];
+    const right = current[bestIndex + 1];
+    const input = normalizeTriggerPercent((left.input + right.input) / 2);
+    const output = normalizeTriggerPercent((left.output + right.output) / 2);
+    setPointsForSide(side, [...current, { input, output }]);
+  };
+
+  const removeCurvePoint = (side: TriggerSide) => {
+    const current = normalizeTriggerCurvePoints(pointsForSide(side), side === 'l2' ? l2Curve : r2Curve);
+    if (current.length <= TRIGGER_CURVE_POINT_MIN) return;
+
+    let removeIndex = current.length - 2;
+    let smallestBend = Number.POSITIVE_INFINITY;
+    for (let index = 1; index < current.length - 1; index += 1) {
+      const left = current[index - 1];
+      const point = current[index];
+      const right = current[index + 1];
+      const expected = left.output + ((right.output - left.output) * (point.input - left.input)) / Math.max(1, right.input - left.input);
+      const bend = Math.abs(point.output - expected);
+      if (bend < smallestBend) {
+        smallestBend = bend;
+        removeIndex = index;
+      }
+    }
+    setPointsForSide(side, current.filter((_, index) => index !== removeIndex));
   };
 
   const updateCurveHover = (event: PointerEvent, side: TriggerSide) => {
@@ -2190,15 +2390,19 @@
     const target = event.currentTarget as HTMLElement;
     curveDragSide = side;
     target.setPointerCapture(event.pointerId);
+    let pointIndex = -1;
 
     const applyPoint = (pointerEvent: PointerEvent) => {
       const { x, output } = curveGraphPointFromPointer(pointerEvent, target);
-      setTriggerCurveValue(side, curveValueFromGraphPoint(side, x, output));
+      const point = curvePointFromGraphPoint(side, x, output);
+      pointIndex = pointIndex < 0 ? addOrSelectCurvePoint(side, point) : setCurvePoint(side, pointIndex, point);
+      curveDragPoint = { side, index: pointIndex };
       setCurveHover(side, x);
     };
 
     const stopDrag = () => {
       curveDragSide = null;
+      curveDragPoint = null;
       if (target.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId);
       target.removeEventListener('pointermove', applyPoint);
       target.removeEventListener('pointerup', stopDrag);
@@ -2209,6 +2413,35 @@
     target.addEventListener('pointermove', applyPoint);
     target.addEventListener('pointerup', stopDrag);
     target.addEventListener('pointercancel', stopDrag);
+  };
+
+  const handleCurvePointPointer = (event: PointerEvent, side: TriggerSide, index: number) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const frame = (event.currentTarget as SVGElement).closest('.dm-curve-frame') as HTMLElement | null;
+    if (!frame) return;
+    curveDragSide = side;
+    curveDragPoint = { side, index };
+    frame.setPointerCapture(event.pointerId);
+
+    const applyPoint = (pointerEvent: PointerEvent) => {
+      const { x, output } = curveGraphPointFromPointer(pointerEvent, frame);
+      setCurvePoint(side, index, curvePointFromGraphPoint(side, x, output));
+      setCurveHover(side, x);
+    };
+    const stopDrag = () => {
+      curveDragSide = null;
+      curveDragPoint = null;
+      if (frame.hasPointerCapture(event.pointerId)) frame.releasePointerCapture(event.pointerId);
+      frame.removeEventListener('pointermove', applyPoint);
+      frame.removeEventListener('pointerup', stopDrag);
+      frame.removeEventListener('pointercancel', stopDrag);
+    };
+
+    frame.addEventListener('pointermove', applyPoint);
+    frame.addEventListener('pointerup', stopDrag);
+    frame.addEventListener('pointercancel', stopDrag);
   };
 
   const clearCurveHover = (side: TriggerSide) => {
@@ -2223,6 +2456,8 @@
     r2To = Math.max(r2From, normalizeTriggerPercent(config.trigger.r2To));
     l2Curve = normalizeTriggerCurve(config.trigger.l2Curve, defaultTriggerCurve('l2'));
     r2Curve = normalizeTriggerCurve(config.trigger.r2Curve, defaultTriggerCurve('r2'));
+    l2CurvePoints = normalizeTriggerCurvePoints(config.trigger.l2CurvePoints, l2Curve);
+    r2CurvePoints = normalizeTriggerCurvePoints(config.trigger.r2CurvePoints, r2Curve);
     triggerEffect = config.trigger.effect;
     triggerIntensity = config.trigger.intensity;
     vibrationIntensity = config.trigger.vibration;
@@ -2339,6 +2574,8 @@
       r2To: 100,
       l2Curve: 1.35,
       r2Curve: 2.25,
+      l2CurvePoints: triggerCurvePointsFromCurve(1.35),
+      r2CurvePoints: triggerCurvePointsFromCurve(2.25),
       effect: 'Adaptive resistance',
       intensity: 'Strong (Standard)',
       vibration: 'Medium',
@@ -2418,6 +2655,8 @@
     r2To: 100,
     l2Curve: defaultTriggerCurve('l2'),
     r2Curve: defaultTriggerCurve('r2'),
+    l2CurvePoints: triggerCurvePointsFromCurve(defaultTriggerCurve('l2')),
+    r2CurvePoints: triggerCurvePointsFromCurve(defaultTriggerCurve('r2')),
     effect: 'Adaptive resistance',
     intensity: 'Strong (Standard)',
     vibration: 'Medium',
@@ -2431,6 +2670,8 @@
     r2To = Math.max(r2From, normalizeTriggerPercent(trigger.r2To));
     l2Curve = normalizeTriggerCurve(trigger.l2Curve, defaultTriggerCurve('l2'));
     r2Curve = normalizeTriggerCurve(trigger.r2Curve, defaultTriggerCurve('r2'));
+    l2CurvePoints = normalizeTriggerCurvePoints(trigger.l2CurvePoints, l2Curve);
+    r2CurvePoints = normalizeTriggerCurvePoints(trigger.r2CurvePoints, r2Curve);
     triggerEffect = trigger.effect;
     triggerIntensity = trigger.intensity;
     vibrationIntensity = trigger.vibration;
@@ -2460,6 +2701,8 @@
         r2To: Math.max(normalizeTriggerPercent(r2From), normalizeTriggerPercent(r2To)),
         l2Curve: normalizeTriggerCurve(l2Curve, defaultTriggerCurve('l2')),
         r2Curve: normalizeTriggerCurve(r2Curve, defaultTriggerCurve('r2')),
+        l2CurvePoints: normalizeTriggerCurvePoints(l2CurvePoints, l2Curve),
+        r2CurvePoints: normalizeTriggerCurvePoints(r2CurvePoints, r2Curve),
         effect: triggerEffect,
         intensity: triggerIntensity,
         vibration: vibrationIntensity,
@@ -3933,6 +4176,20 @@
                 <line class="curve-range-edge" x1={l2CurveView.rangeStart} y1="0" x2={l2CurveView.rangeStart} y2="100" />
                 <line class="curve-range-edge" x1={l2CurveView.rangeEnd} y1="0" x2={l2CurveView.rangeEnd} y2="100" />
                 <path class="curve-force" d={l2CurveView.path} />
+                {#each l2CurveView.curvePoints as point}
+                  <circle
+                    class:active={curveDragPoint?.side === 'l2' && curveDragPoint.index === point.index}
+                    class:locked={point.locked}
+                    class="curve-control-point"
+                    cx={point.x}
+                    cy={point.y}
+                    r={point.locked ? 1.7 : 2.25}
+                    role="button"
+                    aria-label="L2 curve control point"
+                    tabindex="-1"
+                    onpointerdown={(event) => !point.locked && handleCurvePointPointer(event, 'l2', point.index)}
+                  />
+                {/each}
                 {#if curveHover?.side === 'l2'}
                   <line class="curve-crosshair" x1={curveHover.left.toFixed(2)} y1="0" x2={curveHover.left.toFixed(2)} y2="100" />
                 {/if}
@@ -3970,6 +4227,22 @@
                   <code>{l2Curve.toFixed(2)}</code>
                 </label>
               </Tooltip>
+              <div class="dm-curve-point-row">
+                <span>Points</span>
+                <div class="dm-curve-point-actions">
+                  <Tooltip text="Remove the least dramatic editable control point." side="top" align="center">
+                    <button class="dm-icon-button" type="button" aria-label="Remove L2 curve point" disabled={l2CurvePoints.length <= TRIGGER_CURVE_POINT_MIN} onclick={() => removeCurvePoint('l2')}>
+                      <Minus size={14} />
+                    </button>
+                  </Tooltip>
+                  <code>{l2CurvePoints.length}</code>
+                  <Tooltip text="Add an editable control point to the widest curve segment." side="top" align="center">
+                    <button class="dm-icon-button" type="button" aria-label="Add L2 curve point" disabled={l2CurvePoints.length >= TRIGGER_CURVE_POINT_MAX} onclick={() => addCurvePoint('l2')}>
+                      <Plus size={14} />
+                    </button>
+                  </Tooltip>
+                </div>
+              </div>
             </div>
           </article>
 
@@ -3996,6 +4269,20 @@
                 <line class="curve-range-edge" x1={r2CurveView.rangeStart} y1="0" x2={r2CurveView.rangeStart} y2="100" />
                 <line class="curve-range-edge" x1={r2CurveView.rangeEnd} y1="0" x2={r2CurveView.rangeEnd} y2="100" />
                 <path class="curve-force" d={r2CurveView.path} />
+                {#each r2CurveView.curvePoints as point}
+                  <circle
+                    class:active={curveDragPoint?.side === 'r2' && curveDragPoint.index === point.index}
+                    class:locked={point.locked}
+                    class="curve-control-point"
+                    cx={point.x}
+                    cy={point.y}
+                    r={point.locked ? 1.7 : 2.25}
+                    role="button"
+                    aria-label="R2 curve control point"
+                    tabindex="-1"
+                    onpointerdown={(event) => !point.locked && handleCurvePointPointer(event, 'r2', point.index)}
+                  />
+                {/each}
                 {#if curveHover?.side === 'r2'}
                   <line class="curve-crosshair" x1={curveHover.left.toFixed(2)} y1="0" x2={curveHover.left.toFixed(2)} y2="100" />
                 {/if}
@@ -4033,6 +4320,22 @@
                   <code>{r2Curve.toFixed(2)}</code>
                 </label>
               </Tooltip>
+              <div class="dm-curve-point-row">
+                <span>Points</span>
+                <div class="dm-curve-point-actions">
+                  <Tooltip text="Remove the least dramatic editable control point." side="top" align="center">
+                    <button class="dm-icon-button" type="button" aria-label="Remove R2 curve point" disabled={r2CurvePoints.length <= TRIGGER_CURVE_POINT_MIN} onclick={() => removeCurvePoint('r2')}>
+                      <Minus size={14} />
+                    </button>
+                  </Tooltip>
+                  <code>{r2CurvePoints.length}</code>
+                  <Tooltip text="Add an editable control point to the widest curve segment." side="top" align="center">
+                    <button class="dm-icon-button" type="button" aria-label="Add R2 curve point" disabled={r2CurvePoints.length >= TRIGGER_CURVE_POINT_MAX} onclick={() => addCurvePoint('r2')}>
+                      <Plus size={14} />
+                    </button>
+                  </Tooltip>
+                </div>
+              </div>
             </div>
           </article>
         </div>
