@@ -31,7 +31,7 @@ use dscc_core::{
     ControllerFamily, ControllerId, ControllerInfo, ControllerOutputFrame, ControllerState,
     ControllerTransportKind, EffectEngine, EffectRule, EffectTarget, EffectTemplate,
     LightbarOutput, PlayerLedsOutput, Profile, RgbColor, RuleCondition, RumbleOutput, RumblePolicy,
-    TriggerOutput, ValueSource,
+    TriggerOutput, ValuePoint, ValueSource,
 };
 use dscc_device::{
     BatteryInfo as DeviceBatteryInfo, BatteryState as DeviceBatteryState,
@@ -153,6 +153,8 @@ const FORZA_SHIFT_THUMP_DEFAULT_INTENSITY: u8 = 255;
 const TRIGGER_CURVE_SCALE: f64 = 100.0;
 const TRIGGER_CURVE_MIN: u16 = 50;
 const TRIGGER_CURVE_MAX: u16 = 350;
+const TRIGGER_CURVE_POINT_MIN: usize = 4;
+const TRIGGER_CURVE_POINT_MAX: usize = 8;
 const FORZA_REV_LIMIT_RATIO: f64 = 0.93;
 const FORZA_SHIFT_WALL_FORM_AT: f64 = 0.15;
 const FORZA_SHIFT_FREQUENCY_HZ: f64 = 34.0;
@@ -343,6 +345,12 @@ fn forza_horizon_trigger_preset() -> TriggerConfig {
         r2_to: 100,
         l2_curve: TriggerCurve::from_ratio(FORZA_BRAKE_CURVE),
         r2_curve: TriggerCurve::from_ratio(FORZA_THROTTLE_CURVE),
+        l2_curve_points: trigger_curve_points_from_curve(TriggerCurve::from_ratio(
+            FORZA_BRAKE_CURVE,
+        )),
+        r2_curve_points: trigger_curve_points_from_curve(TriggerCurve::from_ratio(
+            FORZA_THROTTLE_CURVE,
+        )),
         effect: "Adaptive resistance".to_string(),
         intensity: "Strong (Standard)".to_string(),
         vibration: "Medium".to_string(),
@@ -1138,6 +1146,13 @@ impl<'de> Deserialize<'de> for TriggerCurve {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerCurvePoint {
+    pub input: u8,
+    pub output: u8,
+}
+
 fn default_l2_trigger_curve() -> TriggerCurve {
     TriggerCurve::default_l2()
 }
@@ -1146,11 +1161,108 @@ fn default_r2_trigger_curve() -> TriggerCurve {
     TriggerCurve::default_r2()
 }
 
+fn default_l2_trigger_curve_points() -> Vec<TriggerCurvePoint> {
+    trigger_curve_points_from_curve(TriggerCurve::default_l2())
+}
+
+fn default_r2_trigger_curve_points() -> Vec<TriggerCurvePoint> {
+    trigger_curve_points_from_curve(TriggerCurve::default_r2())
+}
+
+fn trigger_curve_points_from_curve(curve: TriggerCurve) -> Vec<TriggerCurvePoint> {
+    [0_u8, 25, 50, 75, 100]
+        .into_iter()
+        .map(|input| TriggerCurvePoint {
+            input,
+            output: ((f64::from(input) / 100.0).powf(curve.as_f64()) * 100.0)
+                .round()
+                .clamp(0.0, 100.0) as u8,
+        })
+        .collect()
+}
+
+fn normalize_trigger_curve_points(
+    points: Vec<TriggerCurvePoint>,
+    fallback_curve: TriggerCurve,
+) -> Vec<TriggerCurvePoint> {
+    if points.len() < TRIGGER_CURVE_POINT_MIN {
+        return trigger_curve_points_from_curve(fallback_curve);
+    }
+
+    let mut normalized: Vec<TriggerCurvePoint> = points
+        .into_iter()
+        .map(|point| TriggerCurvePoint {
+            input: point.input.min(100),
+            output: point.output.min(100),
+        })
+        .collect();
+    normalized.sort_by_key(|point| point.input);
+
+    let mut deduped: Vec<TriggerCurvePoint> = Vec::with_capacity(normalized.len());
+    for point in normalized {
+        if let Some(last) = deduped.last_mut() {
+            if last.input == point.input {
+                *last = point;
+                continue;
+            }
+        }
+        deduped.push(point);
+    }
+
+    if deduped.first().is_none_or(|point| point.input != 0) {
+        deduped.insert(
+            0,
+            TriggerCurvePoint {
+                input: 0,
+                output: 0,
+            },
+        );
+    } else if let Some(first) = deduped.first_mut() {
+        first.output = 0;
+    }
+    if deduped.last().is_none_or(|point| point.input != 100) {
+        deduped.push(TriggerCurvePoint {
+            input: 100,
+            output: 100,
+        });
+    } else if let Some(last) = deduped.last_mut() {
+        last.output = 100;
+    }
+
+    if deduped.len() < TRIGGER_CURVE_POINT_MIN {
+        return trigger_curve_points_from_curve(fallback_curve);
+    }
+    if deduped.len() > TRIGGER_CURVE_POINT_MAX {
+        let mut trimmed = Vec::with_capacity(TRIGGER_CURVE_POINT_MAX);
+        trimmed.push(deduped[0]);
+        trimmed.extend(
+            deduped[1..deduped.len() - 1]
+                .iter()
+                .copied()
+                .take(TRIGGER_CURVE_POINT_MAX - 2),
+        );
+        trimmed.push(*deduped.last().expect("curve has endpoint"));
+        return trimmed;
+    }
+
+    deduped
+}
+
+fn trigger_curve_value_points(points: &[TriggerCurvePoint]) -> Vec<ValuePoint> {
+    points
+        .iter()
+        .map(|point| ValuePoint {
+            input: f64::from(point.input) / 100.0,
+            output: f64::from(point.output) / 100.0,
+        })
+        .collect()
+}
+
 fn default_vibration_mode() -> String {
     "Balanced".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TriggerConfig {
     pub same_range: bool,
@@ -1162,11 +1274,64 @@ pub struct TriggerConfig {
     pub l2_curve: TriggerCurve,
     #[serde(default = "default_r2_trigger_curve")]
     pub r2_curve: TriggerCurve,
+    pub l2_curve_points: Vec<TriggerCurvePoint>,
+    pub r2_curve_points: Vec<TriggerCurvePoint>,
     pub effect: String,
     pub intensity: String,
     pub vibration: String,
     #[serde(default = "default_vibration_mode")]
     pub vibration_mode: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TriggerConfigDeserialize {
+    same_range: bool,
+    l2_from: u8,
+    l2_to: u8,
+    r2_from: u8,
+    r2_to: u8,
+    #[serde(default = "default_l2_trigger_curve")]
+    l2_curve: TriggerCurve,
+    #[serde(default = "default_r2_trigger_curve")]
+    r2_curve: TriggerCurve,
+    #[serde(default)]
+    l2_curve_points: Option<Vec<TriggerCurvePoint>>,
+    #[serde(default)]
+    r2_curve_points: Option<Vec<TriggerCurvePoint>>,
+    effect: String,
+    intensity: String,
+    vibration: String,
+    #[serde(default = "default_vibration_mode")]
+    vibration_mode: String,
+}
+
+impl<'de> Deserialize<'de> for TriggerConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = TriggerConfigDeserialize::deserialize(deserializer)?;
+        Ok(Self {
+            same_range: wire.same_range,
+            l2_from: wire.l2_from,
+            l2_to: wire.l2_to,
+            r2_from: wire.r2_from,
+            r2_to: wire.r2_to,
+            l2_curve: wire.l2_curve,
+            r2_curve: wire.r2_curve,
+            l2_curve_points: wire
+                .l2_curve_points
+                .unwrap_or_else(|| trigger_curve_points_from_curve(wire.l2_curve)),
+            r2_curve_points: wire
+                .r2_curve_points
+                .unwrap_or_else(|| trigger_curve_points_from_curve(wire.r2_curve)),
+            effect: wire.effect,
+            intensity: wire.intensity,
+            vibration: wire.vibration,
+            vibration_mode: wire.vibration_mode,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -5625,6 +5790,8 @@ impl Default for TriggerConfig {
             r2_to: 100,
             l2_curve: TriggerCurve::default_l2(),
             r2_curve: TriggerCurve::default_r2(),
+            l2_curve_points: default_l2_trigger_curve_points(),
+            r2_curve_points: default_r2_trigger_curve_points(),
             effect: "Adaptive resistance".to_string(),
             intensity: "Strong (Standard)".to_string(),
             vibration: "Medium".to_string(),
@@ -5645,6 +5812,8 @@ impl TriggerConfig {
         }
         self.l2_curve = self.l2_curve.normalized();
         self.r2_curve = self.r2_curve.normalized();
+        self.l2_curve_points = normalize_trigger_curve_points(self.l2_curve_points, self.l2_curve);
+        self.r2_curve_points = normalize_trigger_curve_points(self.r2_curve_points, self.r2_curve);
         if !["Adaptive resistance", "Pulse", "Wall", "Wall pulse", "Off"]
             .contains(&self.effect.as_str())
         {
@@ -9027,9 +9196,20 @@ fn forza_runtime_profile(
     let r2_has_overtravel_guard = throttle_overtravel_guard_active(r2_end);
     let r2_endstop_wall = throttle_overtravel_wall_position(r2_start, r2_end);
     let r2_overtravel_ramp_start = throttle_overtravel_ramp_start(r2_start, r2_endstop_wall);
+    let l2_normal_end = l2_endstop_wall.max(l2_start + 0.01);
+    let r2_normal_end = if r2_has_overtravel_guard && r2_overtravel_ramp_start < r2_endstop_wall {
+        r2_overtravel_ramp_start
+    } else {
+        r2_endstop_wall
+    }
+    .max(r2_start + 0.01);
     let abs_brake_threshold = abs_brake_threshold_for_range(l2_start, l2_end);
-    let l2_curve = trigger.map_or(FORZA_BRAKE_CURVE, |trigger| trigger.l2_curve.as_f64());
-    let r2_curve = trigger.map_or(FORZA_THROTTLE_CURVE, |trigger| trigger.r2_curve.as_f64());
+    let l2_curve_points = trigger
+        .map(|trigger| trigger_curve_value_points(&trigger.l2_curve_points))
+        .unwrap_or_else(|| trigger_curve_value_points(&default_l2_trigger_curve_points()));
+    let r2_curve_points = trigger
+        .map(|trigger| trigger_curve_value_points(&trigger.r2_curve_points))
+        .unwrap_or_else(|| trigger_curve_value_points(&default_r2_trigger_curve_points()));
     let brake = forza.effect("brake_resistance");
     let abs = forza.effect("abs_slip_pulse");
     let handbrake = forza.effect("handbrake_wall");
@@ -9157,13 +9337,13 @@ fn forza_runtime_profile(
             condition: baseline_condition.clone(),
             effect: EffectTemplate::AdaptiveResistance {
                 start_position: ValueSource::constant(l2_start),
-                strength: ValueSource::signal_curve(
+                strength: ValueSource::signal_points(
                     "input.brake",
                     l2_start,
-                    l2_end,
+                    l2_normal_end,
                     brake_baseline_force,
                     brake_normal_force,
-                    l2_curve,
+                    l2_curve_points.clone(),
                 ),
             },
         });
@@ -9238,13 +9418,13 @@ fn forza_runtime_profile(
             condition: baseline_condition,
             effect: EffectTemplate::AdaptiveResistance {
                 start_position: ValueSource::constant(r2_start),
-                strength: ValueSource::signal_curve(
+                strength: ValueSource::signal_points(
                     "input.throttle",
                     r2_start,
-                    r2_end,
+                    r2_normal_end,
                     throttle_baseline_force,
                     throttle_normal_force,
-                    r2_curve,
+                    r2_curve_points.clone(),
                 ),
             },
         });
@@ -9745,7 +9925,7 @@ fn base_feel_test_output_frame(
             &trigger.intensity,
             trigger.l2_from,
             trigger.l2_to,
-            trigger.l2_curve,
+            &trigger.l2_curve_points,
             l2_position,
         ),
         r2: base_feel_trigger_output(
@@ -9753,7 +9933,7 @@ fn base_feel_test_output_frame(
             &trigger.intensity,
             trigger.r2_from,
             trigger.r2_to,
-            trigger.r2_curve,
+            &trigger.r2_curve_points,
             r2_position,
         ),
         ..Default::default()
@@ -9765,7 +9945,7 @@ fn base_feel_trigger_output(
     intensity_label: &str,
     from: u8,
     to: u8,
-    curve: TriggerCurve,
+    curve_points: &[TriggerCurvePoint],
     position: Option<f64>,
 ) -> TriggerOutput {
     let strength = position.map_or_else(
@@ -9773,7 +9953,7 @@ fn base_feel_trigger_output(
             (trigger_strength_for_label(intensity_label) * (f64::from(to.min(100)) / 100.0))
                 .clamp(0.0, 1.0)
         },
-        |position| trigger_curve_strength(position, from, to, curve, intensity_label),
+        |position| trigger_curve_strength(position, from, to, curve_points, intensity_label),
     );
     if effect == "Off" || strength <= f64::EPSILON {
         return TriggerOutput::Off;
@@ -9834,7 +10014,7 @@ fn trigger_curve_strength(
     position: f64,
     from: u8,
     to: u8,
-    curve: TriggerCurve,
+    curve_points: &[TriggerCurvePoint],
     intensity_label: &str,
 ) -> f64 {
     let strength = trigger_strength_for_label(intensity_label);
@@ -9849,8 +10029,33 @@ fn trigger_curve_strength(
         return 0.0;
     }
 
-    let active = clamp_unit((x - start) / (end - start)).powf(curve.as_f64());
+    let active = trigger_curve_point_output(curve_points, clamp_unit((x - start) / (end - start)));
     clamp_unit(active * strength)
+}
+
+fn trigger_curve_point_output(points: &[TriggerCurvePoint], active: f64) -> f64 {
+    let points = normalize_trigger_curve_points(points.to_vec(), TriggerCurve::default_l2());
+    let active = clamp_unit(active);
+    for window in points.windows(2) {
+        let left = window[0];
+        let right = window[1];
+        let left_input = f64::from(left.input) / 100.0;
+        let right_input = f64::from(right.input) / 100.0;
+        if active >= left_input && active <= right_input {
+            if (right_input - left_input).abs() < f64::EPSILON {
+                return f64::from(right.output) / 100.0;
+            }
+            let ratio = (active - left_input) / (right_input - left_input);
+            let left_output = f64::from(left.output) / 100.0;
+            let right_output = f64::from(right.output) / 100.0;
+            return left_output + (right_output - left_output) * ratio;
+        }
+    }
+
+    points
+        .last()
+        .map(|point| f64::from(point.output) / 100.0)
+        .unwrap_or(0.0)
 }
 
 fn trigger_strength_for_label(intensity_label: &str) -> f64 {
@@ -15550,7 +15755,7 @@ mod tests {
         match frame.r2 {
             TriggerOutput::AdaptiveResistance { strength, .. } => {
                 assert!(
-                    (0.12..0.19).contains(&strength),
+                    (0.12..0.21).contains(&strength),
                     "partial throttle should have smooth gas-pedal tension, got {strength}"
                 );
             }
@@ -15559,7 +15764,7 @@ mod tests {
         match frame.l2 {
             TriggerOutput::AdaptiveResistance { strength, .. } => {
                 assert!(
-                    (0.42..0.50).contains(&strength),
+                    (0.42..0.54).contains(&strength),
                     "partial brake should ramp like a tensioned pedal, got {strength}"
                 );
             }
@@ -16171,9 +16376,11 @@ mod tests {
             l2_from: 20,
             l2_to: 80,
             l2_curve: TriggerCurve::from_ratio(2.0),
+            l2_curve_points: trigger_curve_points_from_curve(TriggerCurve::from_ratio(2.0)),
             r2_from: 10,
             r2_to: 90,
             r2_curve: TriggerCurve::from_ratio(0.5),
+            r2_curve_points: trigger_curve_points_from_curve(TriggerCurve::from_ratio(0.5)),
             intensity: "Strong (Standard)".to_string(),
             ..Default::default()
         };
@@ -16210,11 +16417,79 @@ mod tests {
             } => {
                 assert!((start_position - 0.10).abs() < f64::EPSILON);
                 assert!(
-                    (strength - 0.5_f64.sqrt()).abs() < 0.0001,
-                    "R2 should match sqrt((50-10)/(90-10)), got {strength}"
+                    (strength - 0.71).abs() < 0.0001,
+                    "R2 should match the generated point curve for sqrt((50-10)/(90-10)), got {strength}"
                 );
             }
             other => panic!("expected R2 base feel resistance, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn legacy_trigger_config_deserializes_points_from_saved_curves() {
+        let trigger: TriggerConfig = serde_json::from_value(serde_json::json!({
+            "sameRange": false,
+            "l2From": 20,
+            "l2To": 100,
+            "r2From": 0,
+            "r2To": 100,
+            "l2Curve": 2.0,
+            "r2Curve": 0.5,
+            "effect": "Adaptive resistance",
+            "intensity": "Strong (Standard)",
+            "vibration": "Medium",
+            "vibrationMode": "Balanced"
+        }))
+        .expect("legacy trigger config without point arrays should deserialize");
+
+        let trigger = trigger.normalized();
+
+        assert_eq!(
+            trigger.l2_curve_points,
+            trigger_curve_points_from_curve(TriggerCurve::from_ratio(2.0))
+        );
+        assert_eq!(
+            trigger.r2_curve_points,
+            trigger_curve_points_from_curve(TriggerCurve::from_ratio(0.5))
+        );
+    }
+
+    #[test]
+    fn base_feel_test_uses_custom_trigger_curve_points() {
+        let trigger = TriggerConfig {
+            l2_from: 0,
+            l2_to: 100,
+            l2_curve_points: vec![
+                TriggerCurvePoint {
+                    input: 0,
+                    output: 0,
+                },
+                TriggerCurvePoint {
+                    input: 35,
+                    output: 8,
+                },
+                TriggerCurvePoint {
+                    input: 50,
+                    output: 80,
+                },
+                TriggerCurvePoint {
+                    input: 100,
+                    output: 100,
+                },
+            ],
+            intensity: "Strong (Standard)".to_string(),
+            ..Default::default()
+        };
+        let frame = base_feel_test_output_frame(trigger, Some(0.50), Some(0.0));
+
+        match frame.l2 {
+            TriggerOutput::AdaptiveResistance { strength, .. } => {
+                assert!(
+                    (0.79..0.81).contains(&strength),
+                    "custom L2 point curve should shape base feel output, got {strength}"
+                );
+            }
+            other => panic!("expected L2 point-curve resistance, got {other:?}"),
         }
     }
 

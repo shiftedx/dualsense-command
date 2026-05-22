@@ -2117,7 +2117,7 @@ mod windows_tray {
             let snapshot = serde_json::from_str::<TraySnapshotDto>(
                 r#"{
                     "status":{
-                        "version":"0.2.5",
+                        "version":"0.2.6",
                         "healthy":true,
                         "active_profile_id":"forza-horizon",
                         "active_adapter_id":null
@@ -2144,7 +2144,7 @@ mod windows_tray {
             let summary = tray_health_summary_from_snapshot(&snapshot);
 
             assert_eq!(summary.agent_label, "Agent Online");
-            assert_eq!(summary.agent_detail, "v0.2.5 - profile ready");
+            assert_eq!(summary.agent_detail, "v0.2.6 - profile ready");
             assert_eq!(summary.profile_label, "Profile: Base");
             assert_eq!(summary.profile_detail, "forza-horizon");
             assert_eq!(summary.controller_label, "Controller: Edge");

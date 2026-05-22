@@ -1,3 +1,41 @@
+# DualSense Command Center 0.2.6
+
+Release date: 2026-05-22
+
+This release adds point-based adaptive trigger curves so users can build the same detailed L2/R2 response shapes that previously had to be hard-coded into the telemetry profiles.
+
+## Adaptive Trigger Curve Editor
+
+- **Added draggable curve control points for L2 and R2.** The Trigger Curves graph now exposes editable dots directly on the response line so users can shape where resistance comes in, how sharply it rises, and how wide the stiff end-stop range should feel.
+- **Profiles now support 4-8 saved points per trigger.** Every trigger profile keeps locked 0% and 100% endpoints plus editable interior points; users can add points to the widest curve segment or remove the least dramatic interior point from the UI.
+- **The curve slider still works as a fast reset tool.** Moving the existing Curve slider regenerates a smooth exponent-based curve, giving users a quick way back to a clean brake or throttle ramp before fine-tuning individual dots.
+- **The graph remains aligned to telemetry runtime behavior.** Forza and Assetto telemetry scopes map the editable dots onto the same normal-response region used by the backend, then continue to show the fixed DSCC end-wall and throttle overtravel ramp after that region.
+- **Custom points are saved, exported, imported, and applied live.** The frontend sends `l2CurvePoints` and `r2CurvePoints` with profile/config updates, and the backend persists them as part of the trigger configuration.
+
+## Runtime And Compatibility
+
+- **Hardware output now evaluates point curves natively.** `dscc-core` gained a `SignalPoints` value source, so the effect engine interpolates the saved point curve directly instead of approximating it with one exponent.
+- **Base Feel and Test Actuation respect custom dots.** Manual trigger tests use the same saved point arrays, so tuning feedback from the test buttons matches the profile the controller will use during telemetry.
+- **Older saved profiles keep their previous feel.** Profiles created before 0.2.6 that only contain `l2Curve` and `r2Curve` now generate matching point arrays on load instead of falling back to the built-in default dots.
+- **Input is clamped and normalized on both sides.** The UI and backend keep endpoints locked, sort/dedupe points, enforce the 4-8 point range, and clamp inputs/outputs to 0-100 so malformed imports cannot produce invalid trigger output.
+
+## Validation gate
+
+This release was cut after a clean run of:
+
+```powershell
+npm.cmd --prefix web run typecheck
+npm.cmd --prefix web run build
+npm.cmd --prefix web run test:button-map
+cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
+cargo +stable-x86_64-pc-windows-gnu test --workspace
+cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warnings
+```
+
+## Install
+
+Download `DualSenseCommandCenter-0.2.6.msi` from the Releases page and run it. The MSI is unsigned, so Windows SmartScreen may show a publisher warning.
+
 # DualSense Command Center 0.2.5
 
 Release date: 2026-05-22

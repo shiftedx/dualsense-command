@@ -261,6 +261,21 @@ pub enum ValueSource {
         exponent: f64,
         clamp: bool,
     },
+    SignalPoints {
+        signal: String,
+        input_min: f64,
+        input_max: f64,
+        output_min: f64,
+        output_max: f64,
+        points: Vec<ValuePoint>,
+        clamp: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ValuePoint {
+    pub input: f64,
+    pub output: f64,
 }
 
 impl ValueSource {
@@ -300,6 +315,25 @@ impl ValueSource {
             output_min,
             output_max,
             exponent,
+            clamp: true,
+        }
+    }
+
+    pub fn signal_points(
+        signal: impl Into<String>,
+        input_min: f64,
+        input_max: f64,
+        output_min: f64,
+        output_max: f64,
+        points: Vec<ValuePoint>,
+    ) -> Self {
+        Self::SignalPoints {
+            signal: signal.into(),
+            input_min,
+            input_max,
+            output_min,
+            output_max,
+            points,
             clamp: true,
         }
     }
@@ -347,8 +381,81 @@ impl ValueSource {
                 };
                 Some(output_min + (output_max - output_min) * curved)
             }
+            ValueSource::SignalPoints {
+                signal,
+                input_min,
+                input_max,
+                output_min,
+                output_max,
+                points,
+                clamp,
+            } => {
+                if input_min == input_max {
+                    return None;
+                }
+
+                let input = snapshot.number(signal)?;
+                let ratio = (input - input_min) / (input_max - input_min);
+                let ratio = if *clamp { ratio.clamp(0.0, 1.0) } else { ratio };
+                let curved = evaluate_value_points(points, ratio)?;
+                Some(output_min + (output_max - output_min) * curved)
+            }
         }
     }
+}
+
+fn evaluate_value_points(points: &[ValuePoint], input: f64) -> Option<f64> {
+    if points.is_empty() || !input.is_finite() {
+        return None;
+    }
+
+    let mut normalized: Vec<ValuePoint> = points
+        .iter()
+        .copied()
+        .filter(|point| point.input.is_finite() && point.output.is_finite())
+        .map(|point| ValuePoint {
+            input: point.input.clamp(0.0, 1.0),
+            output: point.output.clamp(0.0, 1.0),
+        })
+        .collect();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    normalized.sort_by(|a, b| a.input.total_cmp(&b.input));
+    normalized.dedup_by(|a, b| {
+        if (a.input - b.input).abs() < f64::EPSILON {
+            b.output = a.output;
+            true
+        } else {
+            false
+        }
+    });
+
+    let x = input.clamp(0.0, 1.0);
+    if x <= normalized[0].input {
+        return Some(normalized[0].output);
+    }
+    if let Some(last) = normalized.last() {
+        if x >= last.input {
+            return Some(last.output);
+        }
+    }
+
+    for window in normalized.windows(2) {
+        let left = window[0];
+        let right = window[1];
+        if x >= left.input && x <= right.input {
+            let width = right.input - left.input;
+            if width <= f64::EPSILON {
+                return Some(right.output);
+            }
+            let ratio = (x - left.input) / width;
+            return Some(left.output + (right.output - left.output) * ratio);
+        }
+    }
+
+    normalized.last().map(|point| point.output)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -922,6 +1029,61 @@ mod tests {
         assert_trigger_resistance(&frame.l2, 0.20, 0.775);
         assert_trigger_resistance(&frame.r2, 0.10, 0.45);
         assert_eq!(frame.rumble, None);
+    }
+
+    #[test]
+    fn signal_points_interpolate_custom_trigger_response() {
+        let profile = Profile {
+            id: "point-curve".to_string(),
+            name: "Point Curve".to_string(),
+            version: 1,
+            rumble_policy: RumblePolicy::Disabled,
+            rules: vec![EffectRule {
+                id: "r2-points".to_string(),
+                target: EffectTarget::R2,
+                priority: 10,
+                condition: RuleCondition::Always,
+                effect: EffectTemplate::AdaptiveResistance {
+                    start_position: ValueSource::constant(0.0),
+                    strength: ValueSource::signal_points(
+                        "input.throttle",
+                        0.0,
+                        1.0,
+                        0.10,
+                        0.90,
+                        vec![
+                            ValuePoint {
+                                input: 0.0,
+                                output: 0.0,
+                            },
+                            ValuePoint {
+                                input: 0.50,
+                                output: 0.20,
+                            },
+                            ValuePoint {
+                                input: 0.75,
+                                output: 0.80,
+                            },
+                            ValuePoint {
+                                input: 1.0,
+                                output: 1.0,
+                            },
+                        ],
+                    ),
+                },
+                smoothing: None,
+                hysteresis: None,
+                timeout: None,
+            }],
+        };
+        let snapshot = SignalSnapshot::from_updates([SignalUpdate::new(
+            SignalName::new("input.throttle").unwrap(),
+            0.625,
+        )]);
+
+        let frame = EffectEngine::new().evaluate(&profile, &snapshot);
+
+        assert_trigger_resistance(&frame.r2, 0.0, 0.50);
     }
 
     #[test]
