@@ -379,9 +379,8 @@ fn encode_trigger(trigger: &TriggerOutput) -> [u8; TRIGGER_EFFECT_LEN] {
         TriggerOutput::Wall { position, strength } => {
             encoded[0] = 0x02;
             let start = normalized(*position);
-            let end = (start + 0.06).clamp(0.0, 1.0);
             encoded[1] = resistance_position(start);
-            encoded[2] = resistance_position(end);
+            encoded[2] = resistance_position(1.0);
             encoded[3] = force_byte(*strength);
         }
         TriggerOutput::Pulse {
@@ -605,6 +604,9 @@ mod tests {
             FLAG0_ALLOW_RIGHT_TRIGGER | FLAG0_ALLOW_LEFT_TRIGGER
         );
         assert_eq!(report.bytes[13], 0x02);
+        assert_eq!(report.bytes[14], resistance_position(0.4));
+        assert_eq!(report.bytes[15], resistance_position(1.0));
+        assert_eq!(report.bytes[16], force_byte(0.9));
         assert_eq!(report.bytes[24], 0x05);
         assert_eq!(crc, dualsense_output_crc32(&report.bytes[..BT_CRC_OFFSET]));
         assert_ne!(crc, 0);
