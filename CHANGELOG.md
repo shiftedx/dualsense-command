@@ -2,17 +2,120 @@
 
 Release date: 2026-05-22
 
+A focused hardware-readiness release for DualSense Edge owners, Forza haptics,
+and production build hygiene. The headline is onboard Edge profile sync: DSCC
+can now read the controller's Fn slots over USB, stage profile data safely when
+hardware sync is unavailable, and write supported static profile settings back
+to the Edge without exposing raw HID-byte write APIs.
+
 ## Highlights
 
-- Added DualSense Edge onboard profile support for reading USB-connected controller slots and writing supported DSCC profile settings back to Fn shortcuts.
-- Added typed Edge profile encoding/decoding in the device layer so onboard profile sync stays behind validated report paths.
-- Kept Edge profile hardware writes USB-gated, with local staged state shown when hardware sync is unavailable.
-- Added focused tooltips for the Edge onboard memory panel so users understand read, staged, synced, and write behavior.
+- **DualSense Edge onboard memory is now a real DSCC surface.** The Games /
+  Controller page now exposes the Edge Fn profiles, reads controller slots over
+  USB, and shows whether each slot is synced from hardware, locally staged, or
+  unavailable until a USB refresh.
+- **Static Edge profiles can travel with the controller.** DSCC can write
+  supported profile data to `Fn + Circle`, `Fn + Cross`, and `Fn + Square`,
+  including trigger range/resistance settings, lightbar color and brightness,
+  stick presets, and supported button remaps. Live telemetry effects still
+  require DSCC to be running.
+- **Forza body rumble now preserves the game's native feel by default.** The
+  new body-rumble mode defaults to native passthrough, so Forza keeps its
+  built-in engine and road feel while DSCC only adds short event cues such as
+  shift and landing thumps. A DSCC full-control mode remains available for
+  heavier custom tuning.
+- **Production builds no longer activate mock data.** The browser mock harness
+  is now dev-only: production ignores `?mock=1`, localStorage mock flags, and
+  mock environment switches, and the production bundle does not include the
+  fixture payload.
+- **The release train is back on a single version.** Rust crates, the web app,
+  the MSI packaging default, README install command, package lock metadata, and
+  tray version assertions now agree on `0.2.3`.
+
+## DualSense Edge Onboard Memory
+
+- Added a typed Edge onboard profile model in `dscc-device` rather than passing
+  loose JSON or raw bytes through the app.
+- Added clean read/write helpers for Edge onboard profiles behind the existing
+  validated device-output boundary.
+- Added feature-report read/write support to the device transport trait,
+  `hidapi` backend, and mock transport so the behavior can be tested without
+  touching real controller memory.
+- Added API endpoints:
+  - `GET /api/controllers/:id/edge-profiles`
+  - `PUT /api/controllers/:id/edge-profiles/:slot`
+- Added persistent agent state for Edge slot data, including normalized staged
+  slots and last-read hardware snapshots.
+- Added a safe fallback when hardware sync is not available: users can still
+  stage slot settings locally and see that the controller has not been written
+  yet.
+- Kept `Fn + Triangle` as the default/read-only slot. Assignable writes are
+  limited to the user profile slots.
+- Edge profile writes use the current DSCC profile as the source of truth for
+  supported static controller settings; telemetry-only effects are deliberately
+  not written to onboard memory.
+
+## UX
+
+- Added an **Edge Onboard Memory** panel to the Games / Controller page for
+  DualSense Edge controllers.
+- Added a USB refresh action for reading the controller's current onboard slot
+  state.
+- Added per-slot write actions with disabled/default-state behavior when a slot
+  should not be written.
+- Added status copy for synced hardware slots, locally staged slots, USB-only
+  hardware reads/writes, and hardware-output-disabled staging.
+- Added focused tooltips for the new Edge panel:
+  - what the read action does and why USB matters
+  - what each slot state means
+  - what the write action includes and what still requires DSCC at runtime
+- Wired the Forza body-rumble mode into the UI with clear Native / DSCC choices
+  and explanatory help text.
+
+## Safety
+
+- Edge onboard hardware reads and writes require a DualSense Edge connected over
+  USB. Bluetooth and Windows fallback controller entries only expose staged
+  local state.
+- Hardware profile sync still honors DSCC hardware-output mode. If hardware
+  output is disabled, writes are staged locally instead of silently pretending
+  controller memory changed.
+- No raw HID-byte write route was added. Hardware writes continue to flow
+  through validated `ControllerOutputFrame` and typed Edge profile paths.
+- Manual/live telemetry haptics remain separate from onboard memory writes, so
+  a saved Edge Fn profile will not imply DSCC telemetry effects work without the
+  agent running.
+- Release packaging still backs up persisted user state before install or
+  upgrade, preserving existing profiles and controller settings outside the
+  install folder.
 
 ## Reliability
 
-- Production builds no longer enable the browser mock harness through URL flags, localStorage, or environment switches. Mock data remains dev-only for intentional local UI testing.
-- Update and install safeguards continue to preserve user state outside the install folder, including pre-install state backups.
+- Mock API loading now happens through a dev-only dynamic import path instead
+  of a production-reachable static bundle.
+- `docs/contributing.md` now documents the mock harness as a Vite development
+  tool only, with production builds explicitly ignoring mock toggles.
+- The Edge onboard flow has route-level tests for visibility, staging, conflict
+  paths, and hardware fallback behavior.
+- Device-layer tests cover Edge profile round-tripping, rejecting writes to the
+  default slot, feature-report transport plumbing, and output-manager hardware
+  integration.
+- The browser build was scanned for mock fixture strings after production
+  build; none were present.
+
+## API And Runtime
+
+- Snapshot/controller DTOs now include Edge profile slot state for the selected
+  controller.
+- Profile update paths now preserve and normalize Forza `bodyRumbleMode` so
+  native passthrough remains the default.
+- The backend keeps Forza body rumble in native-passthrough mode unless the
+  profile explicitly opts into DSCC full-control body rumble.
+- Edge hardware reads/writes run through blocking-safe device-manager calls so
+  the API runtime does not stall while the HID backend talks to the controller.
+- The UI API client rejects Edge onboard profile read/write calls when the
+  browser is running against the development mock API, avoiding a fake
+  production dead end.
 
 ## Validation gate
 
@@ -27,9 +130,31 @@ npm.cmd --prefix web run build
 npm.cmd --prefix web run test:button-map
 ```
 
+Additional release-readiness details:
+
+- 212 Rust tests passed across the workspace.
+- `svelte-check` reported 0 errors and 0 warnings.
+- Button mapping performance guard stayed well under budget:
+  `lookup=0.049ms`, `chips=0.031ms`, `parse=0.003ms` at p95 over 300 samples.
+- Local unsigned Windows MSI was built successfully:
+  `DualSenseCommandCenter-0.2.3.msi`.
+- Local MSI SHA256:
+  `AF5B76BD3E47B41B9D8E4638590F7FFB0C676FCD492916945B50214C365C5E31`.
+- GitHub CI for `main` completed successfully after the release commit.
+- GitHub release workflow for tag `v0.2.3` completed successfully and uploaded
+  Windows unsigned beta artifacts plus experimental Linux raw binaries to the
+  draft release flow.
+
 ## Install
 
-Download `DualSenseCommandCenter-0.2.3.msi` from the Releases page and run it. The MSI is unsigned, so Windows SmartScreen may show a publisher warning.
+Download `DualSenseCommandCenter-0.2.3.msi` from the Releases page and run it.
+Per-user install; tray + agent start automatically.
+
+The MSI is unsigned, so Windows SmartScreen may show a publisher warning.
+Existing DSCC profiles and controller settings are stored in the user's config
+directory and are not overwritten by the install folder. During install or
+upgrade, DSCC backs up existing persisted state to
+`state.preinstall-0.2.3.json` when `state.json` exists.
 
 # DualSense Command Center 0.2.0
 
