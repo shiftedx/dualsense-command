@@ -7,6 +7,10 @@ use std::{
 use dscc_core::{ControllerOutputFrame, PlayerLedsOutput, RumbleOutput, TriggerOutput};
 
 use crate::{
+    edge_profile::{
+        read_edge_onboard_profiles_from_handle, write_edge_onboard_profile_to_handle,
+        EdgeOnboardProfile,
+    },
     error::DeviceError,
     manager::OutputMode,
     status::{DeviceTransportKind, RawDeviceId},
@@ -126,7 +130,7 @@ impl<T: DeviceTransport> ControllerOutputManager<T> {
 
         let (report, write_result) = write_result;
         match write_result {
-            Ok(backend_bytes) if backend_bytes == report.bytes.len() => Ok(ControllerOutputWrite {
+            Ok(backend_bytes) if backend_bytes >= report.bytes.len() => Ok(ControllerOutputWrite {
                 bytes: report.bytes.len(),
                 hardware_output: self.hardware_writes_enabled(),
                 report_kind: report.kind,
@@ -177,6 +181,51 @@ impl<T: DeviceTransport> ControllerOutputManager<T> {
             self.release(target);
         }
         read_result
+    }
+
+    pub fn read_edge_onboard_profiles(
+        &self,
+        target: &ControllerOutputTarget,
+    ) -> Result<Vec<EdgeOnboardProfile>, DeviceError> {
+        if target.transport != DeviceTransportKind::Usb {
+            return Err(DeviceError::TransportFault(
+                "DualSense Edge onboard profile reads require a USB connection".to_string(),
+            ));
+        }
+
+        let session = self.session_for(target)?;
+        let read_result = {
+            let mut session = lock_session(&session);
+            read_edge_onboard_profiles_from_handle(session.handle.as_mut())
+        };
+
+        if read_result.is_err() {
+            self.release(target);
+        }
+        read_result
+    }
+
+    pub fn write_edge_onboard_profile(
+        &self,
+        target: &ControllerOutputTarget,
+        profile: &EdgeOnboardProfile,
+    ) -> Result<(), DeviceError> {
+        if target.transport != DeviceTransportKind::Usb {
+            return Err(DeviceError::TransportFault(
+                "DualSense Edge onboard profile writes require a USB connection".to_string(),
+            ));
+        }
+
+        let session = self.session_for(target)?;
+        let write_result = {
+            let mut session = lock_session(&session);
+            write_edge_onboard_profile_to_handle(session.handle.as_mut(), profile)
+        };
+
+        if write_result.is_err() {
+            self.release(target);
+        }
+        write_result
     }
 
     pub fn release(&self, target: &ControllerOutputTarget) {
@@ -477,6 +526,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        edge_profile::{encode_edge_onboard_profile, EdgeOnboardSlotId},
         enumeration::RawHidDevice,
         status::DeviceFamily,
         transport::{DeviceHandle, DeviceTransport, MockTransport},
@@ -671,6 +721,60 @@ mod tests {
     }
 
     #[test]
+    fn output_manager_reads_and_writes_edge_onboard_profile_feature_reports() {
+        let device = RawHidDevice::mock("mock://edge-profile")
+            .with_family_hint(DeviceFamily::DualSenseEdge)
+            .with_transport_hint(DeviceTransportKind::Usb);
+        let raw_id = device.id.clone();
+        let transport = MockTransport::with_devices(vec![device]);
+
+        let mut default_profile = [[0_u8; 64]; 3];
+        default_profile[0][0] = 0x70;
+        default_profile[0][1] = 0x10;
+        default_profile[1][0] = 0x71;
+        default_profile[2][0] = 0x72;
+        queue_edge_profile_read(&transport, &raw_id, [0x70, 0x71, 0x72], default_profile);
+
+        for (slot, read_reports) in [
+            (EdgeOnboardSlotId::Square, [0x73, 0x74, 0x75]),
+            (EdgeOnboardSlotId::Cross, [0x76, 0x77, 0x78]),
+            (EdgeOnboardSlotId::Circle, [0x79, 0x7a, 0x7b]),
+        ] {
+            let mut profile = EdgeOnboardProfile::new(slot, format!("{} Tune", slot.as_str()));
+            profile.trigger_deadzone.left = [6, 94];
+            let mut reports = encode_edge_onboard_profile(&profile).unwrap();
+            for (report, selector) in reports.iter_mut().zip(read_reports) {
+                report[0] = selector;
+            }
+            queue_edge_profile_read(&transport, &raw_id, read_reports, reports);
+        }
+
+        let manager = ControllerOutputManager::new(transport.clone(), OutputMode::DryRunHid);
+        let target = ControllerOutputTarget {
+            raw_device_id: raw_id.clone(),
+            transport: DeviceTransportKind::Usb,
+        };
+
+        let profiles = manager.read_edge_onboard_profiles(&target).unwrap();
+        assert_eq!(profiles.len(), 4);
+        assert!(profiles
+            .iter()
+            .any(|profile| profile.slot == EdgeOnboardSlotId::Square
+                && profile.name == "square Tune"));
+
+        let mut write_profile = EdgeOnboardProfile::new(EdgeOnboardSlotId::Square, "Road Tune");
+        write_profile.trigger_deadzone.right = [3, 97];
+        manager
+            .write_edge_onboard_profile(&target, &write_profile)
+            .unwrap();
+
+        let writes = transport.feature_writes_for(&raw_id, 0x60);
+        assert_eq!(writes.len(), 3);
+        assert_eq!(writes[0].len(), 64);
+        assert_eq!(writes[0][0], 0x60);
+    }
+
+    #[test]
     fn output_manager_rejects_partial_hid_write_and_releases_session() {
         let device = RawHidDevice::mock("mock://edge-partial")
             .with_family_hint(DeviceFamily::DualSenseEdge)
@@ -709,6 +813,56 @@ mod tests {
         assert!(reopen_error
             .to_string()
             .contains("session reopened after short write"));
+    }
+
+    fn queue_edge_profile_read(
+        transport: &MockTransport,
+        raw_id: &RawDeviceId,
+        report_ids: [u8; 3],
+        reports: [[u8; 64]; 3],
+    ) {
+        for (report_id, report) in report_ids.into_iter().zip(reports) {
+            transport.push_feature_report(raw_id.clone(), report_id, report.to_vec());
+        }
+    }
+
+    #[test]
+    fn output_manager_accepts_backend_write_counts_above_report_length() {
+        let device = RawHidDevice::mock("mock://edge-bt-wide")
+            .with_family_hint(DeviceFamily::DualSenseEdge)
+            .with_transport_hint(DeviceTransportKind::Bluetooth);
+        let raw_id = device.id.clone();
+        let transport = MockTransport::with_devices(vec![device]);
+        transport.push_write_result(raw_id.clone(), Ok(547));
+        let manager = ControllerOutputManager::new(transport.clone(), OutputMode::DryRunHid);
+        let target = ControllerOutputTarget {
+            raw_device_id: raw_id.clone(),
+            transport: DeviceTransportKind::Bluetooth,
+        };
+
+        let write = manager
+            .write_frame(
+                &target,
+                &ControllerOutputFrame {
+                    lightbar: Some(LightbarOutput {
+                        color: RgbColor {
+                            red: 60,
+                            green: 140,
+                            blue: 220,
+                        },
+                        brightness: 0.7,
+                    }),
+                    ..ControllerOutputFrame::default()
+                },
+            )
+            .expect("oversized backend byte count still represents a completed write");
+
+        let writes = transport.writes_for(&raw_id);
+        assert_eq!(write.bytes, BT_REPORT_LEN);
+        assert_eq!(write.report_kind, OutputReportKind::Bluetooth);
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].len(), BT_REPORT_LEN);
+        assert_eq!(writes[0][0], BT_REPORT_ID);
     }
 
     #[derive(Clone)]

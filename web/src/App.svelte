@@ -32,6 +32,7 @@
     getAppUpdateCheck,
     getControllerInput,
     getControllerConfig,
+    getEdgeProfiles,
     getSteamLibrary,
     importProfile,
     removeCustomGame,
@@ -39,6 +40,7 @@
     runEffectTest,
     saveAppSettings,
     saveControllerConfig,
+    writeEdgeProfile,
     saveProfileConfig,
     setProfileOverride,
     updateControllerName,
@@ -54,8 +56,11 @@
     ControllerConfiguration,
     ControllerStatus,
     CurrentEffectState,
+    EdgeProfileSlot,
+    EdgeProfilesResponse,
     EffectTestRequest,
     ExportedProfile,
+    ForzaBodyRumbleMode,
     ForzaEffectConfiguration,
     ForzaEffectRoute,
     GameDetection,
@@ -363,6 +368,21 @@
     { label: 'Fine buzz', mode: 'fine_buzz', badge: 'High' }
   ];
 
+  const bodyRumbleModeOptions: Array<{ value: ForzaBodyRumbleMode; label: string; badge: string; help: string }> = [
+    {
+      value: 'native_passthrough',
+      label: 'Native game',
+      badge: 'Default',
+      help: 'Leaves continuous engine and road rumble to the game while DSCC adds adaptive triggers, LEDs, shift thumps, and impact thumps.'
+    },
+    {
+      value: 'dscc_full_control',
+      label: 'DSCC mix',
+      badge: 'Full body',
+      help: 'Lets DSCC replace continuous body rumble with telemetry-driven road, slip, curb, puddle, and drivetrain layers.'
+    }
+  ];
+
   const forzaEffectMetas: ForzaEffectMeta[] = [
     {
       id: 'brake_resistance',
@@ -513,6 +533,11 @@
   let configLoadedFor = '';
   let configLoadError = '';
   let currentControllerConfig: ControllerConfiguration | null = null;
+  let edgeProfilesLoadedFor = '';
+  let edgeProfiles: EdgeProfilesResponse | null = null;
+  let edgeProfilesLoading = false;
+  let edgeProfilesBusySlot = '';
+  let edgeProfilesError = '';
   let profileSaveBaselineSignature = '';
   let profileConfigDirty = false;
   let effectActivityUntil: Record<string, number> = {};
@@ -574,6 +599,7 @@
   let triggerIntensity = 'Strong (Standard)';
   let vibrationIntensity = 'Medium';
   let vibrationMode = 'Balanced';
+  let forzaBodyRumbleMode: ForzaBodyRumbleMode = 'native_passthrough';
   let lightbarEnabled = true;
   let lightbarColor = '#4cc9f0';
   let rpmColor = '#ff3a2e';
@@ -1724,6 +1750,8 @@
       };
     });
   };
+  const normalizeForzaBodyRumbleMode = (mode: string | undefined | null): ForzaBodyRumbleMode =>
+    mode === 'dscc_full_control' ? 'dscc_full_control' : 'native_passthrough';
 
   const editableConfigFromController = (config: ControllerConfiguration): EditableControllerConfig => ({
     inputMode: config.inputMode,
@@ -1758,6 +1786,7 @@
         brightness: normalizeTriggerPercent(config.lightbar?.brightness ?? 72)
       },
       forza: {
+        bodyRumbleMode: normalizeForzaBodyRumbleMode(config.forza?.bodyRumbleMode),
         effects: normalizeForzaEffects(config.forza?.effects).map((effect) => ({
           id: effect.id,
           enabled: effect.enabled,
@@ -1807,6 +1836,12 @@
     forzaEffects = normalizeForzaEffects(forzaEffects.map((effect) => ({ ...effect, enabled })));
     scheduleLiveControllerConfigSync();
   };
+
+  const setForzaBodyRumbleMode = (mode: ForzaBodyRumbleMode) => {
+    forzaBodyRumbleMode = normalizeForzaBodyRumbleMode(mode);
+    scheduleLiveControllerConfigSync();
+  };
+
   const toggleAllForzaEffects = () => {
     setAllForzaEffects(!allForzaEffectsEnabled);
   };
@@ -2023,6 +2058,7 @@
     lightbarColor = config.lightbar?.color ?? '#4cc9f0';
     rpmColor = config.lightbar?.rpmColor ?? '#ff3a2e';
     lightbarBrightness = config.lightbar?.brightness ?? 72;
+    forzaBodyRumbleMode = normalizeForzaBodyRumbleMode(config.forza?.bodyRumbleMode);
     forzaEffects = normalizeForzaEffects(config.forza?.effects);
   };
   const applyControllerConfig = (config: ControllerConfiguration, updateProfileBaseline = true) => {
@@ -2041,6 +2077,82 @@
     } catch (caught) {
       configLoadError = caught instanceof Error ? caught.message : 'Unable to load controller configuration.';
       showToast(configLoadError, 'error');
+    }
+  };
+
+  const loadEdgeProfiles = async (controllerId: string, force = false) => {
+    if (!force && edgeProfilesLoadedFor === controllerId && (edgeProfiles || edgeProfilesLoading)) return;
+    edgeProfilesLoadedFor = controllerId;
+    edgeProfilesLoading = true;
+    edgeProfilesError = '';
+    try {
+      edgeProfiles = await getEdgeProfiles(controllerId);
+    } catch (caught) {
+      edgeProfiles = null;
+      edgeProfilesError = caught instanceof Error ? caught.message : 'Unable to read Edge onboard slots.';
+    } finally {
+      edgeProfilesLoading = false;
+    }
+  };
+
+  const resetEdgeProfiles = () => {
+    edgeProfilesLoadedFor = '';
+    edgeProfiles = null;
+    edgeProfilesLoading = false;
+    edgeProfilesBusySlot = '';
+    edgeProfilesError = '';
+  };
+
+  const edgeSlotStatus = (slot: EdgeProfileSlot) => {
+    if (slot.state === 'default') return 'default';
+    if (slot.hardwareSynced) return 'on controller';
+    if (slot.staged) return 'staged';
+    return slot.state.replaceAll('_', ' ');
+  };
+
+  const edgeSlotName = (slot: EdgeProfileSlot) => slot.name || slot.staged?.name || 'Empty Slot';
+  const edgeSlotsReadTooltip =
+    'Reads onboard slots from a USB-connected DualSense Edge. Bluetooth and Windows fallback controllers can only show local staged status.';
+  const edgeSlotInfoTooltip = (slot: EdgeProfileSlot) => {
+    if (slot.state === 'default') {
+      return 'The Fn + Triangle default profile is readable but not writable from DSCC.';
+    }
+    if (slot.hardwareSynced) {
+      return `${slot.shortcut} is currently synced with controller memory.`;
+    }
+    if (slot.staged) {
+      return `${slot.shortcut} has local staged settings that still need a USB hardware write.`;
+    }
+    return `${slot.shortcut} has no synced profile data available yet. Connect over USB and read slots to refresh controller memory state.`;
+  };
+  const edgeSlotWriteTooltip = (slot: EdgeProfileSlot) =>
+    `Writes the current trigger ranges, lightbar color, stick presets, and supported button remaps to ${slot.shortcut}. Live telemetry effects still require DSCC to be running.`;
+
+  const edgeProfileNameForSlot = (slot: EdgeProfileSlot) => {
+    const profileName = activeProfileHeaderName || activeProfile?.name || 'DSCC Profile';
+    return `${profileName} ${slot.shortcut.replace('Fn + ', '')}`.trim().slice(0, 64);
+  };
+
+  const writeCurrentConfigToEdgeSlot = async (slot: EdgeProfileSlot) => {
+    if (!controller || !slot.editable || edgeProfilesBusySlot) return;
+    edgeProfilesBusySlot = slot.slotId;
+    edgeProfilesError = '';
+    try {
+      const config = buildControllerConfig();
+      const response = await writeEdgeProfile(controller.id, slot.slotId, {
+        name: edgeProfileNameForSlot(slot),
+        trigger: config.trigger,
+        lightbar: config.lightbar,
+        sticks: config.sticks,
+        buttons: config.buttons
+      });
+      showToast(response.message, response.accepted ? 'success' : 'error');
+      await loadEdgeProfiles(controller.id, true);
+    } catch (caught) {
+      edgeProfilesError = caught instanceof Error ? caught.message : 'Unable to write Edge onboard slot.';
+      showToast(edgeProfilesError, 'error');
+    } finally {
+      edgeProfilesBusySlot = '';
     }
   };
 
@@ -2066,6 +2178,7 @@
       brightness: 72
     },
     forza: {
+      bodyRumbleMode: 'native_passthrough',
       effects: defaultForzaEffects()
     },
     sticks: {
@@ -2093,6 +2206,7 @@
       ...base,
       trigger: baseForzaTriggerDefaults(),
       forza: {
+        bodyRumbleMode: 'native_passthrough',
         effects: forzaPresetEffects(profileId === 'forza-horizon-immersive' ? 'immersive' : 'base')
       },
       profileAssignments: currentControllerConfig?.profileAssignments ?? []
@@ -2185,6 +2299,7 @@
         brightness: lightbarBrightness
       },
       forza: {
+        bodyRumbleMode: normalizeForzaBodyRumbleMode(forzaBodyRumbleMode),
         effects: normalizeForzaEffects(forzaEffects)
       }
     };
@@ -2805,6 +2920,18 @@
     else stopTriggerInputPolling();
   }
 
+  $: if (
+    tuningReady &&
+    typeof window !== 'undefined' &&
+    (window.location.hash === '#/adaptive-triggers-haptics' || window.location.hash === '#/button-mapping')
+  ) {
+    const routeView = appViewFromHash();
+    if (routeView !== activeView) {
+      activeView = routeView;
+      syncTriggerInputPolling();
+    }
+  }
+
   async function pollTriggerInput() {
     if (triggerInputBusy || !shouldPollTriggerInput()) return;
     triggerInputBusy = true;
@@ -3126,6 +3253,12 @@
   $: if (controller?.id && controller.id !== configLoadedFor) {
     void loadControllerConfig(controller.id);
   }
+
+  $: if (controller?.id && controller.family === 'DualSense Edge') {
+    void loadEdgeProfiles(controller.id);
+  } else if (edgeProfilesLoadedFor || edgeProfiles) {
+    resetEdgeProfiles();
+  }
 </script>
 
 <svelte:window
@@ -3230,6 +3363,70 @@
               </div>
             {/if}
           </div>
+
+          {#if controller?.family === 'DualSense Edge'}
+            <section class="dm-edge-slots" aria-label="DualSense Edge onboard profiles">
+              <div class="dm-edge-slots-head">
+                <div>
+                  <span>Onboard Memory</span>
+                  <strong>Edge Slots</strong>
+                </div>
+                <Tooltip text={edgeSlotsReadTooltip} side="bottom" align="end">
+                  <button
+                    type="button"
+                    class="dm-mini-button"
+                    disabled={edgeProfilesLoading}
+                    aria-label="Refresh DualSense Edge onboard slots"
+                    onclick={() => controller && void loadEdgeProfiles(controller.id, true)}
+                  >
+                    {edgeProfilesLoading ? '...' : 'Read'}
+                  </button>
+                </Tooltip>
+              </div>
+
+              {#if edgeProfilesError}
+                <p class="dm-edge-slots-note error">{edgeProfilesError}</p>
+              {:else if edgeProfiles?.warning}
+                <p class="dm-edge-slots-note">{edgeProfiles.warning}</p>
+              {/if}
+
+              <div class="dm-edge-slot-list">
+                {#if edgeProfiles?.slots.length}
+                  {#each edgeProfiles.slots as slot (slot.slotId)}
+                    <div class="dm-edge-slot-row" class:disabled={!slot.editable}>
+                      <Tooltip block text={edgeSlotInfoTooltip(slot)} side="right" align="start">
+                        <div class="dm-edge-slot-copy">
+                          <span>{slot.shortcut}</span>
+                          <strong>{edgeSlotName(slot)}</strong>
+                          <small>{edgeSlotStatus(slot)}</small>
+                        </div>
+                      </Tooltip>
+                      {#if slot.editable}
+                        <Tooltip text={edgeSlotWriteTooltip(slot)} side="left" align="center">
+                          <button
+                            type="button"
+                            class="dm-mini-button primary"
+                            disabled={!currentControllerConfig || edgeProfilesBusySlot === slot.slotId}
+                            onclick={() => void writeCurrentConfigToEdgeSlot(slot)}
+                          >
+                            {edgeProfilesBusySlot === slot.slotId ? '...' : 'Write'}
+                          </button>
+                        </Tooltip>
+                      {/if}
+                    </div>
+                  {/each}
+                {:else}
+                  <div class="dm-edge-slot-row disabled">
+                    <div>
+                      <span>Fn Slots</span>
+                      <strong>{edgeProfilesLoading ? 'Reading slots' : 'No slot data'}</strong>
+                      <small>{edgeProfilesLoading ? 'usb scan' : 'unavailable'}</small>
+                    </div>
+                  </div>
+                {/if}
+              </div>
+            </section>
+          {/if}
         </div>
 
         <div class="dm-games-column wide">
@@ -3794,6 +3991,30 @@
             <div class="dm-effects-count">
               <code>{enabledForzaEffectCount}/{forzaEffectMetas.length}</code>
               <button class:active={allForzaEffectsEnabled} class="dm-toggle" type="button" aria-label="Toggle all effects" aria-pressed={allForzaEffectsEnabled} onclick={toggleAllForzaEffects}><span></span></button>
+            </div>
+          </div>
+
+          <div class="dm-body-mode-panel" aria-label="Body rumble source">
+            <div class="dm-body-mode-title">
+              <span>Body Source</span>
+              <code>{forzaBodyRumbleMode === 'native_passthrough' ? 'Native' : 'DSCC'}</code>
+            </div>
+            <div class="dm-body-mode-toggle" role="radiogroup" aria-label="Forza body rumble mode">
+              {#each bodyRumbleModeOptions as option}
+                <Tooltip block text={option.help} side="bottom" align="start">
+                  <button
+                    class:active={forzaBodyRumbleMode === option.value}
+                    class="dm-body-mode-option"
+                    type="button"
+                    role="radio"
+                    aria-checked={forzaBodyRumbleMode === option.value}
+                    onclick={() => setForzaBodyRumbleMode(option.value)}
+                  >
+                    <strong>{option.label}</strong>
+                    <span>{option.badge}</span>
+                  </button>
+                </Tooltip>
+              {/each}
             </div>
           </div>
 

@@ -40,7 +40,9 @@ use dscc_device::{
     ControllerInfo as DeviceControllerInfo, ControllerInputState, ControllerOutputManager,
     ControllerOutputTarget, ControllerOutputWrite, ControllerState as DeviceControllerState,
     DeviceConfig, DeviceEvent, DeviceFamily, DeviceManager, DevicePathHint, DeviceTransport,
-    DeviceTransportKind, HidApiTransport, MockTransport, OutputMode, RawDeviceId, RawHidDevice,
+    DeviceTransportKind, EdgeButton, EdgeButtonMapping, EdgeOnboardProfile, EdgeOnboardSlotId,
+    EdgeProfileIntensity, EdgeStickPreset, EdgeStickProfile, EdgeTriggerDeadzone, HidApiTransport,
+    MockTransport, OutputMode, RawDeviceId, RawHidDevice,
 };
 use dscc_telemetry::{AdapterDetection, SignalName, SignalSnapshot, SignalUpdate, SignalValue};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -91,6 +93,10 @@ const IMMERSIVE_PROFILE_ID: &str = FORZA_HORIZON_IMMERSIVE_PROFILE_ID;
 
 fn current_timestamp() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+fn current_timestamp_millis() -> u64 {
+    chrono::Utc::now().timestamp_millis().max(0) as u64
 }
 
 const TELEMETRY_PACKET_STALE_AFTER: Duration = Duration::from_secs(2);
@@ -230,7 +236,11 @@ fn forza_horizon_preset() -> ForzaTelemetryConfig {
         })
         .collect();
 
-    ForzaTelemetryConfig { effects }.normalized()
+    ForzaTelemetryConfig {
+        body_rumble_mode: default_forza_body_rumble_mode(),
+        effects,
+    }
+    .normalized()
 }
 
 /// Richer "Immersive" preset. This keeps the same trigger language as the stock
@@ -277,7 +287,11 @@ fn forza_horizon_immersive_preset() -> ForzaTelemetryConfig {
         })
         .collect();
 
-    ForzaTelemetryConfig { effects }.normalized()
+    ForzaTelemetryConfig {
+        body_rumble_mode: default_forza_body_rumble_mode(),
+        effects,
+    }
+    .normalized()
 }
 
 /// Rally preset for Assetto Corsa Rally. It reuses DSCC's normalized racing
@@ -313,7 +327,11 @@ fn assetto_corsa_rally_preset() -> ForzaTelemetryConfig {
         })
         .collect();
 
-    ForzaTelemetryConfig { effects }.normalized()
+    ForzaTelemetryConfig {
+        body_rumble_mode: default_forza_body_rumble_mode(),
+        effects,
+    }
+    .normalized()
 }
 
 fn forza_horizon_trigger_preset() -> TriggerConfig {
@@ -1154,6 +1172,8 @@ pub struct TriggerConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ForzaTelemetryConfig {
+    #[serde(default = "default_forza_body_rumble_mode")]
+    pub body_rumble_mode: String,
     #[serde(default)]
     pub effects: Vec<ForzaEffectConfig>,
 }
@@ -4968,6 +4988,9 @@ impl AgentState {
                 };
                 return Some((controller_id, output));
             }
+            if let Some(output) = global_lightbar_output(inner, &resolution) {
+                return Some((controller_id, output));
+            }
             return None;
         }
         let config = controller_config_for_resolution(inner, &resolution);
@@ -5643,6 +5666,7 @@ impl TriggerConfig {
 impl Default for ForzaTelemetryConfig {
     fn default() -> Self {
         Self {
+            body_rumble_mode: default_forza_body_rumble_mode(),
             effects: default_forza_effect_configs(),
         }
     }
@@ -5650,6 +5674,12 @@ impl Default for ForzaTelemetryConfig {
 
 impl ForzaTelemetryConfig {
     fn normalized(self) -> Self {
+        let body_rumble_mode =
+            if forza_body_rumble_modes().contains(&self.body_rumble_mode.as_str()) {
+                self.body_rumble_mode
+            } else {
+                default_forza_body_rumble_mode()
+            };
         let mut provided = self
             .effects
             .into_iter()
@@ -5677,7 +5707,10 @@ impl ForzaTelemetryConfig {
             }
         }
 
-        Self { effects }
+        Self {
+            body_rumble_mode,
+            effects,
+        }
     }
 
     fn effect(&self, id: &str) -> ForzaEffectConfig {
@@ -5721,6 +5754,14 @@ fn default_forza_effect_intensity() -> u8 {
 
 fn default_forza_effect_route() -> String {
     "body_both".to_string()
+}
+
+fn default_forza_body_rumble_mode() -> String {
+    "native_passthrough".to_string()
+}
+
+fn forza_body_rumble_modes() -> &'static [&'static str] {
+    &["native_passthrough", "dscc_full_control"]
 }
 
 fn default_forza_effect(id: &str) -> ForzaEffectConfig {
@@ -5928,6 +5969,49 @@ impl EdgeProfilesResponse {
             slots: edge_profile_slots(store),
         }
     }
+
+    fn for_controller_with_hardware(
+        detail: &ControllerDetail,
+        store: Option<&EdgeProfileStore>,
+        hardware_profiles: Option<&[EdgeOnboardProfile]>,
+        hardware_warning: Option<String>,
+        hardware_writes_enabled: bool,
+    ) -> Self {
+        if detail.model != "DualSense Edge" {
+            return Self::for_controller(detail, store);
+        }
+
+        let Some(hardware_profiles) = hardware_profiles else {
+            let warning = hardware_warning.unwrap_or_else(|| {
+                "Edge onboard slots can be staged locally. Connect the DualSense Edge over USB to read or write controller memory.".to_string()
+            });
+            return Self {
+                controller_id: detail.id.clone(),
+                support_state: EdgeProfileSupportState::Unknown,
+                warning,
+                slots: edge_profile_slots(store),
+            };
+        };
+
+        let (support_state, warning) = if hardware_writes_enabled {
+            (
+                EdgeProfileSupportState::ReadWrite,
+                "DualSense Edge onboard slots were read over USB. DSCC can write static onboard trigger, stick, and button settings; live telemetry effects still require DSCC to be running.".to_string(),
+            )
+        } else {
+            (
+                EdgeProfileSupportState::ReadOnly,
+                "DualSense Edge onboard slots were read over USB, but hardware writes are disabled by DSCC output mode. Slot changes will be staged locally.".to_string(),
+            )
+        };
+
+        Self {
+            controller_id: detail.id.clone(),
+            support_state,
+            warning,
+            slots: edge_profile_slots_with_hardware(store, hardware_profiles),
+        }
+    }
 }
 
 fn edge_profile_slots(store: Option<&EdgeProfileStore>) -> Vec<EdgeProfileSlot> {
@@ -5978,6 +6062,91 @@ fn edge_profile_slots(store: Option<&EdgeProfileStore>) -> Vec<EdgeProfileSlot> 
             staged: staged("square"),
         },
     ]
+}
+
+fn edge_profile_slots_with_hardware(
+    store: Option<&EdgeProfileStore>,
+    hardware_profiles: &[EdgeOnboardProfile],
+) -> Vec<EdgeProfileSlot> {
+    [
+        EdgeOnboardSlotId::Default,
+        EdgeOnboardSlotId::Square,
+        EdgeOnboardSlotId::Cross,
+        EdgeOnboardSlotId::Circle,
+    ]
+    .into_iter()
+    .map(|slot| {
+        let slot_id = slot.as_str();
+        let staged = store.and_then(|store| store.slots.get(slot_id)).cloned();
+        let hardware = hardware_profiles
+            .iter()
+            .find(|profile| profile.slot == slot)
+            .cloned();
+
+        if slot == EdgeOnboardSlotId::Default {
+            return EdgeProfileSlot {
+                slot_id: slot_id.to_string(),
+                shortcut: slot.shortcut().to_string(),
+                name: hardware
+                    .as_ref()
+                    .filter(|profile| profile.assigned && !profile.name.trim().is_empty())
+                    .map(|profile| profile.name.clone())
+                    .or_else(|| Some("Default Profile".to_string())),
+                state: EdgeProfileSlotState::Default,
+                editable: false,
+                hardware_synced: true,
+                staged: hardware.as_ref().map(edge_profile_config_from_hardware),
+            };
+        }
+
+        if let Some(staged) = staged.filter(|profile| !profile.hardware_synced) {
+            return EdgeProfileSlot {
+                slot_id: slot_id.to_string(),
+                shortcut: slot.shortcut().to_string(),
+                name: Some(staged.name.clone()),
+                state: EdgeProfileSlotState::Assigned,
+                editable: true,
+                hardware_synced: false,
+                staged: Some(staged),
+            };
+        }
+
+        match hardware {
+            Some(profile) if profile.assigned => {
+                let config = edge_profile_config_from_hardware(&profile);
+                EdgeProfileSlot {
+                    slot_id: slot_id.to_string(),
+                    shortcut: slot.shortcut().to_string(),
+                    name: Some(config.name.clone()),
+                    state: EdgeProfileSlotState::Assigned,
+                    editable: true,
+                    hardware_synced: true,
+                    staged: Some(config),
+                }
+            }
+            Some(_) => EdgeProfileSlot {
+                slot_id: slot_id.to_string(),
+                shortcut: slot.shortcut().to_string(),
+                name: None,
+                state: EdgeProfileSlotState::Empty,
+                editable: true,
+                hardware_synced: true,
+                staged: None,
+            },
+            None => EdgeProfileSlot {
+                slot_id: slot_id.to_string(),
+                shortcut: slot.shortcut().to_string(),
+                name: store
+                    .and_then(|store| store.slots.get(slot_id))
+                    .map(|profile| profile.name.clone()),
+                state: EdgeProfileSlotState::Unknown,
+                editable: true,
+                hardware_synced: false,
+                staged: store.and_then(|store| store.slots.get(slot_id)).cloned(),
+            },
+        }
+    })
+    .collect()
 }
 
 fn default_profile_assignments(edge: bool) -> Vec<ProfileAssignmentConfig> {
@@ -6200,6 +6369,152 @@ fn edge_profile_config_from_request(request: UpdateEdgeProfileRequest) -> EdgePr
         updated_at: current_timestamp(),
         hardware_synced: false,
     }
+}
+
+fn edge_slot_id_from_api(slot: &str) -> Option<EdgeOnboardSlotId> {
+    match slot {
+        "default" | "triangle" => Some(EdgeOnboardSlotId::Default),
+        "square" => Some(EdgeOnboardSlotId::Square),
+        "cross" => Some(EdgeOnboardSlotId::Cross),
+        "circle" => Some(EdgeOnboardSlotId::Circle),
+        _ => None,
+    }
+}
+
+fn edge_profile_config_from_hardware(profile: &EdgeOnboardProfile) -> EdgeProfileSlotConfig {
+    let mut trigger = TriggerConfig::default();
+    trigger.same_range = profile.trigger_deadzone.unified;
+    trigger.l2_from = profile.trigger_deadzone.left[0].min(100);
+    trigger.l2_to = profile.trigger_deadzone.left[1].clamp(trigger.l2_from, 100);
+    trigger.r2_from = profile.trigger_deadzone.right[0].min(100);
+    trigger.r2_to = profile.trigger_deadzone.right[1].clamp(trigger.r2_from, 100);
+    trigger.intensity = edge_trigger_intensity_label(profile.trigger_effect_intensity).to_string();
+    trigger.vibration = edge_vibration_label(profile.vibration_intensity).to_string();
+
+    EdgeProfileSlotConfig {
+        name: if profile.name.trim().is_empty() {
+            profile.slot.shortcut().to_string()
+        } else {
+            profile.name.trim().chars().take(64).collect()
+        },
+        trigger: trigger.normalized(),
+        lightbar: LightbarConfig::default(),
+        sticks: StickConfig {
+            left_curve: profile.left_stick.preset.as_str().to_string(),
+            left_curve_amount: 50,
+            left_deadzone: 0,
+            right_curve: profile.right_stick.preset.as_str().to_string(),
+            right_curve_amount: 50,
+            right_deadzone: 0,
+        }
+        .normalized(),
+        buttons: edge_button_assignments_from_hardware(&profile.button_mappings),
+        updated_at: edge_profile_updated_at(profile.updated_at_ms),
+        hardware_synced: true,
+    }
+}
+
+fn edge_profile_from_slot_config(
+    slot: EdgeOnboardSlotId,
+    config: &EdgeProfileSlotConfig,
+) -> EdgeOnboardProfile {
+    let config = config.clone().normalized();
+    let mut profile = EdgeOnboardProfile::new(slot, config.name.clone());
+    profile.trigger_deadzone = EdgeTriggerDeadzone {
+        left: [config.trigger.l2_from, config.trigger.l2_to],
+        right: [config.trigger.r2_from, config.trigger.r2_to],
+        unified: config.trigger.same_range,
+    };
+    profile.left_stick = EdgeStickProfile {
+        preset: EdgeStickPreset::from_label(&config.sticks.left_curve),
+        ..EdgeStickProfile::default()
+    };
+    profile.right_stick = EdgeStickProfile {
+        preset: EdgeStickPreset::from_label(&config.sticks.right_curve),
+        ..EdgeStickProfile::default()
+    };
+    profile.trigger_effect_intensity =
+        edge_profile_intensity_from_trigger(&config.trigger.intensity);
+    profile.vibration_intensity = edge_profile_intensity_from_vibration(&config.trigger.vibration);
+    profile.button_mappings = edge_button_mappings_from_config(&config.buttons);
+    profile.updated_at_ms = current_timestamp_millis();
+    profile
+}
+
+fn edge_button_assignments_from_hardware(
+    mappings: &[EdgeButtonMapping],
+) -> Vec<ButtonAssignmentConfig> {
+    let mut assignments: Vec<_> = mappings
+        .iter()
+        .filter(|mapping| mapping.source != mapping.target)
+        .map(|mapping| ButtonAssignmentConfig {
+            key: mapping.source.label().to_string(),
+            label: mapping.target.label().to_string(),
+        })
+        .collect();
+
+    if assignments.is_empty() {
+        assignments = default_button_assignments(true);
+    }
+
+    normalize_controller_button_assignments(assignments, true)
+}
+
+fn edge_button_mappings_from_config(buttons: &[ButtonAssignmentConfig]) -> Vec<EdgeButtonMapping> {
+    let mut mappings = dscc_device::default_button_mappings().to_vec();
+    for button in buttons {
+        let Some(source) = EdgeButton::from_label(&button.key) else {
+            continue;
+        };
+        let Some(target) = EdgeButton::from_label(&button.label) else {
+            continue;
+        };
+        if let Some(mapping) = mappings.iter_mut().find(|mapping| mapping.source == source) {
+            mapping.target = target;
+        } else {
+            mappings.push(EdgeButtonMapping { source, target });
+        }
+    }
+    mappings
+}
+
+fn edge_trigger_intensity_label(value: EdgeProfileIntensity) -> &'static str {
+    match value {
+        EdgeProfileIntensity::Off => "Off",
+        EdgeProfileIntensity::Weak => "Weak",
+        EdgeProfileIntensity::Medium => "Medium",
+        EdgeProfileIntensity::Strong => "Strong (Standard)",
+    }
+}
+
+fn edge_vibration_label(value: EdgeProfileIntensity) -> &'static str {
+    match value {
+        EdgeProfileIntensity::Off => "Off",
+        EdgeProfileIntensity::Weak => "Low",
+        EdgeProfileIntensity::Medium => "Medium",
+        EdgeProfileIntensity::Strong => "High",
+    }
+}
+
+fn edge_profile_intensity_from_trigger(value: &str) -> EdgeProfileIntensity {
+    EdgeProfileIntensity::from_label(value.trim().strip_suffix(" (Standard)").unwrap_or(value))
+}
+
+fn edge_profile_intensity_from_vibration(value: &str) -> EdgeProfileIntensity {
+    EdgeProfileIntensity::from_label(match value.trim() {
+        "Low" => "Weak",
+        "High" => "Strong",
+        other => other,
+    })
+}
+
+fn edge_profile_updated_at(updated_at_ms: u64) -> String {
+    if updated_at_ms == 0 {
+        return current_timestamp();
+    }
+    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(updated_at_ms as i64)
+        .map(|timestamp| timestamp.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        .unwrap_or_else(current_timestamp)
 }
 
 fn profile_override_key(controller_id: Option<&str>, game_id: Option<&str>) -> String {
@@ -7836,12 +8151,27 @@ fn hardware_output_detection_lightbar_allowed(
         && detection_game_module(detection).is_some()
 }
 
+fn hardware_output_global_lightbar_allowed(
+    inner: &AgentStateInner,
+    game_detection: Option<&GameDetectionResponse>,
+) -> bool {
+    if game_detection.is_some_and(|detection| detection.profile_id.is_some()) {
+        return false;
+    }
+
+    let resolution = profile_resolution(inner, game_detection);
+    resolution.controller_id.is_some()
+        && resolution.validation == "valid"
+        && global_lightbar_output(inner, &resolution).is_some()
+}
+
 fn hardware_output_any_allowed(
     inner: &AgentStateInner,
     game_detection: Option<&GameDetectionResponse>,
 ) -> bool {
     hardware_output_runtime_allowed(inner, game_detection)
         || hardware_output_detection_lightbar_allowed(inner, game_detection)
+        || hardware_output_global_lightbar_allowed(inner, game_detection)
 }
 
 fn detection_game_module(detection: &GameDetectionResponse) -> Option<&'static GameModule> {
@@ -7857,6 +8187,22 @@ fn detection_lightbar_output(detection: &GameDetectionResponse) -> Option<Lightb
     Some(LightbarOutput {
         color,
         brightness: clamp_unit(f64::from(game.detection_lightbar_brightness.min(100)) / 100.0),
+    })
+}
+
+fn global_lightbar_output(
+    inner: &AgentStateInner,
+    resolution: &ProfileResolutionResponse,
+) -> Option<ControllerOutputFrame> {
+    let config = controller_config_for_resolution(inner, resolution)?;
+    let lightbar = config.lightbar.normalized();
+    let lightbar = lightbar.enabled.then(|| LightbarOutput {
+        color: lightbar.rgb(),
+        brightness: clamp_unit(f64::from(lightbar.brightness) / 100.0),
+    });
+    Some(ControllerOutputFrame {
+        lightbar,
+        ..ControllerOutputFrame::default()
     })
 }
 
@@ -8167,7 +8513,7 @@ fn current_effect_response_from_parts(
 
     if hardware_output_enabled {
         warnings.push(
-            "Hardware output is enabled, but DSCC only writes while a supported game profile has live telemetry or during a manual effect test."
+            "Hardware output is enabled. DSCC keeps trigger and rumble output neutral until supported-game telemetry is live or during a manual effect test; idle lightbar follows the Global profile."
                 .to_string(),
         );
     } else {
@@ -8320,6 +8666,7 @@ fn forza_rumble_output(
     let shift = signal_unit_value(snapshot, "drivetrain.shift_pulse");
     let suspension_impact = signal_unit_value(snapshot, "suspension.impact_pulse");
     let rev_limiter = signal_scaled(snapshot, "vehicle.rpm_ratio", 0.93, 1.0);
+    let native_passthrough = forza.body_rumble_mode == default_forza_body_rumble_mode();
 
     let road_texture = surface.max(strip * 0.95) * rolling_texture * (0.35 + speed * 0.65);
     let strip_feedback = strip * rolling_texture;
@@ -8341,38 +8688,40 @@ fn forza_rumble_output(
 
     let mut low = 0.0;
     let mut high = 0.0;
-    add_forza_rumble_component(
-        &mut low,
-        &mut high,
-        &forza.effect("road_texture"),
-        road_texture,
-        0.46,
-        0.58,
-    );
-    add_forza_rumble_component(
-        &mut low,
-        &mut high,
-        &forza.effect("rumble_strip"),
-        strip_feedback,
-        0.26,
-        0.52,
-    );
-    add_forza_rumble_component(
-        &mut low,
-        &mut high,
-        &forza.effect("tire_slip"),
-        tire_feedback.max(brake_feedback).max(traction_feedback),
-        0.16,
-        0.56,
-    );
-    add_forza_rumble_component(
-        &mut low,
-        &mut high,
-        &forza.effect("puddle_drag"),
-        puddle_feedback,
-        0.34,
-        0.24,
-    );
+    if !native_passthrough {
+        add_forza_rumble_component(
+            &mut low,
+            &mut high,
+            &forza.effect("road_texture"),
+            road_texture,
+            0.46,
+            0.58,
+        );
+        add_forza_rumble_component(
+            &mut low,
+            &mut high,
+            &forza.effect("rumble_strip"),
+            strip_feedback,
+            0.26,
+            0.52,
+        );
+        add_forza_rumble_component(
+            &mut low,
+            &mut high,
+            &forza.effect("tire_slip"),
+            tire_feedback.max(brake_feedback).max(traction_feedback),
+            0.16,
+            0.56,
+        );
+        add_forza_rumble_component(
+            &mut low,
+            &mut high,
+            &forza.effect("puddle_drag"),
+            puddle_feedback,
+            0.34,
+            0.24,
+        );
+    }
     add_forza_rumble_component(
         &mut low,
         &mut high,
@@ -8389,38 +8738,40 @@ fn forza_rumble_output(
         0.92,
         0.84,
     );
-    add_forza_rumble_component(
-        &mut low,
-        &mut high,
-        &forza.effect("rev_limiter_buzz"),
-        rev_limiter,
-        0.20,
-        0.80,
-    );
-    add_forza_rumble_component(
-        &mut low,
-        &mut high,
-        &forza.effect("throttle_resistance"),
-        drivetrain,
-        0.32,
-        0.12,
-    );
-    add_forza_rumble_component(
-        &mut low,
-        &mut high,
-        &forza.effect("brake_resistance"),
-        brake,
-        0.14,
-        0.08,
-    );
-    add_forza_rumble_component(
-        &mut low,
-        &mut high,
-        &forza.effect("handbrake_wall"),
-        handbrake,
-        0.30,
-        0.12,
-    );
+    if !native_passthrough {
+        add_forza_rumble_component(
+            &mut low,
+            &mut high,
+            &forza.effect("rev_limiter_buzz"),
+            rev_limiter,
+            0.20,
+            0.80,
+        );
+        add_forza_rumble_component(
+            &mut low,
+            &mut high,
+            &forza.effect("throttle_resistance"),
+            drivetrain,
+            0.32,
+            0.12,
+        );
+        add_forza_rumble_component(
+            &mut low,
+            &mut high,
+            &forza.effect("brake_resistance"),
+            brake,
+            0.14,
+            0.08,
+        );
+        add_forza_rumble_component(
+            &mut low,
+            &mut high,
+            &forza.effect("handbrake_wall"),
+            handbrake,
+            0.30,
+            0.12,
+        );
+    }
 
     low = clamp_unit(low * vibration);
     high = clamp_unit(high * vibration);
@@ -10624,11 +10975,90 @@ async fn update_controller_config(
     Ok(Json(config))
 }
 
+struct EdgeHardwareProfilesRead {
+    profiles: Vec<EdgeOnboardProfile>,
+    hardware_writes_enabled: bool,
+}
+
+enum EdgeHardwareProfileWriteResult {
+    Written,
+    StagedOnly(String),
+    Failed(String),
+}
+
+async fn read_edge_profiles_from_hardware(
+    state: &AgentState,
+    controller_id: &str,
+) -> Result<EdgeHardwareProfilesRead, String> {
+    let manager = state
+        .output_manager
+        .clone()
+        .ok_or_else(|| "HID output manager is unavailable".to_string())?;
+    let target = {
+        let inner = state.inner.read().await;
+        controller_output_target_or_reason(&inner, controller_id)?
+    };
+    if target.transport != DeviceTransportKind::Usb {
+        return Err("DualSense Edge onboard profile reads require a USB connection".to_string());
+    }
+
+    let hardware_writes_enabled = manager.hardware_writes_enabled();
+    let profiles = tokio::task::spawn_blocking(move || manager.read_edge_onboard_profiles(&target))
+        .await
+        .map_err(|error| format!("DualSense Edge profile read task failed: {error}"))?
+        .map_err(|error| error.to_string())?;
+
+    Ok(EdgeHardwareProfilesRead {
+        profiles,
+        hardware_writes_enabled,
+    })
+}
+
+async fn write_edge_profile_to_hardware(
+    state: &AgentState,
+    controller_id: &str,
+    profile: EdgeOnboardProfile,
+) -> EdgeHardwareProfileWriteResult {
+    let Some(manager) = state.output_manager.clone() else {
+        return EdgeHardwareProfileWriteResult::StagedOnly(
+            "HID output manager is unavailable".to_string(),
+        );
+    };
+    if !manager.hardware_writes_enabled() {
+        return EdgeHardwareProfileWriteResult::StagedOnly(
+            "hardware writes are disabled by DSCC output mode".to_string(),
+        );
+    }
+
+    let target = {
+        let inner = state.inner.read().await;
+        match controller_output_target_or_reason(&inner, controller_id) {
+            Ok(target) => target,
+            Err(error) => return EdgeHardwareProfileWriteResult::StagedOnly(error),
+        }
+    };
+    if target.transport != DeviceTransportKind::Usb {
+        return EdgeHardwareProfileWriteResult::StagedOnly(
+            "DualSense Edge onboard profile writes require a USB connection".to_string(),
+        );
+    }
+
+    match tokio::task::spawn_blocking(move || manager.write_edge_onboard_profile(&target, &profile))
+        .await
+    {
+        Ok(Ok(())) => EdgeHardwareProfileWriteResult::Written,
+        Ok(Err(error)) => EdgeHardwareProfileWriteResult::Failed(error.to_string()),
+        Err(error) => EdgeHardwareProfileWriteResult::Failed(format!(
+            "DualSense Edge profile write task failed: {error}"
+        )),
+    }
+}
+
 async fn get_edge_profiles(
     Path(id): Path<String>,
     State(state): State<AgentState>,
 ) -> Result<Json<EdgeProfilesResponse>, StatusCode> {
-    let (response, to_save) = {
+    let (detail, store, to_save) = {
         let mut inner = state.inner.write().await;
         let detail = inner.controllers.detail(&id).ok_or(StatusCode::NOT_FOUND)?;
         let snapshot = if let Some(store) = inner.edge_profiles.remove(&id) {
@@ -10637,10 +11067,33 @@ async fn get_edge_profiles(
         } else {
             None
         };
-        let response = EdgeProfilesResponse::for_controller(&detail, inner.edge_profiles.get(&id));
-        (response, snapshot)
+        (detail, inner.edge_profiles.get(&id).cloned(), snapshot)
     };
     persist_snapshot(&state, to_save).await;
+
+    if detail.model != "DualSense Edge" {
+        return Ok(Json(EdgeProfilesResponse::for_controller(
+            &detail,
+            store.as_ref(),
+        )));
+    }
+
+    let response = match read_edge_profiles_from_hardware(&state, &id).await {
+        Ok(hardware) => EdgeProfilesResponse::for_controller_with_hardware(
+            &detail,
+            store.as_ref(),
+            Some(&hardware.profiles),
+            None,
+            hardware.hardware_writes_enabled,
+        ),
+        Err(error) => EdgeProfilesResponse::for_controller_with_hardware(
+            &detail,
+            store.as_ref(),
+            None,
+            Some(error),
+            false,
+        ),
+    };
     Ok(Json(response))
 }
 
@@ -10649,7 +11102,7 @@ async fn write_edge_profile(
     State(state): State<AgentState>,
     Json(request): Json<UpdateEdgeProfileRequest>,
 ) -> Result<(StatusCode, Json<ActionAccepted>), StatusCode> {
-    if !["circle", "cross", "square"].contains(&slot.as_str()) {
+    let Some(slot_id) = edge_slot_id_from_api(&slot).filter(|slot| slot.assignable()) else {
         return Ok((
             StatusCode::CONFLICT,
             Json(ActionAccepted {
@@ -10659,27 +11112,65 @@ async fn write_edge_profile(
                 dry_run: Some(true),
             }),
         ));
+    };
+
+    let detail = {
+        let inner = state.inner.read().await;
+        inner.controllers.detail(&id).ok_or(StatusCode::NOT_FOUND)?
+    };
+    let response = EdgeProfilesResponse::for_controller(&detail, None);
+    if response.support_state == EdgeProfileSupportState::Unsupported {
+        return Ok((
+            StatusCode::CONFLICT,
+            Json(ActionAccepted {
+                accepted: false,
+                message: format!(
+                    "Edge onboard profile slot {slot} was not written. {}",
+                    response.warning
+                ),
+                dry_run: Some(true),
+            }),
+        ));
     }
+
+    let mut config = edge_profile_config_from_request(request);
+    let hardware_profile = edge_profile_from_slot_config(slot_id, &config);
+    let write_result = write_edge_profile_to_hardware(&state, &id, hardware_profile).await;
+    let (status, message, dry_run, level) = match write_result {
+        EdgeHardwareProfileWriteResult::Written => {
+            config.hardware_synced = true;
+            (
+                StatusCode::ACCEPTED,
+                format!("Wrote Edge slot {slot} to controller memory for {id}"),
+                false,
+                "info",
+            )
+        }
+        EdgeHardwareProfileWriteResult::StagedOnly(reason) => {
+            config.hardware_synced = false;
+            (
+                StatusCode::ACCEPTED,
+                format!("Staged Edge slot {slot} for controller {id}; no hardware write was attempted: {reason}"),
+                true,
+                "info",
+            )
+        }
+        EdgeHardwareProfileWriteResult::Failed(error) => {
+            config.hardware_synced = false;
+            (
+                StatusCode::CONFLICT,
+                format!(
+                    "Staged Edge slot {slot} locally, but the USB hardware write failed: {error}"
+                ),
+                false,
+                "warn",
+            )
+        }
+    };
 
     let to_save = {
         let mut inner = state.inner.write().await;
-        let detail = inner.controllers.detail(&id).ok_or(StatusCode::NOT_FOUND)?;
-        let response = EdgeProfilesResponse::for_controller(&detail, inner.edge_profiles.get(&id));
-        if response.support_state == EdgeProfileSupportState::Unsupported {
-            return Ok((
-                StatusCode::CONFLICT,
-                Json(ActionAccepted {
-                    accepted: false,
-                    message: format!(
-                        "Edge onboard profile slot {slot} was not written. {}",
-                        response.warning
-                    ),
-                    dry_run: Some(true),
-                }),
-            ));
-        }
-
-        let config = edge_profile_config_from_request(request);
+        inner.controllers.detail(&id).ok_or(StatusCode::NOT_FOUND)?;
         inner
             .edge_profiles
             .entry(id.clone())
@@ -10687,10 +11178,8 @@ async fn write_edge_profile(
             .slots
             .insert(slot.clone(), config);
         inner.logs.push(LogEntry {
-            level: "info".to_string(),
-            message: format!(
-                "Staged DualSense Edge onboard slot {slot} for controller {id}; hardware sync remains disabled"
-            ),
+            level: level.to_string(),
+            message: message.clone(),
             timestamp: current_timestamp(),
         });
         build_persist_snapshot(&inner)
@@ -10698,13 +11187,11 @@ async fn write_edge_profile(
     persist_snapshot(&state, to_save).await;
 
     Ok((
-        StatusCode::ACCEPTED,
+        status,
         Json(ActionAccepted {
-            accepted: true,
-            message: format!(
-                "Staged Edge slot {slot} for controller {id}; no hardware write was attempted"
-            ),
-            dry_run: Some(true),
+            accepted: status == StatusCode::ACCEPTED,
+            message,
+            dry_run: Some(dry_run),
         }),
     ))
 }
@@ -14507,13 +14994,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hardware_output_frame_allows_lightbar_but_waits_for_live_packets() {
+    async fn hardware_output_frame_uses_global_lightbar_without_game_and_waits_for_live_packets() {
         let state = AgentState::from_controller_events([attach_event(
             "edge-forza",
             ControllerFamily::DualSenseEdge,
             ControllerTransportKind::Bluetooth,
             Some(84),
         )]);
+        {
+            let mut inner = state.inner.write().await;
+            let mut config = ControllerConfig::default_for("edge-forza", "DualSense Edge");
+            config.lightbar.color = "#f4a261".to_string();
+            config.lightbar.brightness = 44;
+            inner
+                .controller_configs
+                .insert("edge-forza".to_string(), config);
+        }
 
         let without_game = {
             let inner = state.inner.read().await;
@@ -14523,7 +15019,23 @@ mod tests {
                 EffectEnginePurpose::Hardware,
             )
         };
-        assert!(without_game.is_none());
+        let (_, global_frame) =
+            without_game.expect("idle hardware output keeps the global lightbar color");
+        assert_eq!(global_frame.l2, TriggerOutput::Off);
+        assert_eq!(global_frame.r2, TriggerOutput::Off);
+        assert!(global_frame.rumble.is_none());
+        assert!(global_frame.player_leds.is_none());
+        assert_eq!(
+            global_frame.lightbar,
+            Some(LightbarOutput {
+                color: RgbColor {
+                    red: 0xf4,
+                    green: 0xa2,
+                    blue: 0x61
+                },
+                brightness: 0.44,
+            })
+        );
 
         let detection = detect_running_game_from_processes(["ForzaHorizon6.exe"]);
         let without_packets = {
@@ -14580,7 +15092,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn live_forza_effects_include_telemetry_rumble_and_leds() {
+    async fn live_forza_effects_preserve_native_rumble_by_default_and_can_full_control_body() {
         let state = AgentState::from_controller_events([attach_event(
             "edge-forza",
             ControllerFamily::DualSenseEdge,
@@ -14630,13 +15142,10 @@ mod tests {
 
         let inner = state.inner.read().await;
         let response = current_effect_response(&inner, Some(&detection), true);
-
-        let rumble = response
-            .output
-            .rumble
-            .expect("Forza should drive body rumble");
-        assert!(rumble.low_frequency > 0.20);
-        assert!(rumble.high_frequency > 0.35);
+        assert_eq!(
+            response.output.rumble, None,
+            "native passthrough should leave continuous Forza body rumble to the game"
+        );
         assert!(response.output.lightbar.is_some());
         assert_eq!(
             response.output.player_leds,
@@ -14646,6 +15155,26 @@ mod tests {
             .parity_effects
             .iter()
             .any(|effect| { effect.id == "rumble_strip" && effect.state == "active" }));
+        drop(inner);
+
+        {
+            let mut config = ControllerConfig::default_for("edge-forza", "DualSense Edge");
+            config.forza.body_rumble_mode = "dscc_full_control".to_string();
+            let mut inner = state.inner.write().await;
+            inner
+                .controller_configs
+                .insert("edge-forza".to_string(), config);
+        }
+
+        let inner = state.inner.read().await;
+        let response = current_effect_response(&inner, Some(&detection), true);
+
+        let rumble = response
+            .output
+            .rumble
+            .expect("DSCC full-control mode should drive telemetry body rumble");
+        assert!(rumble.low_frequency > 0.20);
+        assert!(rumble.high_frequency > 0.35);
     }
 
     #[test]
@@ -14881,6 +15410,7 @@ mod tests {
     #[test]
     fn forza_surface_rumble_is_suppressed_while_stationary() {
         let mut forza = ForzaTelemetryConfig::default().normalized();
+        forza.body_rumble_mode = "dscc_full_control".to_string();
         for effect in &mut forza.effects {
             effect.enabled = false;
         }
@@ -15770,13 +16300,14 @@ mod tests {
     }
 
     #[test]
-    fn forza_horizon_preset_enables_road_texture_only_for_continuous_rumble() {
+    fn forza_horizon_preset_preserves_native_body_rumble_by_default() {
         // The "Base" built-in preset is designed to be
-        // battery-conscious: adaptive triggers stay on, road texture is the
-        // default surface cue, and heavier continuous-rumble effects remain
-        // disabled. Event-driven thumps and trigger effects stay enabled.
+        // battery-conscious and game-friendly: adaptive triggers stay on,
+        // native body rumble remains the continuous surface/engine layer,
+        // and DSCC only adds short event-driven thumps by default.
         let preset =
             forza_preset_for_profile("forza-horizon").expect("forza-horizon is a built-in preset");
+        assert_eq!(preset.body_rumble_mode, "native_passthrough");
 
         let road = preset
             .effects
@@ -15869,6 +16400,7 @@ mod tests {
     fn forza_horizon_immersive_preset_layers_detail_without_stealing_core_cues() {
         let preset = forza_preset_for_profile(IMMERSIVE_PROFILE_ID)
             .expect("immersive Horizon is a built-in preset");
+        assert_eq!(preset.body_rumble_mode, "native_passthrough");
         let effect = |id: &str| {
             preset
                 .effects
@@ -15946,7 +16478,15 @@ mod tests {
             signal_update("vehicle.acceleration.magnitude", 0.0),
             signal_update("drivetrain.shift_pulse", 0.0),
         ]);
-        let slip = forza_rumble_output(&preset, &heavy_slip, 1.0, "Balanced")
+        assert_eq!(
+            forza_rumble_output(&preset, &heavy_slip, 1.0, "Balanced"),
+            None,
+            "native passthrough should not replace Forza's own continuous tire/body rumble"
+        );
+
+        let mut full_control_preset = preset.clone();
+        full_control_preset.body_rumble_mode = "dscc_full_control".to_string();
+        let slip = forza_rumble_output(&full_control_preset, &heavy_slip, 1.0, "Balanced")
             .expect("heavy slip should still produce readable feedback");
         assert!(
             slip.high_frequency < 0.19,

@@ -18,6 +18,24 @@ pub trait DeviceTransport: Send + Sync + 'static {
 pub trait DeviceHandle: Send {
     fn read_timeout(&mut self, timeout: Duration) -> Result<Option<Vec<u8>>, DeviceError>;
     fn write(&mut self, report: &[u8]) -> Result<usize, DeviceError>;
+    fn receive_feature_report(
+        &mut self,
+        _report_id: u8,
+        _payload_len: usize,
+    ) -> Result<Vec<u8>, DeviceError> {
+        Err(DeviceError::TransportFault(
+            "feature reports are not supported by this transport".to_string(),
+        ))
+    }
+    fn send_feature_report(
+        &mut self,
+        _report_id: u8,
+        _payload: &[u8],
+    ) -> Result<usize, DeviceError> {
+        Err(DeviceError::TransportFault(
+            "feature reports are not supported by this transport".to_string(),
+        ))
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -31,6 +49,9 @@ struct MockTransportInner {
     read_reports: BTreeMap<RawDeviceId, VecDeque<Vec<u8>>>,
     writes: BTreeMap<RawDeviceId, Vec<Vec<u8>>>,
     write_results: BTreeMap<RawDeviceId, VecDeque<Result<usize, DeviceError>>>,
+    feature_reports: BTreeMap<(RawDeviceId, u8), VecDeque<Vec<u8>>>,
+    feature_writes: BTreeMap<(RawDeviceId, u8), Vec<Vec<u8>>>,
+    feature_write_results: BTreeMap<(RawDeviceId, u8), VecDeque<Result<usize, DeviceError>>>,
     enumerate_error: Option<DeviceError>,
     open_errors: BTreeMap<RawDeviceId, DeviceError>,
 }
@@ -62,10 +83,39 @@ impl MockTransport {
         self.lock().writes.get(id).cloned().unwrap_or_default()
     }
 
+    pub fn push_feature_report(&self, id: RawDeviceId, report_id: u8, report: Vec<u8>) {
+        self.lock()
+            .feature_reports
+            .entry((id, report_id))
+            .or_default()
+            .push_back(report);
+    }
+
+    pub fn feature_writes_for(&self, id: &RawDeviceId, report_id: u8) -> Vec<Vec<u8>> {
+        self.lock()
+            .feature_writes
+            .get(&(id.clone(), report_id))
+            .cloned()
+            .unwrap_or_default()
+    }
+
     pub fn push_write_result(&self, id: RawDeviceId, result: Result<usize, DeviceError>) {
         self.lock()
             .write_results
             .entry(id)
+            .or_default()
+            .push_back(result);
+    }
+
+    pub fn push_feature_write_result(
+        &self,
+        id: RawDeviceId,
+        report_id: u8,
+        result: Result<usize, DeviceError>,
+    ) {
+        self.lock()
+            .feature_write_results
+            .entry((id, report_id))
             .or_default()
             .push_back(result);
     }
@@ -164,6 +214,36 @@ impl DeviceHandle for MockDeviceHandle {
             .and_then(VecDeque::pop_front)
             .unwrap_or(Ok(report.len()))
     }
+
+    fn receive_feature_report(
+        &mut self,
+        report_id: u8,
+        _payload_len: usize,
+    ) -> Result<Vec<u8>, DeviceError> {
+        self.lock()
+            .feature_reports
+            .get_mut(&(self.id.clone(), report_id))
+            .and_then(VecDeque::pop_front)
+            .ok_or_else(|| {
+                DeviceError::TransportFault(format!(
+                    "no mock feature report queued for report id 0x{report_id:02x}"
+                ))
+            })
+    }
+
+    fn send_feature_report(&mut self, report_id: u8, payload: &[u8]) -> Result<usize, DeviceError> {
+        let mut inner = self.lock();
+        inner
+            .feature_writes
+            .entry((self.id.clone(), report_id))
+            .or_default()
+            .push(payload.to_vec());
+        inner
+            .feature_write_results
+            .get_mut(&(self.id.clone(), report_id))
+            .and_then(VecDeque::pop_front)
+            .unwrap_or(Ok(payload.len()))
+    }
 }
 
 #[cfg(test)]
@@ -187,6 +267,23 @@ mod tests {
         assert_eq!(handle.read_timeout(Duration::from_millis(1)).unwrap(), None);
         assert_eq!(handle.write(&[4, 5]).unwrap(), 2);
         assert_eq!(transport.writes_for(&id), vec![vec![4, 5]]);
+    }
+
+    #[test]
+    fn mock_handle_reads_and_records_feature_reports() {
+        let device = RawHidDevice::mock("mock://pad-feature");
+        let id = device.id.clone();
+        let transport = MockTransport::with_devices(vec![device]);
+        transport.push_feature_report(id.clone(), 0x70, vec![9, 8, 7]);
+
+        let mut handle = transport.open(&id).expect("mock device should open");
+
+        assert_eq!(
+            handle.receive_feature_report(0x70, 64).unwrap(),
+            vec![9, 8, 7]
+        );
+        assert_eq!(handle.send_feature_report(0x60, &[1, 2, 3]).unwrap(), 3);
+        assert_eq!(transport.feature_writes_for(&id, 0x60), vec![vec![1, 2, 3]]);
     }
 
     #[test]

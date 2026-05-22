@@ -8,6 +8,7 @@
 
 pub mod capabilities;
 pub mod diagnostics;
+pub mod edge_profile;
 pub mod enumeration;
 pub mod error;
 pub mod events;
@@ -23,6 +24,12 @@ pub mod transport;
 
 pub use capabilities::infer_capabilities;
 pub use diagnostics::{diagnostic_for_error, DeviceDiagnostic, DiagnosticCode, DiagnosticSeverity};
+pub use edge_profile::{
+    decode_edge_onboard_profile, default_button_mappings, encode_edge_onboard_profile,
+    read_edge_onboard_profiles, write_edge_onboard_profile, EdgeButton, EdgeButtonMapping,
+    EdgeOnboardProfile, EdgeOnboardSlotId, EdgeProfileIntensity, EdgeStickPreset, EdgeStickProfile,
+    EdgeTriggerDeadzone,
+};
 pub use enumeration::{
     list_sanitized_hid, list_sanitized_hid_with_access_probe, DeviceAccess, RawHidDevice,
     SanitizedHidDevice,

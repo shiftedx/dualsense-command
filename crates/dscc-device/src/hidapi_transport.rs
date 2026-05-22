@@ -104,6 +104,46 @@ impl DeviceHandle for HidApiDeviceHandle {
             .write(report)
             .map_err(|error| DeviceError::TransportFault(format!("hidapi write failed: {error}")))
     }
+
+    fn receive_feature_report(
+        &mut self,
+        report_id: u8,
+        payload_len: usize,
+    ) -> Result<Vec<u8>, DeviceError> {
+        let mut buffer = vec![0u8; payload_len.saturating_add(1)];
+        buffer[0] = report_id;
+        let size = self
+            .device
+            .get_feature_report(&mut buffer)
+            .map_err(|error| {
+                DeviceError::TransportFault(format!(
+                    "hidapi feature report 0x{report_id:02x} read failed: {error}"
+                ))
+            })?;
+        if size == 0 {
+            return Err(DeviceError::TransportFault(format!(
+                "hidapi feature report 0x{report_id:02x} returned no bytes"
+            )));
+        }
+        buffer.truncate(size);
+        Ok(buffer.into_iter().skip(1).collect())
+    }
+
+    fn send_feature_report(&mut self, report_id: u8, payload: &[u8]) -> Result<usize, DeviceError> {
+        if !self.hardware_writes_enabled {
+            return Ok(payload.len());
+        }
+
+        let mut buffer = Vec::with_capacity(payload.len().saturating_add(1));
+        buffer.push(report_id);
+        buffer.extend_from_slice(payload);
+        self.device.send_feature_report(&buffer).map_err(|error| {
+            DeviceError::TransportFault(format!(
+                "hidapi feature report 0x{report_id:02x} write failed: {error}"
+            ))
+        })?;
+        Ok(payload.len())
+    }
 }
 
 fn raw_device_from_info(info: &DeviceInfo) -> RawHidDevice {
