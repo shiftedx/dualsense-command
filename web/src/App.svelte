@@ -304,17 +304,17 @@
   const FORZA_BRAKE_NORMAL_FORCE = 164 / 255;
   const FORZA_BRAKE_ENDSTOP_FORCE = 238 / 255;
   const FORZA_THROTTLE_BASELINE_FORCE = 8 / 255;
-  const FORZA_THROTTLE_NORMAL_FORCE = 72 / 255;
+  const FORZA_THROTTLE_NORMAL_FORCE = 60 / 255;
   const FORZA_THROTTLE_ENDSTOP_FORCE = 106 / 255;
   const FORZA_ENDSTOP_WALL_OFFSET = 0.03;
-  const FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET = 0.10;
+  const FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET = 0.14;
   const FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION = 0.80;
   const FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION = 0.95;
   const FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION = 0.80;
   const FORZA_BRAKE_ENDSTOP_FORCE_BOOST = 1.25;
-  const FORZA_THROTTLE_ENDSTOP_FORCE_BOOST = 2.0;
-  const FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH = 0.04;
-  const FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE = 1.60;
+  const FORZA_THROTTLE_ENDSTOP_FORCE_BOOST = 2.75;
+  const FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH = 0.12;
+  const FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE = 3.0;
 
   const shiftThumpPresets = [
     { label: 'Soft', intensity: 35 },
@@ -2118,16 +2118,16 @@
   const routeTooltip = (route: ForzaEffectRoute) => routeTooltips[route] ?? 'Selects where DSCC sends this telemetry effect.';
 
   const brakeOvertravelGuardPoint = (end: number) =>
-    end >= 80 ? Math.min(end, Math.max(80, end - 10)) : Math.max(0, end - 3);
+    end >= 80 ? Math.min(end, Math.max(80, end - 14)) : Math.max(0, end - 3);
   const throttleOvertravelGuardPoint = (end: number) =>
-    end >= 80 ? Math.min(end, 95) : Math.max(0, end - 3);
+    end >= 80 ? Math.min(end, Math.max(0, Math.min(end, 95) - 12)) : Math.max(0, end - 3);
 
   const triggerRangeTooltip = (side: 'L2' | 'R2', edge: 'from' | 'to', value: number) =>
     edge === 'from'
       ? `${side} starts building force at ${value}% trigger travel. Raising this creates more free travel before resistance begins.`
       : side === 'L2'
         ? `${side} reaches full configured force at ${value}% trigger travel. Brake lock warning arms near ${brakeOvertravelGuardPoint(value)}% when the end point is high.`
-        : `${side} reaches full configured force at ${value}% trigger travel. Throttle overtravel guard ramps hard near ${throttleOvertravelGuardPoint(value)}% when the end point is high so shift thumps keep travel to punch through.`;
+        : `${side} reaches full configured force at ${value}% trigger travel. Throttle stays light first, then ramps hard from about ${throttleOvertravelGuardPoint(value)}% into the end wall so shift thumps keep travel to punch through.`;
 
   const triggerCurveTooltip = (side: 'L2' | 'R2', value: number) =>
     `${side} curve is ${value.toFixed(2)}. 1.00 is linear; lower values bring resistance in earlier, while higher values keep the pedal lighter at first and ramp harder near the end.`;

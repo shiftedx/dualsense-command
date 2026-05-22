@@ -130,7 +130,7 @@ const FORZA_BRAKE_BASELINE_FORCE: f64 = 42.0 / 255.0;
 const FORZA_BRAKE_NORMAL_FORCE: f64 = 164.0 / 255.0;
 const FORZA_BRAKE_ENDSTOP_FORCE: f64 = 238.0 / 255.0;
 const FORZA_THROTTLE_BASELINE_FORCE: f64 = 8.0 / 255.0;
-const FORZA_THROTTLE_NORMAL_FORCE: f64 = 72.0 / 255.0;
+const FORZA_THROTTLE_NORMAL_FORCE: f64 = 60.0 / 255.0;
 const FORZA_THROTTLE_ENDSTOP_FORCE: f64 = 106.0 / 255.0;
 const FORZA_HANDBRAKE_FORCE: f64 = 25.0 / 255.0;
 const FORZA_ABS_RANGE_START_RATIO: f64 = 0.30;
@@ -141,14 +141,14 @@ const FORZA_ABS_PULSE_FREQUENCY_HZ: f64 = 10.0;
 const FORZA_BRAKE_CURVE: f64 = 1.35;
 const FORZA_THROTTLE_CURVE: f64 = 2.25;
 const FORZA_ENDSTOP_WALL_OFFSET: f64 = 0.03;
-const FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET: f64 = 0.10;
+const FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET: f64 = 0.14;
 const FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION: f64 = 0.80;
 const FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION: f64 = 0.95;
 const FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION: f64 = 0.80;
 const FORZA_BRAKE_ENDSTOP_FORCE_BOOST: f64 = 1.25;
-const FORZA_THROTTLE_ENDSTOP_FORCE_BOOST: f64 = 2.0;
-const FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH: f64 = 0.04;
-const FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE: f64 = 1.60;
+const FORZA_THROTTLE_ENDSTOP_FORCE_BOOST: f64 = 2.75;
+const FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH: f64 = 0.12;
+const FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE: f64 = 3.0;
 const FORZA_SHIFT_THUMP_DEFAULT_INTENSITY: u8 = 255;
 const TRIGGER_CURVE_SCALE: f64 = 100.0;
 const TRIGGER_CURVE_MIN: u16 = 50;
@@ -15550,7 +15550,7 @@ mod tests {
         match frame.r2 {
             TriggerOutput::AdaptiveResistance { strength, .. } => {
                 assert!(
-                    (0.14..0.22).contains(&strength),
+                    (0.12..0.19).contains(&strength),
                     "partial throttle should have smooth gas-pedal tension, got {strength}"
                 );
             }
@@ -15588,7 +15588,7 @@ mod tests {
             TriggerOutput::Wall { position, strength } => {
                 assert!((position - 0.95).abs() < f64::EPSILON);
                 assert!(
-                    (0.70..0.75).contains(&strength),
+                    (0.97..0.99).contains(&strength),
                     "full throttle should create a firm overtravel guard, got {strength}"
                 );
             }
@@ -15596,7 +15596,7 @@ mod tests {
         }
         match frame.l2 {
             TriggerOutput::Wall { position, strength } => {
-                assert!((position - 0.90).abs() < f64::EPSILON);
+                assert!((position - 0.86).abs() < f64::EPSILON);
                 assert!(
                     strength > 0.98 && strength <= 1.0,
                     "full brake should create a hard lock-warning wall, got {strength}"
@@ -15626,7 +15626,7 @@ mod tests {
             ])
         };
 
-        let below = EffectEngine::new().evaluate(&profile, &snapshot(0.85));
+        let below = EffectEngine::new().evaluate(&profile, &snapshot(0.77));
         match below.r2 {
             TriggerOutput::AdaptiveResistance {
                 start_position,
@@ -15641,30 +15641,30 @@ mod tests {
             other => panic!("expected light throttle ramp before guard, got {other:?}"),
         }
 
-        let ramp_start = EffectEngine::new().evaluate(&profile, &snapshot(0.86));
+        let ramp_start = EffectEngine::new().evaluate(&profile, &snapshot(0.78));
         match ramp_start.r2 {
             TriggerOutput::AdaptiveResistance {
                 start_position,
                 strength,
             } => {
-                assert!((start_position - 0.86).abs() < f64::EPSILON);
+                assert!((start_position - 0.78).abs() < f64::EPSILON);
                 assert!(
-                    (0.23..0.27).contains(&strength),
+                    (0.19..0.23).contains(&strength),
                     "throttle guard should begin with a controlled ramp, got {strength}"
                 );
             }
             other => panic!("expected throttle overtravel ramp to arm, got {other:?}"),
         }
 
-        let near_wall = EffectEngine::new().evaluate(&profile, &snapshot(0.89));
+        let near_wall = EffectEngine::new().evaluate(&profile, &snapshot(0.88));
         match near_wall.r2 {
             TriggerOutput::AdaptiveResistance {
                 start_position,
                 strength,
             } => {
-                assert!((start_position - 0.86).abs() < f64::EPSILON);
+                assert!((start_position - 0.78).abs() < f64::EPSILON);
                 assert!(
-                    (0.50..0.70).contains(&strength),
+                    (0.65..0.82).contains(&strength),
                     "throttle should get significantly harder near the wall, got {strength}"
                 );
             }
@@ -15677,7 +15677,7 @@ mod tests {
                 TriggerOutput::Wall { position, strength } => {
                     assert!((position - 0.90).abs() < f64::EPSILON);
                     assert!(
-                        (0.70..0.75).contains(&strength),
+                        (0.97..0.99).contains(&strength),
                         "throttle wall should preserve shift-thump travel, got {strength}"
                     );
                 }

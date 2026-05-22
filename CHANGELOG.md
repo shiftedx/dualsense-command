@@ -1,3 +1,34 @@
+# DualSense Command Center 0.2.5
+
+Release date: 2026-05-22
+
+An adaptive-trigger feel hotfix focused on the brake and throttle end-stop behavior in telemetry profiles.
+
+## Adaptive Trigger Changes
+
+- **End walls now persist through the remaining trigger travel.** DSCC's encoded DualSense wall output now resists from the configured wall position all the way to full trigger travel instead of creating a very short wall band that could feel like a small bump and then disappear.
+- **L2 brake lock warning is harder to push through.** Forza and Assetto telemetry profiles now arm the high-force brake wall earlier when the L2 end point is high, giving ABS and front-slip cues more physical headroom before the user fully overtravels the trigger.
+- **R2 throttle stays lighter through normal travel.** Normal throttle resistance has been reduced so small and mid-throttle inputs feel smoother and less chunky.
+- **R2 throttle end-stop is much stronger.** The final throttle guard now uses a wider, steeper ramp into a stronger wall so the last part of travel is significantly harder to press and shift thumps retain punch even near full throttle.
+- **Trigger curve preview remains honest.** The frontend graph constants and tooltips were updated to match the backend force model, including the earlier brake warning point and wider throttle end-stop ramp.
+
+## Validation gate
+
+This hotfix was cut after a clean run of:
+
+```powershell
+npm.cmd --prefix web run typecheck
+npm.cmd --prefix web run build
+npm.cmd --prefix web run test:button-map
+cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
+cargo +stable-x86_64-pc-windows-gnu test --workspace
+cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warnings
+```
+
+## Install
+
+Download `DualSenseCommandCenter-0.2.5.msi` from the Releases page and run it. The MSI is unsigned, so Windows SmartScreen may show a publisher warning.
+
 # DualSense Command Center 0.2.4
 
 Release date: 2026-05-22
