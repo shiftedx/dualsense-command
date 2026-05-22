@@ -299,6 +299,22 @@
     { value: 'light_led', label: 'Light / LEDs' }
   ];
   const FORZA_SHIFT_THUMP_DEFAULT_INTENSITY = 255;
+  // Mirrors the backend Forza runtime profile so the graph shows felt force, not just exponent shape.
+  const FORZA_BRAKE_BASELINE_FORCE = 42 / 255;
+  const FORZA_BRAKE_NORMAL_FORCE = 164 / 255;
+  const FORZA_BRAKE_ENDSTOP_FORCE = 238 / 255;
+  const FORZA_THROTTLE_BASELINE_FORCE = 8 / 255;
+  const FORZA_THROTTLE_NORMAL_FORCE = 72 / 255;
+  const FORZA_THROTTLE_ENDSTOP_FORCE = 106 / 255;
+  const FORZA_ENDSTOP_WALL_OFFSET = 0.03;
+  const FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET = 0.10;
+  const FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION = 0.80;
+  const FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION = 0.95;
+  const FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION = 0.80;
+  const FORZA_BRAKE_ENDSTOP_FORCE_BOOST = 1.25;
+  const FORZA_THROTTLE_ENDSTOP_FORCE_BOOST = 2.0;
+  const FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH = 0.04;
+  const FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE = 1.60;
 
   const shiftThumpPresets = [
     { label: 'Soft', intensity: 35 },
@@ -594,6 +610,7 @@
   let r2Curve = 2.25;
   let curveHover: { side: TriggerSide; x: number; y: number; left: number; top: number } | null = null;
   let curveDragSide: TriggerSide | null = null;
+  let triggerCurveDisplayMode: TriggerCurveDisplayMode = 'base';
   let activeView: AppView = 'games';
   let triggerEffect = 'Adaptive resistance';
   let triggerIntensity = 'Strong (Standard)';
@@ -791,6 +808,7 @@
   $: effectState = snapshot?.effectState;
   $: l2LivePress = controllerInputFresh ? l2ControllerPress : selectedTuningScope === 'global' ? 0 : telemetryUnitValue('input.brake');
   $: r2LivePress = controllerInputFresh ? r2ControllerPress : selectedTuningScope === 'global' ? 0 : telemetryUnitValue('input.throttle');
+  $: triggerCurveDisplayMode = selectedTuningScope === 'game' && usesForzaRuntimeProfile(selectedTuningGame) ? 'forza' : 'base';
   $: appSettings = snapshot?.appSettings;
   $: forzaGlyphs = appSettings?.settings.forzaPlaystationGlyphs;
   $: listenOnAllInterfaces = appSettings?.settings.listenOnAllInterfaces ?? false;
@@ -1185,6 +1203,17 @@
   const forzaIntensityFromPercent = (percent: number | string) => Math.round(clampForzaPercent(percent) * 2.55);
   type TriggerSide = 'l2' | 'r2';
   type TriggerRangeEdge = 'from' | 'to';
+  type TriggerCurveDisplayMode = 'base' | 'forza';
+  type ForzaTriggerForceModel = {
+    start: number;
+    end: number;
+    wall: number;
+    rampStart?: number;
+    curve: number;
+    baselineForce: number;
+    normalForce: number;
+    endstopForce: number;
+  };
   const defaultTriggerCurve = (side: TriggerSide) => (side === 'l2' ? 1.35 : 2.25);
 
   const appViewFromHash = (): AppView => {
@@ -1447,6 +1476,11 @@
       );
     }
     return null;
+  };
+
+  const usesForzaRuntimeProfile = (game: SupportedGame | null | undefined) => {
+    const gameId = game?.gameId.toLowerCase() ?? '';
+    return gameId.startsWith('forza') || gameId === 'assetto-corsa-rally';
   };
 
   const profileAssignmentMatchesGame = (assignment: ProfileAssignmentConfiguration, game: SupportedGame) => {
@@ -1880,15 +1914,123 @@
     return side === 'l2' ? triggerRangeValuesFor(l2From, l2To) : triggerRangeValuesFor(r2From, r2To);
   };
 
+  const triggerRangeUnitValuesFor = (fromRaw: number | string, toRaw: number | string) => {
+    const range = triggerRangeValuesFor(fromRaw, toRaw);
+    const start = range.from / 100;
+    const end = Math.max(start + 0.01, range.to / 100);
+    return { start, end };
+  };
+
+  const scaledUnitForGraph = (value: number, scalar: number) => clampUnit(value * scalar);
+  const signalCurveForGraph = (input: number, inputMin: number, inputMax: number, outputMin: number, outputMax: number, exponent: number) => {
+    if (inputMin === inputMax || exponent <= 0) return outputMin;
+    const ratio = clampUnit((input - inputMin) / (inputMax - inputMin));
+    return outputMin + (outputMax - outputMin) * Math.pow(ratio, exponent);
+  };
+
+  const endstopWallPosition = (start: number, end: number) => clamp(end - FORZA_ENDSTOP_WALL_OFFSET, start, end);
+  const brakeOvertravelGuardActive = (end: number) => end >= FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION;
+  const brakeOvertravelWallPosition = (start: number, end: number) =>
+    brakeOvertravelGuardActive(end)
+      ? clamp(Math.max(FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION, end - FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET), start, end)
+      : endstopWallPosition(start, end);
+  const throttleOvertravelGuardActive = (end: number) => end >= FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION;
+  const throttleOvertravelWallPosition = (start: number, end: number) =>
+    throttleOvertravelGuardActive(end)
+      ? clamp(Math.min(end, FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION), start, end)
+      : endstopWallPosition(start, end);
+  const throttleOvertravelRampStart = (start: number, wall: number) =>
+    clamp(wall - FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH, start, wall);
+  const routeHasL2 = (route: ForzaEffectRoute) => route === 'l2' || route === 'both_triggers' || route === 'body_and_triggers';
+  const routeHasR2 = (route: ForzaEffectRoute) =>
+    route === 'r2' || route === 'both_triggers' || route === 'body_and_triggers' || route === 'r2_and_body';
+  const forzaEffectScalarForGraph = (effect: ForzaEffectConfiguration | undefined) =>
+    effect?.enabled ? clampForzaIntensity(effect.intensity) / 100 : 0;
+  const forzaEffectForGraph = (id: string, effects: ForzaEffectConfiguration[]) =>
+    effects.find((effect) => effect.id === id) ??
+    defaultForzaEffects().find((effect) => effect.id === id);
+
+  const forzaTriggerForceModelFor = (
+    side: TriggerSide,
+    fromRaw: number | string,
+    toRaw: number | string,
+    curveRaw: number | string,
+    fallbackCurve: number,
+    effect: string,
+    intensity: string,
+    effects: ForzaEffectConfiguration[]
+  ): ForzaTriggerForceModel | null => {
+    const triggerScalar = triggerStrengthScalarFor(effect, intensity);
+    if (effect === 'Off' || triggerScalar <= 0) return null;
+
+    const { start, end } = triggerRangeUnitValuesFor(fromRaw, toRaw);
+    const curve = normalizeTriggerCurve(curveRaw, fallbackCurve);
+
+    if (side === 'l2') {
+      const brake = forzaEffectForGraph('brake_resistance', effects);
+      if (!brake || !routeHasL2(brake.route)) return null;
+      const scalar = forzaEffectScalarForGraph(brake) * triggerScalar;
+      if (scalar <= 0) return null;
+      return {
+        start,
+        end,
+        wall: brakeOvertravelWallPosition(start, end),
+        curve,
+        baselineForce: scaledUnitForGraph(FORZA_BRAKE_BASELINE_FORCE, scalar),
+        normalForce: scaledUnitForGraph(FORZA_BRAKE_NORMAL_FORCE, scalar),
+        endstopForce: scaledUnitForGraph(FORZA_BRAKE_ENDSTOP_FORCE, scalar * FORZA_BRAKE_ENDSTOP_FORCE_BOOST)
+      };
+    }
+
+    const throttle = forzaEffectForGraph('throttle_resistance', effects);
+    if (!throttle || !routeHasR2(throttle.route)) return null;
+    const scalar = forzaEffectScalarForGraph(throttle) * triggerScalar;
+    if (scalar <= 0) return null;
+    const wall = throttleOvertravelWallPosition(start, end);
+    const rampStart = throttleOvertravelGuardActive(end) ? throttleOvertravelRampStart(start, wall) : undefined;
+    return {
+      start,
+      end,
+      wall,
+      rampStart,
+      curve,
+      baselineForce: scaledUnitForGraph(FORZA_THROTTLE_BASELINE_FORCE, scalar),
+      normalForce: scaledUnitForGraph(FORZA_THROTTLE_NORMAL_FORCE, scalar),
+      endstopForce: scaledUnitForGraph(FORZA_THROTTLE_ENDSTOP_FORCE, scalar * FORZA_THROTTLE_ENDSTOP_FORCE_BOOST)
+    };
+  };
+
+  const forzaTriggerCurveValueFor = (side: TriggerSide, position: number, model: ForzaTriggerForceModel | null) => {
+    if (!model) return 0;
+    const x = clampUnit(position);
+    if (x <= model.start) return 0;
+    if (x >= model.wall) return model.endstopForce;
+    if (side === 'r2' && model.rampStart !== undefined && model.rampStart < model.wall && x >= model.rampStart) {
+      return clampUnit(signalCurveForGraph(x, model.rampStart, model.wall, model.normalForce, model.endstopForce, FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE));
+    }
+    return clampUnit(signalCurveForGraph(x, model.start, model.end, model.baselineForce, model.normalForce, model.curve));
+  };
+
   const triggerCurveValueFor = (
+    side: TriggerSide,
     position: number,
     fromRaw: number | string,
     toRaw: number | string,
     curveRaw: number | string,
     fallbackCurve: number,
     effect: string,
-    intensity: string
+    intensity: string,
+    displayMode: TriggerCurveDisplayMode,
+    effects: ForzaEffectConfiguration[]
   ) => {
+    if (displayMode === 'forza') {
+      return forzaTriggerCurveValueFor(
+        side,
+        position,
+        forzaTriggerForceModelFor(side, fromRaw, toRaw, curveRaw, fallbackCurve, effect, intensity, effects)
+      );
+    }
+
     const range = triggerRangeValuesFor(fromRaw, toRaw);
     const start = range.from / 100;
     const end = Math.max(start + 0.01, range.to / 100);
@@ -1902,55 +2044,69 @@
 
   const triggerCurveValue = (side: TriggerSide, position: number) =>
     side === 'l2'
-      ? triggerCurveValueFor(position, l2From, l2To, l2Curve, defaultTriggerCurve('l2'), triggerEffect, triggerIntensity)
-      : triggerCurveValueFor(position, r2From, r2To, r2Curve, defaultTriggerCurve('r2'), triggerEffect, triggerIntensity);
+      ? triggerCurveValueFor(side, position, l2From, l2To, l2Curve, defaultTriggerCurve('l2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects)
+      : triggerCurveValueFor(side, position, r2From, r2To, r2Curve, defaultTriggerCurve('r2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects);
 
   const triggerCurvePathFor = (
+    side: TriggerSide,
     fromRaw: number | string,
     toRaw: number | string,
     curveRaw: number | string,
     fallbackCurve: number,
     effect: string,
     intensity: string,
+    displayMode: TriggerCurveDisplayMode,
+    effects: ForzaEffectConfiguration[],
     livePress?: number
   ) => {
     const samplePositions = Array.from({ length: 101 }, (_, index) => index / 100);
+    const model =
+      displayMode === 'forza'
+        ? forzaTriggerForceModelFor(side, fromRaw, toRaw, curveRaw, fallbackCurve, effect, intensity, effects)
+        : null;
+    if (model) {
+      samplePositions.push(model.start, model.end, model.wall);
+      if (model.rampStart !== undefined) samplePositions.push(model.rampStart);
+    }
     if (livePress !== undefined) {
       samplePositions.push(clampUnit(livePress));
     }
     const points = [...new Set(samplePositions)]
       .sort((a, b) => a - b)
       .map((x) => {
-        const y = 1 - triggerCurveValueFor(x, fromRaw, toRaw, curveRaw, fallbackCurve, effect, intensity);
+        const y = 1 - triggerCurveValueFor(side, x, fromRaw, toRaw, curveRaw, fallbackCurve, effect, intensity, displayMode, effects);
         return `${(x * 100).toFixed(2)},${(y * 100).toFixed(2)}`;
       });
     return `M ${points.join(' L ')}`;
   };
 
   const triggerCurveView = (
+    side: TriggerSide,
     fromRaw: number | string,
     toRaw: number | string,
     curveRaw: number | string,
     fallbackCurve: number,
     livePress: number,
     effect: string,
-    intensity: string
+    intensity: string,
+    displayMode: TriggerCurveDisplayMode,
+    effects: ForzaEffectConfiguration[]
   ) => {
     const range = triggerRangeValuesFor(fromRaw, toRaw);
     const liveX = clampUnit(livePress) * 100;
-    const liveY = 100 - triggerCurveValueFor(livePress, fromRaw, toRaw, curveRaw, fallbackCurve, effect, intensity) * 100;
+    const liveY = 100 - triggerCurveValueFor(side, livePress, fromRaw, toRaw, curveRaw, fallbackCurve, effect, intensity, displayMode, effects) * 100;
     return {
       rangeStart: range.from.toFixed(2),
       rangeEnd: range.to.toFixed(2),
       rangeWidth: range.width.toFixed(2),
-      path: triggerCurvePathFor(fromRaw, toRaw, curveRaw, fallbackCurve, effect, intensity, livePress),
+      path: triggerCurvePathFor(side, fromRaw, toRaw, curveRaw, fallbackCurve, effect, intensity, displayMode, effects, livePress),
       liveX: liveX.toFixed(2),
       liveY: liveY.toFixed(2)
     };
   };
 
-  $: l2CurveView = triggerCurveView(l2From, l2To, l2Curve, defaultTriggerCurve('l2'), l2LivePress, triggerEffect, triggerIntensity);
-  $: r2CurveView = triggerCurveView(r2From, r2To, r2Curve, defaultTriggerCurve('r2'), r2LivePress, triggerEffect, triggerIntensity);
+  $: l2CurveView = triggerCurveView('l2', l2From, l2To, l2Curve, defaultTriggerCurve('l2'), l2LivePress, triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects);
+  $: r2CurveView = triggerCurveView('r2', r2From, r2To, r2Curve, defaultTriggerCurve('r2'), r2LivePress, triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects);
 
   const triggerPressLabel = (value: number) => `${Math.round(clampUnit(value) * 100)}%`;
   const showTriggerPress = (_side: 'l2' | 'r2', value: number) =>
@@ -1998,9 +2154,26 @@
     const range = triggerRangeValues(side);
     const start = range.from / 100;
     const end = Math.max(start + 0.01, range.to / 100);
-    const activeTravel = clamp((input - start) / (end - start), 0.03, 0.97);
-    const strength = triggerStrengthScalar();
-    const normalizedOutput = clamp(strength > 0 ? output / strength : output, 0.02, 0.98);
+    let activeTravel = clamp((input - start) / (end - start), 0.03, 0.97);
+    let normalizedOutput = output;
+
+    if (triggerCurveDisplayMode === 'forza') {
+      const model =
+        side === 'l2'
+          ? forzaTriggerForceModelFor(side, l2From, l2To, l2Curve, defaultTriggerCurve(side), triggerEffect, triggerIntensity, forzaEffects)
+          : forzaTriggerForceModelFor(side, r2From, r2To, r2Curve, defaultTriggerCurve(side), triggerEffect, triggerIntensity, forzaEffects);
+      if (model && model.normalForce > model.baselineForce) {
+        const editableEnd = Math.min(model.end, model.rampStart ?? model.wall);
+        const editableInput = clamp(input, model.start + 0.0001, Math.max(model.start + 0.0001, editableEnd - 0.0001));
+        activeTravel = clamp((editableInput - model.start) / (model.end - model.start), 0.03, 0.97);
+        normalizedOutput = clamp((Math.min(output, model.normalForce) - model.baselineForce) / (model.normalForce - model.baselineForce), 0.02, 0.98);
+      }
+    } else {
+      const strength = triggerStrengthScalar();
+      normalizedOutput = clamp(strength > 0 ? output / strength : output, 0.02, 0.98);
+    }
+
+    normalizedOutput = clamp(normalizedOutput, 0.02, 0.98);
     return normalizeTriggerCurve(Math.log(normalizedOutput) / Math.log(activeTravel), defaultTriggerCurve(side));
   };
 

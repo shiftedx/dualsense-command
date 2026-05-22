@@ -1,3 +1,32 @@
+# DualSense Command Center 0.2.4
+
+Release date: 2026-05-22
+
+A narrow UI hotfix for the 0.2.3 tuning surface.
+
+## Fixes
+
+- **Fixed Body Source layout overlap at 1440p.** The telemetry routing panel now reserves a dedicated row for the Forza body-rumble source control, so the Native / DSCC toggle no longer compresses into the telemetry effect rows.
+- **Fixed trigger curve visuals for telemetry profiles.** Forza and Assetto telemetry scopes now draw the same force model used by the backend runtime profile instead of showing a generic full-height exponent curve.
+- **R2 throttle graph now shows the tuned end-stop behavior.** The curve stays light through normal throttle travel, then shows the overtravel ramp and hard stop near the backend's 95% guard.
+- **Global trigger tuning still uses the base actuation preview.** The backend-runtime graph is only used for telemetry game scopes, keeping controller-only Global tuning simple and editable.
+
+## Validation gate
+
+This hotfix was cut after a clean run of:
+
+```powershell
+npm.cmd --prefix web run typecheck
+npm.cmd --prefix web run build
+npm.cmd --prefix web run test:button-map
+```
+
+The 1440p browser check also confirmed the Body Source control and telemetry list no longer overlap.
+
+## Install
+
+Download `DualSenseCommandCenter-0.2.4.msi` from the Releases page and run it. The MSI is unsigned, so Windows SmartScreen may show a publisher warning.
+
 # DualSense Command Center 0.2.3
 
 Release date: 2026-05-22
