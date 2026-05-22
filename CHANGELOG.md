@@ -1,3 +1,36 @@
+# DualSense Command Center 0.2.3
+
+Release date: 2026-05-22
+
+## Highlights
+
+- Added DualSense Edge onboard profile support for reading USB-connected controller slots and writing supported DSCC profile settings back to Fn shortcuts.
+- Added typed Edge profile encoding/decoding in the device layer so onboard profile sync stays behind validated report paths.
+- Kept Edge profile hardware writes USB-gated, with local staged state shown when hardware sync is unavailable.
+- Added focused tooltips for the Edge onboard memory panel so users understand read, staged, synced, and write behavior.
+
+## Reliability
+
+- Production builds no longer enable the browser mock harness through URL flags, localStorage, or environment switches. Mock data remains dev-only for intentional local UI testing.
+- Update and install safeguards continue to preserve user state outside the install folder, including pre-install state backups.
+
+## Validation gate
+
+This release was cut after a clean run of:
+
+```powershell
+cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
+cargo +stable-x86_64-pc-windows-gnu test --workspace
+cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warnings
+npm.cmd --prefix web run typecheck
+npm.cmd --prefix web run build
+npm.cmd --prefix web run test:button-map
+```
+
+## Install
+
+Download `DualSenseCommandCenter-0.2.3.msi` from the Releases page and run it. The MSI is unsigned, so Windows SmartScreen may show a publisher warning.
+
 # DualSense Command Center 0.2.0
 
 A focused release built around a redesigned Games surface, a custom-game flow that pulls from the user's Steam library, and an overhauled tuning ribbon that exposes the active profile in one click.

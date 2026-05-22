@@ -124,6 +124,7 @@ export const mockControllerConfig: ControllerConfiguration = {
     brightness: 76
   },
   forza: {
+    bodyRumbleMode: 'native_passthrough',
     effects: mockForzaEffects
   },
   sticks: {
@@ -162,6 +163,7 @@ export const mockProfileConfigs: Record<string, MockEditableControllerConfig> = 
       brightness: 62
     },
     forza: {
+      bodyRumbleMode: 'native_passthrough',
       effects: mockForzaEffects.map((effect) => ({
         ...effect,
         intensity: effect.id === 'rpm_leds' ? effect.intensity : Math.round(effect.intensity * 0.75)

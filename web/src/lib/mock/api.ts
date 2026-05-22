@@ -1,6 +1,7 @@
 import type {
   AddCustomGameResponse,
   AppSettingsResponse,
+  ActionAccepted,
   AppSnapshot,
   ControllerConfiguration,
   ControllerInputState,
@@ -31,17 +32,8 @@ import {
 } from './fixture';
 import type { MockEditableControllerConfig } from './fixture';
 
-const MOCK_STORAGE_KEY = 'dscc.mockApi.enabled';
-const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on']);
-const FALSE_VALUES = new Set(['0', 'false', 'no', 'off']);
 const mockStartedAt = Date.now();
-let queryToggleApplied = false;
 let profileCounter = 1;
-
-type MockActionAccepted = {
-  accepted: boolean;
-  message: string;
-};
 
 type MockEffectTestResult = {
   accepted: true;
@@ -65,10 +57,6 @@ const state = {
     Object.entries(mockProfileConfigs).map(([id, config]) => [id, clone(config)])
   )
 };
-
-export function isMockApiEnabled(): boolean {
-  return queryMockModeSetting() ?? storedMockModeSetting() ?? envMockModeDefault();
-}
 
 export async function getMockAppSnapshot(): Promise<AppSnapshot> {
   updateMockTelemetry();
@@ -182,7 +170,7 @@ export async function renameMockController(controllerId: string, name: string): 
 export async function saveMockProfileConfig(
   profileId: string,
   config: MockEditableControllerConfig
-): Promise<MockActionAccepted> {
+): Promise<ActionAccepted> {
   requireProfile(profileId);
   state.profileConfigs.set(profileId, clone(config));
   if (state.snapshot.profileResolution.selectedProfileId === profileId) {
@@ -227,7 +215,7 @@ export async function clearMockProfileOverride(request?: {
   return clone(state.snapshot.profileResolution);
 }
 
-export async function activateMockProfile(profileId: string): Promise<MockActionAccepted> {
+export async function activateMockProfile(profileId: string): Promise<ActionAccepted> {
   activateProfileInState(profileId);
   state.snapshot.profileResolution = {
     ...state.snapshot.profileResolution,
@@ -312,7 +300,7 @@ export async function importMockProfile(profile: {
   return clone(imported);
 }
 
-export async function deleteMockProfile(profileId: string): Promise<MockActionAccepted> {
+export async function deleteMockProfile(profileId: string): Promise<ActionAccepted> {
   const profile = state.snapshot.profiles.find((item) => item.id === profileId);
   if (!profile) return { accepted: true, message: 'Profile was already deleted' };
   if (profile.builtIn) throw new Error('Built-in mock profiles cannot be deleted.');
@@ -509,54 +497,9 @@ export async function writeMockSteamInputBinding(
   };
 }
 
-function queryMockModeSetting(): boolean | null {
-  if (queryToggleApplied || typeof window === 'undefined') return null;
-  queryToggleApplied = true;
-
-  const raw = new URLSearchParams(window.location.search).get('mock');
-  const parsed = parseToggleValue(raw);
-  if (parsed === null) return null;
-
-  writeStoredMockModeSetting(parsed);
-  return parsed;
-}
-
-function storedMockModeSetting(): boolean | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    return parseToggleValue(window.localStorage.getItem(MOCK_STORAGE_KEY));
-  } catch {
-    return null;
-  }
-}
-
-function writeStoredMockModeSetting(enabled: boolean): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(MOCK_STORAGE_KEY, enabled ? '1' : '0');
-  } catch {
-    // localStorage can be unavailable in locked-down browser contexts.
-  }
-}
-
 function normalizeProfileGameId(gameId: string | null | undefined): string | null {
   const normalized = gameId?.trim();
   return normalized && normalized !== 'all' && normalized !== 'global' ? normalized : null;
-}
-
-function envMockModeDefault(): boolean {
-  return (
-    parseToggleValue(import.meta.env.VITE_DSCC_MOCK_API ?? import.meta.env.VITE_DSCC_MOCK) ??
-    import.meta.env.MODE === 'mock'
-  );
-}
-
-function parseToggleValue(value: string | null | undefined): boolean | null {
-  if (value === null || value === undefined) return null;
-  const normalized = value.trim().toLowerCase();
-  if (TRUE_VALUES.has(normalized)) return true;
-  if (FALSE_VALUES.has(normalized)) return false;
-  return null;
 }
 
 function updateMockTelemetry(): void {

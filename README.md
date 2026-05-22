@@ -10,7 +10,7 @@ The first supported live telemetry adapter is Forza Data Out. The project is bui
 
 ## Current Release
 
-- Version: `0.2.0`
+- Version: `0.2.3`
 - Platform: Windows x86_64
 - Package: `.msi` installer from GitHub Releases
 - License: Apache License 2.0
@@ -165,7 +165,7 @@ cargo build -p dscc-agent -p dscc-tray --release --target x86_64-pc-windows-gnu
 Build the MSI:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File packaging\package-msi.ps1 -Version 0.2.0 -TargetTriple x86_64-pc-windows-gnu
+powershell -NoProfile -ExecutionPolicy Bypass -File packaging\package-msi.ps1 -Version 0.2.3 -TargetTriple x86_64-pc-windows-gnu
 ```
 
 ## License

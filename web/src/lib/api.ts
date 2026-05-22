@@ -3,6 +3,7 @@ import type {
   AppUpdateCheck,
   AppSnapshot,
   AppSettingsResponse,
+  ActionAccepted,
   ControllerConfiguration,
   ControllerInputState,
   ControllerProfileAssignment,
@@ -11,6 +12,7 @@ import type {
   CurrentEffectState,
   DiagnosticsCheck,
   EffectTestRequest,
+  EdgeProfilesResponse,
   ExportedProfile,
   GameDetection,
   HealthState,
@@ -26,41 +28,21 @@ import type {
   SteamLibraryBrowseResponse,
   SteamLibraryResponse,
   SupportedGame,
-  TelemetrySignal
+  TelemetrySignal,
+  UpdateEdgeProfileRequest
 } from './types';
-import {
-  activateMockProfile,
-  addMockCustomGame,
-  browseMockSteamLibrary,
-  clearMockProfileOverride,
-  connectMockAppSnapshotSocket,
-  createMockProfile,
-  deleteMockProfile,
-  exportMockProfile,
-  getMockAppSnapshot,
-  getMockControllerConfig,
-  getMockControllerInput,
-  getMockSteamLibrary,
-  importMockProfile,
-  isMockApiEnabled,
-  removeMockCustomGame,
-  renameMockProfile,
-  renameMockController,
-  runMockEffectTest,
-  saveMockAppSettings,
-  saveMockControllerConfig,
-  saveMockProfileConfig,
-  setMockProfileOverride,
-  writeMockSteamInputBinding
-} from './mock/api';
-
 const API_BASE = '/api';
 const UPDATE_RELEASE_PAGE_URL = 'https://github.com/shiftedx/dualsense-command/releases/latest';
 const UPDATE_CHECK_API_URL = 'https://api.github.com/repos/shiftedx/dualsense-command/releases/latest';
+const MOCK_STORAGE_KEY = 'dscc.mockApi.enabled';
 
 const jsonHeaders = {
   'Content-Type': 'application/json'
 };
+
+type MockApiModule = typeof import('./mock/api');
+let mockApiPromise: Promise<MockApiModule> | null = null;
+let queryMockToggleApplied = false;
 
 interface AgentStatusDto {
   version: string;
@@ -128,6 +110,8 @@ interface DiagnosticsDto {
 interface ActionAcceptedDto {
   accepted: boolean;
   message: string;
+  dry_run?: boolean;
+  dryRun?: boolean;
 }
 
 interface EffectTestResponseDto {
@@ -239,6 +223,111 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function apiAction(path: string, init?: RequestInit): Promise<ActionAccepted> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: {
+        ...jsonHeaders,
+        ...init?.headers
+      }
+    });
+  } catch (caught) {
+    const detail = caught instanceof Error ? caught.message : 'network request failed';
+    throw new ApiRequestError(`API request failed: ${detail}`, null, true);
+  }
+
+  const text = await response.text().catch(() => '');
+  const parsed = parseActionAccepted(text);
+  if (!response.ok && !parsed) {
+    throw new ApiRequestError(
+      `API request failed: ${response.status} ${response.statusText}${text ? ` / ${text}` : ''}`,
+      response.status
+    );
+  }
+
+  return (
+    parsed ?? {
+      accepted: response.ok,
+      message: response.ok ? 'Action accepted.' : `Request failed: ${response.status} ${response.statusText}`
+    }
+  );
+}
+
+function parseActionAccepted(text: string): ActionAccepted | null {
+  if (!text.trim()) return null;
+  try {
+    const dto = JSON.parse(text) as ActionAcceptedDto;
+    if (typeof dto.accepted !== 'boolean' || typeof dto.message !== 'string') return null;
+    return {
+      accepted: dto.accepted,
+      message: dto.message,
+      dryRun: dto.dryRun ?? dto.dry_run
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function loadMockApi(): Promise<MockApiModule> {
+  if (!import.meta.env.DEV) {
+    throw new Error('Mock API is unavailable in production builds.');
+  }
+  mockApiPromise ??= import('./mock/api');
+  return mockApiPromise;
+}
+
+function isMockApiEnabled(): boolean {
+  if (!import.meta.env.DEV) return false;
+  return queryMockModeSetting() ?? storedMockModeSetting() ?? envMockModeDefault();
+}
+
+function queryMockModeSetting(): boolean | null {
+  if (queryMockToggleApplied || typeof window === 'undefined') return null;
+  queryMockToggleApplied = true;
+
+  const raw = new URLSearchParams(window.location.search).get('mock');
+  const parsed = parseToggleValue(raw);
+  if (parsed === null) return null;
+
+  writeStoredMockModeSetting(parsed);
+  return parsed;
+}
+
+function storedMockModeSetting(): boolean | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return parseToggleValue(window.localStorage.getItem(MOCK_STORAGE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredMockModeSetting(enabled: boolean): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(MOCK_STORAGE_KEY, enabled ? '1' : '0');
+  } catch {
+    // localStorage can be unavailable in locked-down browser contexts.
+  }
+}
+
+function envMockModeDefault(): boolean {
+  return (
+    parseToggleValue(import.meta.env.VITE_DSCC_MOCK_API ?? import.meta.env.VITE_DSCC_MOCK) ??
+    import.meta.env.MODE === 'mock'
+  );
+}
+
+function parseToggleValue(value: string | null | undefined): boolean | null {
+  if (value === null || value === undefined) return null;
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return null;
+}
+
 const FALLBACK_AGENT_STATUS: AgentStatusDto = {
   version: 'unknown',
   healthy: false,
@@ -313,7 +402,7 @@ const FALLBACK_APP_SETTINGS: AppSettingsResponse = {
 };
 
 export async function getAppSnapshot(): Promise<AppSnapshot> {
-  if (isMockApiEnabled()) return getMockAppSnapshot();
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).getMockAppSnapshot();
   return mapSnapshotDto(await apiFetch<AgentSnapshotDto | AppSnapshot>('/snapshot'));
 }
 
@@ -323,7 +412,7 @@ export async function getAppUpdateCheck(currentVersion: string): Promise<AppUpda
     throw new Error('Current app version is unavailable.');
   }
 
-  if (!isMockApiEnabled()) {
+  if (!import.meta.env.DEV || !isMockApiEnabled()) {
     const params = new URLSearchParams({ currentVersion: normalizedCurrent });
     try {
       const dto = await apiFetch<AppUpdateCheckDto>(`/update-check?${params.toString()}`);
@@ -343,7 +432,7 @@ export async function saveAppSettings(request: {
     installPath?: string | null;
   };
 }): Promise<AppSettingsResponse> {
-  if (isMockApiEnabled()) return saveMockAppSettings(request);
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).saveMockAppSettings(request);
   return apiFetch<AppSettingsResponse>('/app-settings', {
     method: 'PUT',
     body: JSON.stringify(request)
@@ -409,7 +498,22 @@ function stringValue(value: unknown): string {
 }
 
 export function connectAppSnapshotSocket(callbacks: AppSnapshotSocketCallbacks): () => void {
-  if (isMockApiEnabled()) return connectMockAppSnapshotSocket(callbacks);
+  if (import.meta.env.DEV && isMockApiEnabled()) {
+    let cleanup: (() => void) | undefined;
+    let closed = false;
+    void loadMockApi()
+      .then((mockApi) => {
+        if (closed) return;
+        cleanup = mockApi.connectMockAppSnapshotSocket(callbacks);
+      })
+      .catch(() => {
+        if (!closed) callbacks.onUnavailable?.();
+      });
+    return () => {
+      closed = true;
+      cleanup?.();
+    };
+  }
   if (typeof window === 'undefined' || typeof WebSocket === 'undefined') {
     callbacks.onUnavailable?.();
     return () => {};
@@ -471,7 +575,7 @@ export async function runEffectTest(
     durationMs: Math.max(100, Math.min(60000, request.durationMs))
   };
 
-  if (isMockApiEnabled()) return runMockEffectTest(safeRequest);
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).runMockEffectTest(safeRequest);
 
   const endpoint = controllerId
     ? `/controllers/${encodeURIComponent(controllerId)}/test-effect`
@@ -495,7 +599,7 @@ export async function runEffectTest(
 }
 
 export async function getControllerInput(controllerId?: string | null): Promise<ControllerInputState> {
-  if (isMockApiEnabled()) return getMockControllerInput(controllerId);
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).getMockControllerInput(controllerId);
   const endpoint = controllerId
     ? `/controllers/${encodeURIComponent(controllerId)}/input`
     : '/controllers/current/input';
@@ -512,7 +616,7 @@ export async function getControllerInput(controllerId?: string | null): Promise<
 }
 
 export async function getControllerConfig(controllerId: string): Promise<ControllerConfiguration> {
-  if (isMockApiEnabled()) return getMockControllerConfig(controllerId);
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).getMockControllerConfig(controllerId);
   return apiFetch<ControllerConfiguration>(`/controllers/${encodeURIComponent(controllerId)}/config`);
 }
 
@@ -520,15 +624,36 @@ export async function saveControllerConfig(
   controllerId: string,
   config: Omit<ControllerConfiguration, 'controllerId' | 'model'>
 ): Promise<ControllerConfiguration> {
-  if (isMockApiEnabled()) return saveMockControllerConfig(controllerId, config);
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).saveMockControllerConfig(controllerId, config);
   return apiFetch<ControllerConfiguration>(`/controllers/${encodeURIComponent(controllerId)}/config`, {
     method: 'PUT',
     body: JSON.stringify(config)
   });
 }
 
+export async function getEdgeProfiles(controllerId: string): Promise<EdgeProfilesResponse> {
+  if (import.meta.env.DEV && isMockApiEnabled()) {
+    throw new Error('DualSense Edge onboard profile read/write requires the real DSCC agent.');
+  }
+  return apiFetch<EdgeProfilesResponse>(`/controllers/${encodeURIComponent(controllerId)}/edge-profiles`);
+}
+
+export async function writeEdgeProfile(
+  controllerId: string,
+  slotId: string,
+  request: UpdateEdgeProfileRequest
+): Promise<ActionAccepted> {
+  if (import.meta.env.DEV && isMockApiEnabled()) {
+    throw new Error('DualSense Edge onboard profile read/write requires the real DSCC agent.');
+  }
+  return apiAction(`/controllers/${encodeURIComponent(controllerId)}/edge-profiles/${encodeURIComponent(slotId)}`, {
+    method: 'PUT',
+    body: JSON.stringify(request)
+  });
+}
+
 export async function updateControllerName(controllerId: string, name: string): Promise<ControllerStatus> {
-  if (isMockApiEnabled()) return renameMockController(controllerId, name);
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).renameMockController(controllerId, name);
   const dto = await apiFetch<ControllerDto>(`/controllers/${encodeURIComponent(controllerId)}`, {
     method: 'PUT',
     body: JSON.stringify({ name })
@@ -540,7 +665,7 @@ export async function saveProfileConfig(
   profileId: string,
   config: Omit<ControllerConfiguration, 'controllerId' | 'model'>
 ): Promise<ActionAcceptedDto> {
-  if (isMockApiEnabled()) return saveMockProfileConfig(profileId, config);
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).saveMockProfileConfig(profileId, config);
   return apiFetch<ActionAcceptedDto>(`/profiles/${encodeURIComponent(profileId)}/config`, {
     method: 'PUT',
     body: JSON.stringify(config)
@@ -552,7 +677,7 @@ export async function setProfileOverride(request: {
   gameId?: string | null;
   profileId: string;
 }): Promise<ProfileResolution> {
-  if (isMockApiEnabled()) return setMockProfileOverride(request);
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).setMockProfileOverride(request);
   return apiFetch<ProfileResolution>('/profile-resolution/override', {
     method: 'PUT',
     body: JSON.stringify(request)
@@ -563,7 +688,7 @@ export async function clearProfileOverride(request?: {
   controllerId?: string | null;
   gameId?: string | null;
 }): Promise<ProfileResolution> {
-  if (isMockApiEnabled()) return clearMockProfileOverride(request);
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).clearMockProfileOverride(request);
   const params = new URLSearchParams();
   if (request?.controllerId) params.set('controllerId', request.controllerId);
   if (request?.gameId) params.set('gameId', request.gameId);
@@ -574,14 +699,14 @@ export async function clearProfileOverride(request?: {
 }
 
 export async function activateProfile(profileId: string): Promise<ActionAcceptedDto> {
-  if (isMockApiEnabled()) return activateMockProfile(profileId);
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).activateMockProfile(profileId);
   return apiFetch<ActionAcceptedDto>(`/profiles/${encodeURIComponent(profileId)}/activate`, {
     method: 'POST'
   });
 }
 
 export async function createProfile(name: string, options?: { gameId?: string | null }): Promise<ProfileSummary> {
-  if (isMockApiEnabled()) return createMockProfile(name, options);
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).createMockProfile(name, options);
   const dto = await apiFetch<ProfileDto>('/profiles', {
     method: 'POST',
     body: JSON.stringify({ name, gameId: options?.gameId ?? null })
@@ -590,7 +715,7 @@ export async function createProfile(name: string, options?: { gameId?: string | 
 }
 
 export async function renameProfile(profileId: string, name: string): Promise<ProfileSummary> {
-  if (isMockApiEnabled()) return renameMockProfile(profileId, name);
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).renameMockProfile(profileId, name);
   const dto = await apiFetch<ProfileDto>(`/profiles/${encodeURIComponent(profileId)}`, {
     method: 'PUT',
     body: JSON.stringify({ name })
@@ -599,7 +724,7 @@ export async function renameProfile(profileId: string, name: string): Promise<Pr
 }
 
 export async function exportProfile(profileId: string): Promise<ExportedProfile> {
-  if (isMockApiEnabled()) return exportMockProfile(profileId);
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).exportMockProfile(profileId);
   return apiFetch<ExportedProfile>(`/profiles/${encodeURIComponent(profileId)}/export`);
 }
 
@@ -609,7 +734,7 @@ export async function importProfile(profile: {
   name: string;
   config?: ExportedProfile['config'];
 }): Promise<ProfileSummary> {
-  if (isMockApiEnabled()) return importMockProfile(profile);
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).importMockProfile(profile);
   const dto = await apiFetch<ProfileDto>('/profiles/import', {
     method: 'POST',
     body: JSON.stringify(profile)
@@ -618,7 +743,7 @@ export async function importProfile(profile: {
 }
 
 export async function deleteProfile(profileId: string): Promise<ActionAcceptedDto | void> {
-  if (isMockApiEnabled()) return deleteMockProfile(profileId);
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).deleteMockProfile(profileId);
   try {
     return await apiFetch<ActionAcceptedDto | void>(`/profiles/${encodeURIComponent(profileId)}`, {
       method: 'DELETE'
@@ -634,7 +759,7 @@ export async function deleteProfile(profileId: string): Promise<ActionAcceptedDt
 export async function writeSteamInputBinding(
   request: SteamInputBindingWriteRequest
 ): Promise<SteamInputBindingWriteResponse> {
-  if (isMockApiEnabled()) return writeMockSteamInputBinding(request);
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).writeMockSteamInputBinding(request);
   return apiFetch<SteamInputBindingWriteResponse>('/steam-input/bindings', {
     method: 'POST',
     body: JSON.stringify(request)
@@ -642,7 +767,7 @@ export async function writeSteamInputBinding(
 }
 
 export async function getSteamLibrary(): Promise<SteamLibraryResponse> {
-  if (isMockApiEnabled()) return getMockSteamLibrary();
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).getMockSteamLibrary();
   return apiFetch<SteamLibraryResponse>('/games/steam-library');
 }
 
@@ -650,7 +775,7 @@ export async function addCustomGame(
   appId: string,
   processNames: string[] = []
 ): Promise<AddCustomGameResponse> {
-  if (isMockApiEnabled()) return addMockCustomGame(appId, processNames);
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).addMockCustomGame(appId, processNames);
   const body: { appId: string; processNames?: string[] } = { appId };
   if (processNames.length > 0) body.processNames = processNames;
   return apiFetch<AddCustomGameResponse>('/games/custom', {
@@ -661,7 +786,7 @@ export async function addCustomGame(
 }
 
 export async function removeCustomGame(gameId: string): Promise<void> {
-  if (isMockApiEnabled()) return removeMockCustomGame(gameId);
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).removeMockCustomGame(gameId);
   await apiFetch<void>(`/games/custom/${encodeURIComponent(gameId)}`, {
     method: 'DELETE'
   });
@@ -671,7 +796,7 @@ export async function browseSteamLibrary(
   appId: string,
   path = ''
 ): Promise<SteamLibraryBrowseResponse> {
-  if (isMockApiEnabled()) return browseMockSteamLibrary(appId, path);
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).browseMockSteamLibrary(appId, path);
   const qs = new URLSearchParams({ appId });
   if (path) qs.set('path', path);
   return apiFetch<SteamLibraryBrowseResponse>(`/games/steam-library/browse?${qs.toString()}`);

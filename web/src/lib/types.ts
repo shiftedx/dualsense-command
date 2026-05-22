@@ -294,6 +294,50 @@ export interface ControllerConfiguration {
   profileAssignments: ProfileAssignmentConfiguration[];
 }
 
+export interface ActionAccepted {
+  accepted: boolean;
+  message: string;
+  dryRun?: boolean;
+}
+
+export type EdgeProfileSupportState = 'unsupported' | 'unknown' | 'read_only' | 'read_write' | 'blocked';
+export type EdgeProfileSlotState = 'default' | 'assigned' | 'empty' | 'active' | 'unknown' | 'faulted';
+
+export interface EdgeProfilesResponse {
+  controllerId: string;
+  supportState: EdgeProfileSupportState;
+  warning: string;
+  slots: EdgeProfileSlot[];
+}
+
+export interface EdgeProfileSlot {
+  slotId: string;
+  shortcut: string;
+  name?: string | null;
+  state: EdgeProfileSlotState;
+  editable: boolean;
+  hardwareSynced: boolean;
+  staged?: EdgeProfileSlotConfig | null;
+}
+
+export interface EdgeProfileSlotConfig {
+  name: string;
+  trigger: ControllerConfiguration['trigger'];
+  lightbar: ControllerConfiguration['lightbar'];
+  sticks: ControllerConfiguration['sticks'];
+  buttons: ControllerConfiguration['buttons'];
+  updatedAt: string;
+  hardwareSynced: boolean;
+}
+
+export interface UpdateEdgeProfileRequest {
+  name: string;
+  trigger: ControllerConfiguration['trigger'];
+  lightbar: ControllerConfiguration['lightbar'];
+  sticks: ControllerConfiguration['sticks'];
+  buttons: ControllerConfiguration['buttons'];
+}
+
 type ControllerInputMode = 'native_dualsense' | 'steam_input_companion';
 
 export interface ControllerInputState {
@@ -327,8 +371,11 @@ interface LightbarConfiguration {
 }
 
 interface ForzaTelemetryConfiguration {
+  bodyRumbleMode?: ForzaBodyRumbleMode;
   effects: ForzaEffectConfiguration[];
 }
+
+export type ForzaBodyRumbleMode = 'native_passthrough' | 'dscc_full_control';
 
 export interface ForzaEffectConfiguration {
   id: string;

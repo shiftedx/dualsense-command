@@ -55,10 +55,10 @@ In PowerShell, prefer `npm.cmd`; `npm.ps1` can be blocked by execution policy.
 For UI-only work without a running agent:
 
 ```powershell
-npm.cmd run dev:web:mock
+npm.cmd --prefix web run dev:mock
 ```
 
-The mock API is implemented in `web/src/lib/mock`. It can also be toggled from the browser with `?mock=1` or `?mock=0`, which persists the choice in `localStorage`, or by setting `VITE_DSCC_MOCK_API=1` / `VITE_DSCC_MOCK=1` before starting Vite.
+The mock API is implemented in `web/src/lib/mock` and is dev-only. It can be toggled while running Vite dev with `?mock=1` or `?mock=0`, which persists the choice in `localStorage`, or by setting `VITE_DSCC_MOCK_API=1` / `VITE_DSCC_MOCK=1` before starting Vite. Production builds ignore all mock toggles and do not include the mock fixture bundle.
 
 Use dry-run hardware output for diagnostics or demos that must not write to a controller:
 
