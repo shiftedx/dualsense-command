@@ -212,8 +212,29 @@ jobs:
       - name: Create release notes
         shell: bash
         run: |
-          cat > release-notes.md <<'EOF'
+          awk '
+            /^# DualSense Command Center / {
+              if (found) {
+                exit
+              }
+              found = 1
+            }
+            found {
+              print
+            }
+          ' CHANGELOG.md > release-notes.md
+
+          if ! grep -q '^# DualSense Command Center ' release-notes.md; then
+            cat > release-notes.md <<'EOF'
+          # DualSense Command Center
+
           Unsigned beta artifacts for DualSense Command Center.
+          EOF
+          fi
+
+          cat >> release-notes.md <<'EOF'
+
+          ## Release Artifacts
 
           Windows MSI and raw binary artifacts are unsigned. Windows SmartScreen
           or managed endpoint policy may warn or block installation. Verify the
@@ -230,9 +251,21 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t files < <(find release-artifacts -type f | sort)
-          gh release create "${GITHUB_REF_NAME}" "${files[@]}" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --draft \
-            --prerelease \
-            --title "DualSense Command Center ${GITHUB_REF_NAME}" \
-            --notes-file release-notes.md
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release edit "${GITHUB_REF_NAME}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --draft \
+              --prerelease \
+              --title "DualSense Command Center ${GITHUB_REF_NAME}" \
+              --notes-file release-notes.md
+            gh release upload "${GITHUB_REF_NAME}" "${files[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" "${files[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --draft \
+              --prerelease \
+              --title "DualSense Command Center ${GITHUB_REF_NAME}" \
+              --notes-file release-notes.md
+          fi
