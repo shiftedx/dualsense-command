@@ -23,7 +23,7 @@ mod windows_tray {
         io::{Read, Write},
         net::{SocketAddr, TcpStream},
         os::windows::{ffi::OsStrExt, process::CommandExt},
-        path::PathBuf,
+        path::{Path, PathBuf},
         process::{Child, Command},
         ptr::{null, null_mut},
         sync::{
@@ -76,6 +76,7 @@ mod windows_tray {
     const STATUS_PATH: &str = "/api/status";
     const SNAPSHOT_PATH: &str = "/api/snapshot";
     const API_HOST: &str = "127.0.0.1:43473";
+    const LAN_API_ENABLE_ENV: &str = "DSCC_ENABLE_LAN_API";
     const RELEASES_URL: &str = "https://github.com/shiftedx/dualsense-command/releases/latest";
     const OPEN_UI_DEBOUNCE_MS: u64 = 650;
     const TRAY_HEALTH_STALE_AFTER: Duration = Duration::from_secs(4);
@@ -605,11 +606,7 @@ mod windows_tray {
             }
 
             let mut command = Command::new(agent_path);
-            command
-                .current_dir(&self.install_dir)
-                .env("DSCC_WEB_DIST", self.web_dist())
-                .env("DSCC_AGENT_ADDR", agent_spawn_addr())
-                .creation_flags(CREATE_NO_WINDOW);
+            configure_agent_command(&mut command, &self.install_dir, self.web_dist());
 
             self.agent = Some(command.spawn().context("could not start dscc-agent.exe")?);
             wait_for_agent(Duration::from_secs(4));
@@ -1887,6 +1884,15 @@ mod windows_tray {
         }
     }
 
+    fn configure_agent_command(command: &mut Command, install_dir: &Path, web_dist: PathBuf) {
+        command
+            .current_dir(install_dir)
+            .env("DSCC_WEB_DIST", web_dist)
+            .env("DSCC_AGENT_ADDR", agent_spawn_addr())
+            .env(LAN_API_ENABLE_ENV, "1")
+            .creation_flags(CREATE_NO_WINDOW);
+    }
+
     fn persisted_listen_on_all_interfaces() -> bool {
         let Some(state_file) = config_dir().map(|dir| dir.join("state.json")) else {
             return false;
@@ -2014,6 +2020,23 @@ mod windows_tray {
         }
 
         #[test]
+        fn tray_agent_launch_grants_lan_toggle_capability() {
+            let mut command = Command::new("dscc-agent.exe");
+            configure_agent_command(
+                &mut command,
+                Path::new("."),
+                PathBuf::from("web").join("dist"),
+            );
+
+            let lan_env = command
+                .get_envs()
+                .find(|(key, _)| *key == OsStr::new(LAN_API_ENABLE_ENV))
+                .and_then(|(_, value)| value);
+
+            assert_eq!(lan_env, Some(OsStr::new("1")));
+        }
+
+        #[test]
         fn tray_menu_exposes_useful_actions_and_agent_state() {
             assert!(DASHBOARD_URL.ends_with("#/games"));
             assert!(HAPTICS_URL.ends_with("#/adaptive-triggers-haptics"));
@@ -2117,7 +2140,7 @@ mod windows_tray {
             let snapshot = serde_json::from_str::<TraySnapshotDto>(
                 r#"{
                     "status":{
-                        "version":"0.2.7",
+                        "version":"0.2.8",
                         "healthy":true,
                         "active_profile_id":"forza-horizon",
                         "active_adapter_id":null
@@ -2144,7 +2167,7 @@ mod windows_tray {
             let summary = tray_health_summary_from_snapshot(&snapshot);
 
             assert_eq!(summary.agent_label, "Agent Online");
-            assert_eq!(summary.agent_detail, "v0.2.7 - profile ready");
+            assert_eq!(summary.agent_detail, "v0.2.8 - profile ready");
             assert_eq!(summary.profile_label, "Profile: Base");
             assert_eq!(summary.profile_detail, "forza-horizon");
             assert_eq!(summary.controller_label, "Controller: Edge");

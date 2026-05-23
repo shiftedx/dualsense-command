@@ -1,3 +1,37 @@
+# DualSense Command Center 0.2.8
+
+Release date: 2026-05-23
+
+This is a narrow LAN-access hotfix for 0.2.7. The previous release kept the agent's all-interface bind behind the `DSCC_ENABLE_LAN_API` safety gate, but the installed tray launcher did not pass that capability through when it started `dscc-agent.exe`. As a result, selecting **LAN Access** in the app failed with a 403 before the user could save the setting.
+
+## LAN Access
+
+- **Restored the in-app LAN Access workflow for installed builds.** The Windows tray now starts the agent with `DSCC_ENABLE_LAN_API=1`, which allows the app's own Web UI Location control to save the user's LAN opt-in.
+- **LAN remains off by default.** This hotfix does not bind the API to the network automatically. The agent still starts on `127.0.0.1:43473` unless the persisted app setting says LAN Access is enabled.
+- **The user-facing toggle remains the actual exposure control.** Selecting LAN Access persists `listenOnAllInterfaces=true`; after restart, the tray uses the saved setting to start the agent on `0.0.0.0:43473`.
+- **Direct agent launches keep the explicit env gate.** Running `dscc-agent.exe` or `dscc-cli serve` outside the tray still requires `DSCC_ENABLE_LAN_API=1` before non-loopback binding is accepted.
+- **Added tray coverage for the launch contract.** A Windows tray unit test now asserts the spawned agent process receives the LAN API capability env var.
+
+## Validation gate
+
+This hotfix was cut after a clean run of:
+
+```powershell
+cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
+cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warnings
+cargo +stable-x86_64-pc-windows-gnu test --workspace
+cargo +stable-x86_64-pc-windows-gnu test -p dscc-tray tray_
+npm.cmd --prefix web run typecheck
+npm.cmd --prefix web run build
+npm.cmd --prefix web run test:button-map
+```
+
+The local MSI was rebuilt and installed, then the running installed agent was checked on `127.0.0.1:43473`.
+
+## Install
+
+Download `DualSenseCommandCenter-v0.2.8-windows-x86_64-unsigned.msi` from the Releases page and run it. The MSI is unsigned, so Windows SmartScreen may show a publisher warning.
+
 # DualSense Command Center 0.2.7
 
 Release date: 2026-05-23
