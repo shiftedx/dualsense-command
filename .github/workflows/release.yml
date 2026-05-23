@@ -196,7 +196,7 @@ jobs:
           if-no-files-found: error
 
   draft-release:
-    name: Create draft prerelease
+    name: Create published release
     runs-on: ubuntu-latest
     needs:
       - windows-artifacts
@@ -244,7 +244,7 @@ jobs:
           permissions, runtime documentation, and hardware validation remain
           beta-readiness work.
           EOF
-      - name: Create draft prerelease and upload artifacts
+      - name: Create published release and upload artifacts
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -254,8 +254,9 @@ jobs:
           if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release edit "${GITHUB_REF_NAME}" \
               --repo "${GITHUB_REPOSITORY}" \
-              --draft \
-              --prerelease \
+              --draft=false \
+              --prerelease=false \
+              --latest \
               --title "DualSense Command Center ${GITHUB_REF_NAME}" \
               --notes-file release-notes.md
             gh release upload "${GITHUB_REF_NAME}" "${files[@]}" \
@@ -264,8 +265,7 @@ jobs:
           else
             gh release create "${GITHUB_REF_NAME}" "${files[@]}" \
               --repo "${GITHUB_REPOSITORY}" \
-              --draft \
-              --prerelease \
+              --latest \
               --title "DualSense Command Center ${GITHUB_REF_NAME}" \
               --notes-file release-notes.md
           fi

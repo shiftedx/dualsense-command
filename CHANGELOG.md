@@ -2,14 +2,17 @@
 
 Release date: 2026-05-23
 
-This release is a focused feel-and-polish update for the 0.2.6 trigger editor. It keeps the new granular curve system, fixes reports of missing default mappings, and retunes Forza throttle resistance so the end-stop feel no longer costs usable full-throttle travel.
+This release is a focused feel-and-polish update for the 0.2.6 trigger editor. It keeps the new granular curve system, fixes reports of missing default mappings, and retunes the Forza brake/throttle profile around a wider sustained adaptive-resistance zone instead of a short end-stop bump.
 
 ## Adaptive Trigger Tuning
 
-- **Forza R2 now preserves true full throttle by default.** The throttle overtravel wall now sits at the configured end point instead of being capped early at 95%, so the game can still receive full throttle at the top of the pull.
-- **The throttle guard still ramps hard near the end.** R2 stays light through normal travel, then uses a shorter, steeper final ramp through roughly the last 10% so the trigger still feels like it is pushing into a firm end zone without eating useful RPM or top speed.
-- **The trigger preview matches the backend force model.** The frontend graph constants were updated with the same R2 wall, ramp width, and ramp curve used by the hardware output runtime.
-- **Regression tests cover the new end-stop behavior.** Backend tests now assert that full throttle arms the wall at 100% while the progressive guard only takes over near the high end of travel.
+- **Forza R2 starts lighter and stays smoother through normal throttle travel.** The baseline and normal throttle forces were reduced so small throttle inputs do not feel chunky while cruising, correcting the over-heavy low-end feel testers reported.
+- **R2 now ramps hard from about 60-80% travel, then holds max adaptive resistance.** The throttle curve keeps the first half of the pull easy, builds rapidly through the upper-mid range, and then uses a sustained max-strength adaptive-resistance zone through the rest of travel so the end stop feels like a real wall instead of a momentary bump.
+- **Forza L2 brake now gets a wider max-strength lock-warning range.** The default brake warning wall now begins around 72% trigger travel instead of around 82%, and a custom 90% brake endpoint begins the hard wall around 70%. That gives ABS/front-slip effects more physical headroom and makes the lock-warning range harder to accidentally push through.
+- **Brake force now ramps into the hard wall instead of jumping straight to it.** L2 uses a short progressive overtravel ramp before the max-strength zone, then holds the high-force adaptive resistance through the rest of the pull unless higher-priority brake effects take over.
+- **End stops now use sustained adaptive resistance instead of DualSense wall output.** The full-force brake and throttle regions are encoded as `AdaptiveResistance`, which better matches the heavy trigger feel seen when the controller is engaged without telemetry and avoids the old "small bump then soft travel" behavior.
+- **The trigger preview matches the backend force model.** The frontend graph constants and tooltips were updated with the same L2 wall, L2 ramp, R2 wall, R2 ramp width, and R2 ramp curve used by the hardware output runtime.
+- **Regression tests cover the new brake and throttle shape.** Backend tests assert the light throttle start, progressive R2 ramp, sustained R2 max zone, wider L2 max zone, and custom trigger endpoint behavior.
 
 ## Button Mapping Defaults
 
@@ -22,6 +25,11 @@ This release is a focused feel-and-polish update for the 0.2.6 trigger editor. I
 - **Curve control points are sharper and easier to grab.** The graph handles now render as CSS-positioned controls instead of stretched SVG circles, keeping the dots crisp on high-resolution displays and wide layouts.
 - **Range sliders received a visual pass.** Trigger sliders now use thicker rounded tracks, polished thumbs, and clearer hover/focus states across the tuning surface.
 - **Button mapping performance coverage includes default overlays.** The p95 guard now exercises the default-binding merge path so the fallback mappings stay cheap enough for the UI.
+
+## Release Publishing
+
+- **0.2.7 is published as the latest normal release.** The tag workflow now creates a published GitHub Release instead of leaving the generated artifacts as a draft prerelease, so the update checker and Releases page can see the build as the current latest version.
+- **Windows remains unsigned by design for this release.** The MSI and raw Windows binaries are still produced by the release workflow and should be verified with the included SHA256 checksum file.
 
 ## Validation gate
 
@@ -38,7 +46,7 @@ cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warni
 
 ## Install
 
-Download `DualSenseCommandCenter-0.2.7.msi` from the Releases page and run it. The MSI is unsigned, so Windows SmartScreen may show a publisher warning.
+Download `DualSenseCommandCenter-v0.2.7-windows-x86_64-unsigned.msi` from the Releases page and run it. The MSI is unsigned, so Windows SmartScreen may show a publisher warning.
 
 # DualSense Command Center 0.2.6
 
