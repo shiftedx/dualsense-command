@@ -381,18 +381,20 @@
   const FORZA_BRAKE_BASELINE_FORCE = 42 / 255;
   const FORZA_BRAKE_NORMAL_FORCE = 164 / 255;
   const FORZA_BRAKE_ENDSTOP_FORCE = 238 / 255;
-  const FORZA_THROTTLE_BASELINE_FORCE = 8 / 255;
-  const FORZA_THROTTLE_NORMAL_FORCE = 60 / 255;
+  const FORZA_THROTTLE_BASELINE_FORCE = 3 / 255;
+  const FORZA_THROTTLE_NORMAL_FORCE = 28 / 255;
   const FORZA_THROTTLE_ENDSTOP_FORCE = 106 / 255;
   const FORZA_ENDSTOP_WALL_OFFSET = 0.03;
-  const FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET = 0.14;
-  const FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION = 0.80;
-  const FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION = 1.0;
+  const FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET = 0.28;
+  const FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION = 0.70;
+  const FORZA_BRAKE_OVERTRAVEL_RAMP_WIDTH = 0.16;
+  const FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE = 2.0;
+  const FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION = 0.80;
   const FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION = 0.80;
   const FORZA_BRAKE_ENDSTOP_FORCE_BOOST = 1.25;
-  const FORZA_THROTTLE_ENDSTOP_FORCE_BOOST = 2.75;
-  const FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH = 0.10;
-  const FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE = 3.6;
+  const FORZA_THROTTLE_ENDSTOP_FORCE_BOOST = 3.0;
+  const FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH = 0.20;
+  const FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE = 2.4;
 
   const shiftThumpPresets = [
     { label: 'Soft', intensity: 35 },
@@ -2079,13 +2081,15 @@
     brakeOvertravelGuardActive(end)
       ? clamp(Math.max(FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION, end - FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET), start, end)
       : endstopWallPosition(start, end);
+  const brakeOvertravelRampStart = (start: number, wall: number) =>
+    clamp(wall - FORZA_BRAKE_OVERTRAVEL_RAMP_WIDTH, start, wall);
   const throttleOvertravelGuardActive = (end: number) => end >= FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION;
   const throttleOvertravelWallPosition = (start: number, end: number) =>
     throttleOvertravelGuardActive(end)
       ? clamp(Math.min(end, FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION), start, end)
       : endstopWallPosition(start, end);
   const throttleOvertravelRampStart = (start: number, wall: number) =>
-    clamp(wall - FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH, start, wall);
+    clamp(Math.round((wall - FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH) * 1000) / 1000, start, wall);
   const routeHasL2 = (route: ForzaEffectRoute) => route === 'l2' || route === 'both_triggers' || route === 'body_and_triggers';
   const routeHasR2 = (route: ForzaEffectRoute) =>
     route === 'r2' || route === 'both_triggers' || route === 'body_and_triggers' || route === 'r2_and_body';
@@ -2118,10 +2122,13 @@
       if (!brake || !routeHasL2(brake.route)) return null;
       const scalar = forzaEffectScalarForGraph(brake) * triggerScalar;
       if (scalar <= 0) return null;
+      const wall = brakeOvertravelWallPosition(start, end);
+      const rampStart = brakeOvertravelGuardActive(end) ? brakeOvertravelRampStart(start, wall) : undefined;
       return {
         start,
         end,
-        wall: brakeOvertravelWallPosition(start, end),
+        wall,
+        rampStart,
         curve,
         points,
         baselineForce: scaledUnitForGraph(FORZA_BRAKE_BASELINE_FORCE, scalar),
@@ -2154,10 +2161,11 @@
     const x = clampUnit(position);
     if (x <= model.start) return 0;
     if (x >= model.wall) return model.endstopForce;
-    if (side === 'r2' && model.rampStart !== undefined && model.rampStart < model.wall && x >= model.rampStart) {
-      return clampUnit(signalCurveForGraph(x, model.rampStart, model.wall, model.normalForce, model.endstopForce, FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE));
+    if (model.rampStart !== undefined && model.rampStart < model.wall && x >= model.rampStart) {
+      const rampCurve = side === 'l2' ? FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE : FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE;
+      return clampUnit(signalCurveForGraph(x, model.rampStart, model.wall, model.normalForce, model.endstopForce, rampCurve));
     }
-    const editableEnd = side === 'r2' && model.rampStart !== undefined ? model.rampStart : model.wall;
+    const editableEnd = model.rampStart ?? model.wall;
     const active = clampUnit((x - model.start) / (Math.max(model.start + 0.01, editableEnd) - model.start));
     const curved = triggerCurvePointOutput(model.points, active);
     return clampUnit(model.baselineForce + (model.normalForce - model.baselineForce) * curved);
@@ -2256,11 +2264,7 @@
       displayMode === 'forza'
         ? forzaTriggerForceModelFor(side, fromRaw, toRaw, curveRaw, points, fallbackCurve, effect, intensity, effects)
         : null;
-    const editableEnd = model
-      ? side === 'r2' && model.rampStart !== undefined
-        ? model.rampStart
-        : model.wall
-      : end;
+    const editableEnd = model ? model.rampStart ?? model.wall : end;
     const span = Math.max(0.01, editableEnd - start);
 
     return points.map((point, index) => {
@@ -2318,11 +2322,17 @@
 
   const routeTooltip = (route: ForzaEffectRoute) => routeTooltips[route] ?? 'Selects where DSCC sends this telemetry effect.';
 
-  const brakeOvertravelGuardPoint = (end: number) =>
-    end >= 80 ? Math.min(end, Math.max(80, end - 14)) : Math.max(0, end - 3);
-  const throttleOvertravelGuardPoint = (end: number) => {
+  const brakeOvertravelWallPoint = (end: number) =>
+    Math.round(end >= FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION * 100
+      ? Math.min(end, Math.max(FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION * 100, end - FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET * 100))
+      : Math.max(0, end - FORZA_ENDSTOP_WALL_OFFSET * 100));
+  const throttleOvertravelWallPoint = (end: number) =>
+    Math.round(end >= FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION * 100
+      ? Math.min(end, FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION * 100)
+      : Math.max(0, end - FORZA_ENDSTOP_WALL_OFFSET * 100));
+  const throttleOvertravelRampPoint = (end: number) => {
     if (end < FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION * 100) return Math.max(0, end - 3);
-    const wall = Math.min(end, FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION * 100);
+    const wall = throttleOvertravelWallPoint(end);
     return Math.round(Math.min(end, Math.max(0, wall - FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH * 100)));
   };
 
@@ -2330,8 +2340,8 @@
     edge === 'from'
       ? `${side} starts building force at ${value}% trigger travel. Raising this creates more free travel before resistance begins.`
       : side === 'L2'
-        ? `${side} reaches full configured force at ${value}% trigger travel. Brake lock warning arms near ${brakeOvertravelGuardPoint(value)}% when the end point is high.`
-        : `${side} reaches full configured force at ${value}% trigger travel. Throttle stays light first, then ramps hard from about ${throttleOvertravelGuardPoint(value)}% into the end wall so shift thumps keep travel to punch through.`;
+        ? `${side} max resistance begins near ${brakeOvertravelWallPoint(value)}% and holds through the end of travel, while ABS/handbrake priority effects can still take over.`
+        : `${side} stays light first, ramps from about ${throttleOvertravelRampPoint(value)}%, then holds max resistance from about ${throttleOvertravelWallPoint(value)}% through full travel unless shift/rev priority effects take over.`;
 
   const triggerCurveTooltip = (side: 'L2' | 'R2', value: number) =>
     `${side} curve is ${value.toFixed(2)}. Drag the dots for a custom response, or move this slider to regenerate a smooth exponent curve.`;
