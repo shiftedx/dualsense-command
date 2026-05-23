@@ -1,3 +1,45 @@
+# DualSense Command Center 0.2.7
+
+Release date: 2026-05-23
+
+This release is a focused feel-and-polish update for the 0.2.6 trigger editor. It keeps the new granular curve system, fixes reports of missing default mappings, and retunes Forza throttle resistance so the end-stop feel no longer costs usable full-throttle travel.
+
+## Adaptive Trigger Tuning
+
+- **Forza R2 now preserves true full throttle by default.** The throttle overtravel wall now sits at the configured end point instead of being capped early at 95%, so the game can still receive full throttle at the top of the pull.
+- **The throttle guard still ramps hard near the end.** R2 stays light through normal travel, then uses a shorter, steeper final ramp through roughly the last 10% so the trigger still feels like it is pushing into a firm end zone without eating useful RPM or top speed.
+- **The trigger preview matches the backend force model.** The frontend graph constants were updated with the same R2 wall, ramp width, and ramp curve used by the hardware output runtime.
+- **Regression tests cover the new end-stop behavior.** Backend tests now assert that full throttle arms the wall at 100% while the progressive guard only takes over near the high end of travel.
+
+## Button Mapping Defaults
+
+- **Missing button assignments now normalize to DSCC defaults.** Saved controller, profile, and Edge slot payloads that omit `buttons` now load with the expected Cross/Circle/Square/Triangle, shoulders, sticks, system buttons, and Edge back-button defaults instead of appearing unmapped.
+- **The Button Mapping view now shows default Steam-style bindings when no layout entry exists.** This prevents first-load screens from looking empty while still making it clear when a user is looking at DSCC defaults rather than an actual Steam layout write target.
+- **Synthetic defaults are guarded from writes.** The app will ask users to open or create a real Steam Input layout before saving a custom binding, instead of trying to write a generated placeholder binding back to Steam.
+
+## Trigger Editor Polish
+
+- **Curve control points are sharper and easier to grab.** The graph handles now render as CSS-positioned controls instead of stretched SVG circles, keeping the dots crisp on high-resolution displays and wide layouts.
+- **Range sliders received a visual pass.** Trigger sliders now use thicker rounded tracks, polished thumbs, and clearer hover/focus states across the tuning surface.
+- **Button mapping performance coverage includes default overlays.** The p95 guard now exercises the default-binding merge path so the fallback mappings stay cheap enough for the UI.
+
+## Validation gate
+
+This release was cut after a clean run of:
+
+```powershell
+npm.cmd --prefix web run typecheck
+npm.cmd --prefix web run build
+npm.cmd --prefix web run test:button-map
+cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
+cargo +stable-x86_64-pc-windows-gnu test --workspace
+cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warnings
+```
+
+## Install
+
+Download `DualSenseCommandCenter-0.2.7.msi` from the Releases page and run it. The MSI is unsigned, so Windows SmartScreen may show a publisher warning.
+
 # DualSense Command Center 0.2.6
 
 Release date: 2026-05-22

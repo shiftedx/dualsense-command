@@ -3,6 +3,7 @@ import { performance } from 'node:perf_hooks';
 
 import {
   buildSteamBindingBySlotKey,
+  buildDefaultSteamBindingBySlotKey,
   chipDisplayLabel,
   createMappingChipModels,
   createSteamMirrorGroups,
@@ -82,6 +83,13 @@ const labelBinding = {
 };
 assert.equal(chipDisplayLabel(labelBinding), 'Jump');
 assert.equal(chipDisplayLabel(null), 'Unassigned');
+
+const defaultDualSenseBindings = buildDefaultSteamBindingBySlotKey('DualSense');
+assert.equal(defaultDualSenseBindings.get('cross')?.rawBinding, 'xinput_button a, , Cross');
+assert.equal(defaultDualSenseBindings.has('edgeBackLeft'), false);
+const defaultEdgeBindings = buildDefaultSteamBindingBySlotKey('DualSense Edge');
+assert.equal(defaultEdgeBindings.get('edgeBackLeft')?.rawBinding, 'xinput_button joystick_left, , L3');
+assert.equal(defaultEdgeBindings.get('edgeBackLeft')?.synthetic, true);
 
 const fh6ParityBindings = [
   {

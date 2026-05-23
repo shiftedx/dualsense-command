@@ -150,10 +150,25 @@ export const mockControllerConfig: ControllerConfiguration = {
     rightDeadzone: 3
   },
   buttons: [
-    { key: 'cross', label: 'Confirm / Handbrake' },
-    { key: 'circle', label: 'Back / Camera' },
-    { key: 'l1', label: 'Clutch' },
-    { key: 'r1', label: 'Shift up' }
+    { key: 'Cross', label: 'Cross' },
+    { key: 'Circle', label: 'Circle' },
+    { key: 'Square', label: 'Square' },
+    { key: 'Triangle', label: 'Triangle' },
+    { key: 'D-Pad', label: 'D-Pad' },
+    { key: 'L1', label: 'L1' },
+    { key: 'R1', label: 'R1' },
+    { key: 'L2', label: 'L2' },
+    { key: 'R2', label: 'R2' },
+    { key: 'L3', label: 'L3' },
+    { key: 'R3', label: 'R3' },
+    { key: 'Create', label: 'Create' },
+    { key: 'Options', label: 'Options' },
+    { key: 'Touch Pad', label: 'Touch Pad Press' },
+    { key: 'Mute', label: 'Mute' },
+    { key: 'Back Left', label: 'L3' },
+    { key: 'Back Right', label: 'R3' },
+    { key: 'Fn Left', label: 'Previous DSCC Profile' },
+    { key: 'Fn Right', label: 'Next DSCC Profile' }
   ],
   profileAssignments: mockControllerProfileAssignments
 };

@@ -453,6 +453,7 @@ export interface SteamInputBinding {
   sourceMode?: string | null;
   activator?: string | null;
   groupId?: string | null;
+  synthetic?: boolean;
 }
 
 export interface SteamInputBindingWriteRequest {
