@@ -403,7 +403,7 @@
       <button
         class="dm-mapping-action primary"
         type="button"
-        disabled={steamBindingBusy || !steamInputLayoutAvailable || !focusedSlotSelectedBinding}
+        disabled={steamBindingBusy || !steamInputLayoutAvailable || !focusedSlotSelectedBinding || focusedSlotSelectedBinding.synthetic}
         onclick={() => void onSaveBinding()}
       >Apply</button>
     </div>

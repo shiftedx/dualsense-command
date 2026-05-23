@@ -9,6 +9,7 @@
   import {
     ButtonMappingView,
     assembleSteamBindingRaw,
+    buildDefaultSteamBindingBySlotKey,
     buildSteamBindingBySlotKey,
     createMappingChipModels,
     createSteamMirrorGroups,
@@ -271,6 +272,82 @@
     label: string;
     options: Array<{ label: string; raw: string; targetKey: string; searchText: string }>;
   };
+
+  const defaultButtonAssignments = (edge = false): EditableControllerConfig['buttons'] => [
+    { key: 'Cross', label: 'Cross' },
+    { key: 'Circle', label: 'Circle' },
+    { key: 'Square', label: 'Square' },
+    { key: 'Triangle', label: 'Triangle' },
+    { key: 'D-Pad', label: 'D-Pad' },
+    { key: 'L1', label: 'L1' },
+    { key: 'R1', label: 'R1' },
+    { key: 'L2', label: 'L2' },
+    { key: 'R2', label: 'R2' },
+    { key: 'L3', label: 'L3' },
+    { key: 'R3', label: 'R3' },
+    { key: 'Create', label: 'Create' },
+    { key: 'Options', label: 'Options' },
+    { key: 'Touch Pad', label: 'Touch Pad Press' },
+    { key: 'Mute', label: 'Mute' },
+    ...(edge
+      ? [
+          { key: 'Back Left', label: 'L3' },
+          { key: 'Back Right', label: 'R3' },
+          { key: 'Fn Left', label: 'Previous DSCC Profile' },
+          { key: 'Fn Right', label: 'Next DSCC Profile' }
+        ]
+      : [])
+  ];
+
+  const canonicalButtonKey = (key: string) => {
+    const trimmed = key.trim();
+    const legacy: Record<string, string> = {
+      cross: 'Cross',
+      circle: 'Circle',
+      square: 'Square',
+      triangle: 'Triangle',
+      dpad: 'D-Pad',
+      dpadUp: 'D-Pad Up',
+      dpadDown: 'D-Pad Down',
+      dpadLeft: 'D-Pad Left',
+      dpadRight: 'D-Pad Right',
+      l1: 'L1',
+      r1: 'R1',
+      l2: 'L2',
+      r2: 'R2',
+      l3: 'L3',
+      r3: 'R3',
+      create: 'Create',
+      options: 'Options',
+      touchPad: 'Touch Pad',
+      mute: 'Mute',
+      edgeBackLeft: 'Back Left',
+      edgeBackRight: 'Back Right',
+      edgeFnLeft: 'Fn Left',
+      edgeFnRight: 'Fn Right'
+    };
+    return legacy[trimmed] ?? trimmed;
+  };
+
+  const normalizeButtonAssignments = (
+    buttons: EditableControllerConfig['buttons'] | undefined,
+    edge = false
+  ): EditableControllerConfig['buttons'] => {
+    const byKey = new Map(
+      (buttons ?? [])
+        .map((button) => ({
+          key: canonicalButtonKey(button.key ?? ''),
+          label: (button.label ?? '').trim()
+        }))
+        .filter((button) => button.key)
+        .map((button) => [button.key, button])
+    );
+    const defaults = defaultButtonAssignments(edge);
+    const ordered = defaults.map((button) => byKey.get(button.key) ?? button);
+    const defaultKeys = new Set(defaults.map((button) => button.key));
+    const extras = [...byKey.values()].filter((button) => !defaultKeys.has(button.key)).slice(0, Math.max(0, 24 - ordered.length));
+    return [...ordered, ...extras];
+  };
   const preparedSteamBindingTargetGroups: PreparedSteamBindingTargetGroup[] = steamBindingTargetGroups.map((group) => ({
     label: group.label,
     options: group.options.map((option) => ({
@@ -310,12 +387,12 @@
   const FORZA_ENDSTOP_WALL_OFFSET = 0.03;
   const FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET = 0.14;
   const FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION = 0.80;
-  const FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION = 0.95;
+  const FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION = 1.0;
   const FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION = 0.80;
   const FORZA_BRAKE_ENDSTOP_FORCE_BOOST = 1.25;
   const FORZA_THROTTLE_ENDSTOP_FORCE_BOOST = 2.75;
-  const FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH = 0.12;
-  const FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE = 3.0;
+  const FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH = 0.10;
+  const FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE = 3.6;
 
   const shiftThumpPresets = [
     { label: 'Soft', intensity: 35 },
@@ -955,8 +1032,16 @@
     activeSteamSlotKey = '';
     hoveredSteamSlotKey = '';
   }
-  $: steamInputBindings = optimisticSteamInputBindings ?? rawSteamInputBindings;
-  $: steamBindingBySlotKey = buildSteamBindingBySlotKey(steamInputBindings, steamBindingSlots);
+  $: realSteamInputBindings = optimisticSteamInputBindings ?? rawSteamInputBindings;
+  $: realSteamBindingBySlotKey = buildSteamBindingBySlotKey(realSteamInputBindings, steamBindingSlots);
+  $: defaultSteamBindingBySlotKey = buildDefaultSteamBindingBySlotKey(controller?.family);
+  $: steamBindingBySlotKey = new Map([...defaultSteamBindingBySlotKey, ...realSteamBindingBySlotKey]);
+  $: steamInputBindings = [
+    ...realSteamInputBindings,
+    ...[...defaultSteamBindingBySlotKey.entries()]
+      .filter(([slotKey]) => !realSteamBindingBySlotKey.has(slotKey))
+      .map(([, binding]) => binding)
+  ];
   $: if (
     steamInputBindings.length &&
     !activeSteamSlotKey &&
@@ -1437,6 +1522,10 @@
       setSteamBindingMessage('Load a Steam Input layout and select a binding first.', 'error');
       return;
     }
+    if (bindingToSave.synthetic) {
+      setSteamBindingMessage('This input is using DSCC default mapping. Open or create a Steam Input layout for this game before saving a custom binding.', 'error');
+      return;
+    }
     const rawBinding = steamBindingDraft.trim();
     if (!rawBinding) {
       setSteamBindingMessage('Choose a target binding before saving.', 'error');
@@ -1847,7 +1936,7 @@
     lightbar: config.lightbar,
     forza: config.forza,
     sticks: config.sticks,
-    buttons: config.buttons,
+    buttons: normalizeButtonAssignments(config.buttons, config.model === 'DualSense Edge' || controller?.family === 'DualSense Edge'),
     profileAssignments: config.profileAssignments
   });
 
@@ -1885,7 +1974,7 @@
         }))
       },
       sticks: config.sticks,
-      buttons: config.buttons,
+      buttons: normalizeButtonAssignments(config.buttons, controller?.family === 'DualSense Edge'),
       profileAssignments: config.profileAssignments
     });
 
@@ -2231,8 +2320,11 @@
 
   const brakeOvertravelGuardPoint = (end: number) =>
     end >= 80 ? Math.min(end, Math.max(80, end - 14)) : Math.max(0, end - 3);
-  const throttleOvertravelGuardPoint = (end: number) =>
-    end >= 80 ? Math.min(end, Math.max(0, Math.min(end, 95) - 12)) : Math.max(0, end - 3);
+  const throttleOvertravelGuardPoint = (end: number) => {
+    if (end < FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION * 100) return Math.max(0, end - 3);
+    const wall = Math.min(end, FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION * 100);
+    return Math.round(Math.min(end, Math.max(0, wall - FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH * 100)));
+  };
 
   const triggerRangeTooltip = (side: 'L2' | 'R2', edge: 'from' | 'to', value: number) =>
     edge === 'from'
@@ -2599,7 +2691,7 @@
       rightCurveAmount: 50,
       rightDeadzone: 0
     },
-    buttons: [],
+    buttons: defaultButtonAssignments(controller?.family === 'DualSense Edge'),
     profileAssignments: []
   });
 
@@ -2630,7 +2722,7 @@
     lightbar: config.lightbar,
     forza: config.forza,
     sticks: config.sticks,
-    buttons: config.buttons,
+    buttons: normalizeButtonAssignments(config.buttons, controller?.family === 'DualSense Edge'),
     profileAssignments: currentControllerConfig?.profileAssignments ?? []
   });
 
@@ -2717,7 +2809,8 @@
       forza: {
         bodyRumbleMode: normalizeForzaBodyRumbleMode(forzaBodyRumbleMode),
         effects: normalizeForzaEffects(forzaEffects)
-      }
+      },
+      buttons: normalizeButtonAssignments(base.buttons, controller?.family === 'DualSense Edge')
     };
   };
 
@@ -4176,20 +4269,6 @@
                 <line class="curve-range-edge" x1={l2CurveView.rangeStart} y1="0" x2={l2CurveView.rangeStart} y2="100" />
                 <line class="curve-range-edge" x1={l2CurveView.rangeEnd} y1="0" x2={l2CurveView.rangeEnd} y2="100" />
                 <path class="curve-force" d={l2CurveView.path} />
-                {#each l2CurveView.curvePoints as point}
-                  <circle
-                    class:active={curveDragPoint?.side === 'l2' && curveDragPoint.index === point.index}
-                    class:locked={point.locked}
-                    class="curve-control-point"
-                    cx={point.x}
-                    cy={point.y}
-                    r={point.locked ? 1.7 : 2.25}
-                    role="button"
-                    aria-label="L2 curve control point"
-                    tabindex="-1"
-                    onpointerdown={(event) => !point.locked && handleCurvePointPointer(event, 'l2', point.index)}
-                  />
-                {/each}
                 {#if curveHover?.side === 'l2'}
                   <line class="curve-crosshair" x1={curveHover.left.toFixed(2)} y1="0" x2={curveHover.left.toFixed(2)} y2="100" />
                 {/if}
@@ -4198,6 +4277,18 @@
                   <circle class="curve-live-dot" cx={l2CurveView.liveX} cy={l2CurveView.liveY} r="1.75" />
                 {/if}
               </svg>
+              {#each l2CurveView.curvePoints as point}
+                <button
+                  class:active={curveDragPoint?.side === 'l2' && curveDragPoint.index === point.index}
+                  class:locked={point.locked}
+                  class="dm-curve-control-handle"
+                  style="--point-x:{point.x}%;--point-y:{point.y}%;"
+                  type="button"
+                  aria-label="L2 curve control point"
+                  aria-disabled={point.locked}
+                  onpointerdown={(event) => point.locked ? (event.preventDefault(), event.stopPropagation()) : handleCurvePointPointer(event, 'l2', point.index)}
+                ></button>
+              {/each}
               {#if curveHover?.side === 'l2'}
                 <div class="dm-curve-tooltip" style="left:{curveHover.left}%;top:{curveHover.top}%;">
                   <code>IN {Math.round(curveHover.x * 100).toString().padStart(3, '0')}</code>
@@ -4269,20 +4360,6 @@
                 <line class="curve-range-edge" x1={r2CurveView.rangeStart} y1="0" x2={r2CurveView.rangeStart} y2="100" />
                 <line class="curve-range-edge" x1={r2CurveView.rangeEnd} y1="0" x2={r2CurveView.rangeEnd} y2="100" />
                 <path class="curve-force" d={r2CurveView.path} />
-                {#each r2CurveView.curvePoints as point}
-                  <circle
-                    class:active={curveDragPoint?.side === 'r2' && curveDragPoint.index === point.index}
-                    class:locked={point.locked}
-                    class="curve-control-point"
-                    cx={point.x}
-                    cy={point.y}
-                    r={point.locked ? 1.7 : 2.25}
-                    role="button"
-                    aria-label="R2 curve control point"
-                    tabindex="-1"
-                    onpointerdown={(event) => !point.locked && handleCurvePointPointer(event, 'r2', point.index)}
-                  />
-                {/each}
                 {#if curveHover?.side === 'r2'}
                   <line class="curve-crosshair" x1={curveHover.left.toFixed(2)} y1="0" x2={curveHover.left.toFixed(2)} y2="100" />
                 {/if}
@@ -4291,6 +4368,18 @@
                   <circle class="curve-live-dot" cx={r2CurveView.liveX} cy={r2CurveView.liveY} r="1.75" />
                 {/if}
               </svg>
+              {#each r2CurveView.curvePoints as point}
+                <button
+                  class:active={curveDragPoint?.side === 'r2' && curveDragPoint.index === point.index}
+                  class:locked={point.locked}
+                  class="dm-curve-control-handle"
+                  style="--point-x:{point.x}%;--point-y:{point.y}%;"
+                  type="button"
+                  aria-label="R2 curve control point"
+                  aria-disabled={point.locked}
+                  onpointerdown={(event) => point.locked ? (event.preventDefault(), event.stopPropagation()) : handleCurvePointPointer(event, 'r2', point.index)}
+                ></button>
+              {/each}
               {#if curveHover?.side === 'r2'}
                 <div class="dm-curve-tooltip" style="left:{curveHover.left}%;top:{curveHover.top}%;">
                   <code>IN {Math.round(curveHover.x * 100).toString().padStart(3, '0')}</code>

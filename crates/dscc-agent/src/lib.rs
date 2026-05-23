@@ -143,12 +143,12 @@ const FORZA_THROTTLE_CURVE: f64 = 2.25;
 const FORZA_ENDSTOP_WALL_OFFSET: f64 = 0.03;
 const FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET: f64 = 0.14;
 const FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION: f64 = 0.80;
-const FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION: f64 = 0.95;
+const FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION: f64 = 1.0;
 const FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION: f64 = 0.80;
 const FORZA_BRAKE_ENDSTOP_FORCE_BOOST: f64 = 1.25;
 const FORZA_THROTTLE_ENDSTOP_FORCE_BOOST: f64 = 2.75;
-const FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH: f64 = 0.12;
-const FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE: f64 = 3.0;
+const FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH: f64 = 0.10;
+const FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE: f64 = 3.6;
 const FORZA_SHIFT_THUMP_DEFAULT_INTENSITY: u8 = 255;
 const TRIGGER_CURVE_SCALE: f64 = 100.0;
 const TRIGGER_CURVE_MIN: u16 = 50;
@@ -973,6 +973,7 @@ pub struct EdgeProfileSlotConfig {
     #[serde(default)]
     pub lightbar: LightbarConfig,
     pub sticks: StickConfig,
+    #[serde(default)]
     pub buttons: Vec<ButtonAssignmentConfig>,
     pub updated_at: String,
     pub hardware_synced: bool,
@@ -1072,7 +1073,9 @@ pub struct ControllerConfig {
     #[serde(default)]
     pub forza: ForzaTelemetryConfig,
     pub sticks: StickConfig,
+    #[serde(default)]
     pub buttons: Vec<ButtonAssignmentConfig>,
+    #[serde(default)]
     pub profile_assignments: Vec<ProfileAssignmentConfig>,
 }
 
@@ -1593,7 +1596,9 @@ pub struct UpdateControllerConfigRequest {
     #[serde(default)]
     pub forza: ForzaTelemetryConfig,
     pub sticks: StickConfig,
+    #[serde(default)]
     pub buttons: Vec<ButtonAssignmentConfig>,
+    #[serde(default)]
     pub profile_assignments: Vec<ProfileAssignmentConfig>,
 }
 
@@ -1624,6 +1629,7 @@ pub struct UpdateEdgeProfileRequest {
     #[serde(default)]
     pub lightbar: LightbarConfig,
     pub sticks: StickConfig,
+    #[serde(default)]
     pub buttons: Vec<ButtonAssignmentConfig>,
 }
 
@@ -13442,6 +13448,60 @@ mod tests {
         assert_eq!(updated.trigger.r2_from, 12);
         assert_eq!(updated.sticks.right_curve_amount, 100);
         assert_eq!(updated.sticks.right_deadzone, 40);
+        assert!(updated
+            .buttons
+            .iter()
+            .any(|button| button.key == "Cross" && button.label == "Cross"));
+        assert!(updated
+            .buttons
+            .iter()
+            .any(|button| button.key == "Back Left" && button.label == "L3"));
+        assert!(updated
+            .buttons
+            .iter()
+            .any(|button| button.key == "Back Right" && button.label == "R3"));
+    }
+
+    #[test]
+    fn missing_button_assignments_normalize_to_defaults() {
+        let mut controller_value = serde_json::to_value(ControllerConfig::default_for(
+            "edge-defaults",
+            "DualSense Edge",
+        ))
+        .expect("controller config serializes");
+        controller_value
+            .as_object_mut()
+            .expect("controller config object")
+            .remove("buttons");
+        let controller_config: ControllerConfig =
+            serde_json::from_value(controller_value).expect("controller config deserializes");
+        let controller_config = controller_config.normalized();
+        assert!(controller_config
+            .buttons
+            .iter()
+            .any(|button| button.key == "Cross" && button.label == "Cross"));
+        assert!(controller_config
+            .buttons
+            .iter()
+            .any(|button| button.key == "Back Left" && button.label == "L3"));
+
+        let mut profile_value =
+            serde_json::to_value(ProfileConfig::default()).expect("profile config serializes");
+        profile_value
+            .as_object_mut()
+            .expect("profile config object")
+            .remove("buttons");
+        let profile_config: ProfileConfig =
+            serde_json::from_value(profile_value).expect("profile config deserializes");
+        let profile_config = profile_config.normalized_for_model("DualSense Edge");
+        assert!(profile_config
+            .buttons
+            .iter()
+            .any(|button| button.key == "Cross" && button.label == "Cross"));
+        assert!(profile_config
+            .buttons
+            .iter()
+            .any(|button| button.key == "Back Left" && button.label == "L3"));
     }
 
     #[test]
@@ -15791,7 +15851,7 @@ mod tests {
 
         match frame.r2 {
             TriggerOutput::Wall { position, strength } => {
-                assert!((position - 0.95).abs() < f64::EPSILON);
+                assert!((position - 1.0).abs() < f64::EPSILON);
                 assert!(
                     (0.97..0.99).contains(&strength),
                     "full throttle should create a firm overtravel guard, got {strength}"
@@ -15813,8 +15873,7 @@ mod tests {
 
     #[test]
     fn forza_throttle_endstop_progressively_hardens_near_high_end_point() {
-        let mut config = forza_horizon_controller_config();
-        config.trigger.r2_to = 90;
+        let config = forza_horizon_controller_config();
         let profile = forza_runtime_profile("forza-horizon", "Forza", Some(&config));
 
         let snapshot = |throttle| {
@@ -15831,7 +15890,7 @@ mod tests {
             ])
         };
 
-        let below = EffectEngine::new().evaluate(&profile, &snapshot(0.77));
+        let below = EffectEngine::new().evaluate(&profile, &snapshot(0.89));
         match below.r2 {
             TriggerOutput::AdaptiveResistance {
                 start_position,
@@ -15846,48 +15905,46 @@ mod tests {
             other => panic!("expected light throttle ramp before guard, got {other:?}"),
         }
 
-        let ramp_start = EffectEngine::new().evaluate(&profile, &snapshot(0.78));
+        let ramp_start = EffectEngine::new().evaluate(&profile, &snapshot(0.90));
         match ramp_start.r2 {
             TriggerOutput::AdaptiveResistance {
                 start_position,
                 strength,
             } => {
-                assert!((start_position - 0.78).abs() < f64::EPSILON);
+                assert!((start_position - 0.90).abs() < f64::EPSILON);
                 assert!(
-                    (0.19..0.23).contains(&strength),
+                    (0.19..0.25).contains(&strength),
                     "throttle guard should begin with a controlled ramp, got {strength}"
                 );
             }
             other => panic!("expected throttle overtravel ramp to arm, got {other:?}"),
         }
 
-        let near_wall = EffectEngine::new().evaluate(&profile, &snapshot(0.88));
+        let near_wall = EffectEngine::new().evaluate(&profile, &snapshot(0.98));
         match near_wall.r2 {
             TriggerOutput::AdaptiveResistance {
                 start_position,
                 strength,
             } => {
-                assert!((start_position - 0.78).abs() < f64::EPSILON);
+                assert!((start_position - 0.90).abs() < f64::EPSILON);
                 assert!(
-                    (0.65..0.82).contains(&strength),
+                    (0.52..0.68).contains(&strength),
                     "throttle should get significantly harder near the wall, got {strength}"
                 );
             }
             other => panic!("expected progressive throttle guard near the wall, got {other:?}"),
         }
 
-        for throttle in [0.90, 1.0] {
-            let frame = EffectEngine::new().evaluate(&profile, &snapshot(throttle));
-            match frame.r2 {
-                TriggerOutput::Wall { position, strength } => {
-                    assert!((position - 0.90).abs() < f64::EPSILON);
-                    assert!(
-                        (0.97..0.99).contains(&strength),
-                        "throttle wall should preserve shift-thump travel, got {strength}"
-                    );
-                }
-                other => panic!("expected throttle guard wall at {throttle}, got {other:?}"),
+        let frame = EffectEngine::new().evaluate(&profile, &snapshot(1.0));
+        match frame.r2 {
+            TriggerOutput::Wall { position, strength } => {
+                assert!((position - 1.0).abs() < f64::EPSILON);
+                assert!(
+                    (0.97..0.99).contains(&strength),
+                    "throttle wall should preserve shift-thump travel, got {strength}"
+                );
             }
+            other => panic!("expected throttle guard wall at full throttle, got {other:?}"),
         }
     }
 
