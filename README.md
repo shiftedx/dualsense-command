@@ -1,114 +1,196 @@
-﻿# DualSense Command Center
+# DualSense Command Center
 
-DualSense Command Center is a local Windows app for PlayStation DualSense and DualSense Edge controllers.
+DualSense Command Center is a local-first control center for PlayStation DualSense and DualSense Edge controllers. It runs a lightweight Rust agent, a Windows tray launcher, and a Svelte web UI for profiles, adaptive triggers, haptics, lightbar control, Steam Input helpers, controller diagnostics, and racing telemetry.
 
-It runs a lightweight background agent, starts from a tray launcher, and serves a local web UI for controller status, profiles, adaptive trigger tuning, lightbar output, haptics, Steam Input helpers, and game telemetry adapters.
+The app is built around two extension concepts:
 
-The first supported live telemetry adapter is Forza Data Out. The project is built around adapter modules for protocols and game modules for individual supported games, so future releases can add games without redesigning the app.
+- **Adapters** own protocol/runtime plumbing, such as Forza Data Out UDP or Assetto shared memory.
+- **Game modules** own one supported game, including detection hints, profile defaults, labels, and adapter bindings.
 
-<img width="2095" height="1422" alt="image" src="https://github.com/user-attachments/assets/a3481779-af9d-46dd-bbc6-c544573d807e" />
+<img width="2095" height="1422" alt="DualSense Command Center haptics UI" src="https://github.com/user-attachments/assets/a3481779-af9d-46dd-bbc6-c544573d807e" />
 
-## Current Release
+## Current Status
 
-- Version: `0.2.6`
-- Platform: Windows x86_64
-- Package: `.msi` installer from GitHub Releases
+- Latest release: `0.2.8`
+- Primary platform: Windows x86_64
+- Package: unsigned Windows MSI from GitHub Releases
+- Linux status: experimental raw binaries only
 - License: Apache License 2.0
+- App maturity: pre-1.0 beta with real hardware output enabled by default
 
-Download the latest installer from the [GitHub Releases page](https://github.com/shiftedx/dualsense-command/releases).
+Download the latest build from the [GitHub Releases page](https://github.com/shiftedx/dualsense-command/releases/latest).
 
-The installer adds:
+The Windows installer includes:
 
-- DualSense Command Center tray app
+- DSCC tray app
 - Local DSCC agent
+- Bundled web UI served by the agent
 - Start menu shortcuts
 - Optional startup entry
-- Bundled web UI served locally by the agent
 
-The MSI is currently unsigned, so Windows may show a SmartScreen or publisher warning during install.
+The MSI is unsigned, so Windows SmartScreen or managed endpoint policy may warn during install. Published release assets include SHA256 checksum files.
 
-Profile and controller settings are stored in the user's DSCC config directory, not in the install folder. During install or upgrade, the MSI backs up an existing `state.json` to `state.preinstall-<version>.json` before launching the updated tray app.
+Profiles, controller aliases, app settings, and staged Edge slot data are stored in the user config directory, not in the install folder. During install or upgrade, the MSI backs up the existing `state.json` to `state.preinstall-<version>.json` before launching the updated tray app.
 
-## Features
+## What Works Today
 
-- DualSense and DualSense Edge discovery through `hidapi`.
-- Local HTTP/WebSocket API served by the agent.
-- Svelte web UI served from the installed app.
-- Built-in Forza profiles with global and per-game profile create, edit, delete, import, and export support.
-- Controller selection with persisted per-device display names backed by stable controller IDs.
-- Rich supported-game selection from Steam metadata and artwork before tuning surfaces are shown.
-- Global profile tuning for controller-level triggers, rumble, and lightbar behavior without game telemetry or RPM controls.
-- Adaptive trigger curves, rumble rules, lightbar output, and controller status views.
-- Game-specific Steam Input mapping mirror with guarded write-back to the selected controller layout.
-- Forza Data Out parsing through the generic UDP adapter runtime, with live telemetry status and stale-telemetry fallback.
-- Steam Input inspection and binding helper APIs.
-- Controller glyph helper for supported Forza installs.
-- Module model with protocol adapters and per-game contributions.
-- CLI diagnostics for paths, devices, HID listing, mock devices, and agent status.
-- Real hardware output is enabled by default; set `DSCC_DISABLE_HARDWARE_OUTPUT=1` or `DSCC_ENABLE_HARDWARE_OUTPUT=0` for diagnostics-only dry runs.
-- LAN API or UDP adapter exposure requires explicit opt-in with `DSCC_ENABLE_LAN_API=1`; the current Forza adapter uses `DSCC_ENABLE_LAN_FORZA=1`.
+### Controller Runtime
+
+- Discovers DualSense and DualSense Edge controllers through `hidapi`.
+- Tracks stable controller ids separately from editable display aliases.
+- Shows connection, battery, permission, diagnostics, and capability state.
+- Reads live trigger input for tuning/test workflows.
+- Encodes controller output through validated `ControllerOutputFrame` paths; DSCC does not expose raw HID-byte write APIs.
+- Supports USB and Bluetooth output paths where the HID backend can open the controller.
+
+Hardware output is enabled by default. Use one of these for diagnostics-only dry runs:
+
+```powershell
+$env:DSCC_DISABLE_HARDWARE_OUTPUT='1'
+# or
+$env:DSCC_ENABLE_HARDWARE_OUTPUT='0'
+```
+
+### Profiles And Tuning
+
+- Global profile scope for controller-only trigger, rumble, and lightbar tuning.
+- Per-game profiles for supported game modules.
+- Profile create, edit, rename, delete, import, export, save-as, and activation flows.
+- Built-in Forza and Assetto Corsa Rally profile templates.
+- 4-8 point adaptive trigger curve editor for L2 and R2.
+- Live graph preview aligned with the backend force model for telemetry profiles.
+- Manual trigger and body-rumble tests that run only during the requested test phase.
+- Custom lightbar color, brightness, RPM color, and player LED behavior.
+- Forza body-rumble mode that defaults to native passthrough and adds DSCC event cues for short effects such as shift and landing thumps.
+
+Global Profile is the default until DSCC detects a supported game with a matching profile. Triggers and rumble are not driven by game effects until fresh telemetry is available.
+
+### Racing Telemetry
+
+DSCC currently has two live telemetry paths:
+
+- `forza-data-out`: UDP adapter for supported Forza Data Out / Race Telemetry variants, default bind `127.0.0.1:5300`.
+- `assetto-shared-memory`: Windows shared-memory reader for Assetto Corsa Rally's public Assetto telemetry pages.
+
+Telemetry can drive adaptive triggers, body haptics, lightbar/RPM output, player LEDs, and effect routing. Stale telemetry falls back safely, and hardware output waits for supported-game detection plus fresh telemetry before applying game effects.
+
+### Button Mapping And Steam Input
+
+- `#/button-mapping` mirrors the selected game's Steam Input controller layout.
+- Reads Steam Input binding summaries from guarded `controller_*.vdf` files.
+- Preserves Steam source, source mode, group id, input id, and activator identity so similarly named controls do not overwrite each other.
+- Provides DSCC default mapping overlays when a layout is missing bindings.
+- Rejects writes to synthetic/default-only mappings until a real Steam Input layout is available.
+- Uses dry-run validation and creates backups before real Steam Input writes.
+
+### DualSense Edge Onboard Slots
+
+The app exposes an experimental DualSense Edge onboard memory panel for assignable Fn slots:
+
+- `Fn + Circle`
+- `Fn + Cross`
+- `Fn + Square`
+
+DSCC can stage typed static settings locally, including supported trigger, stick, lightbar, vibration, and button settings. When a DualSense Edge is connected over USB and hardware writes are enabled, the API has a guarded write path for supported static onboard profile data. Bluetooth or unavailable hardware paths fall back to staged local state and clearly report that the controller memory was not written.
+
+Live telemetry effects are not stored on the controller. They require DSCC to be running.
+
+### Forza Glyph Helper
+
+Forza Horizon 6 includes an optional PlayStation glyph helper. When enabled, DSCC installs bundled PlayStation-style controller glyph files under a trusted Forza Horizon 6 install root.
+
+Safety rules:
+
+- DSCC only writes under the trusted FH6 install root.
+- Original `ControllerIcons.zip` files are backed up before replacement.
+- Restore uses the saved originals.
+- If originals or backups are missing, DSCC refuses the operation and asks the user to verify game files.
+
+### Updates And LAN
+
+- The app checks GitHub Releases for updates.
+- The tray opens the local UI at `http://127.0.0.1:43473/`.
+- LAN Access is off by default.
+- In installed builds, the tray grants the agent permission to offer the in-app LAN toggle.
+- Selecting **Web UI Location -> LAN Access** persists the user opt-in and requires restart; after restart the agent binds to `0.0.0.0:43473`.
+- Direct non-loopback agent launches still require `DSCC_ENABLE_LAN_API=1`.
+- The Forza UDP adapter remains loopback-first; non-loopback Forza binding requires `DSCC_ENABLE_LAN_FORZA=1`.
 
 ## Supported Games
 
-### Forza
+### Forza Horizon 5, Forza Horizon 6, And Forza Motorsport
 
-DSCC currently focuses on Forza telemetry through the in-game Data Out / UDP Race Telemetry feature.
+Forza support uses the in-game Data Out / UDP Race Telemetry feature.
 
-Forza Horizon 5, Forza Horizon 6, and Forza Motorsport are treated as separate supported game modules. They may share the same built-in `forza-data-out` adapter when their telemetry protocol is compatible.
+Forza setup:
 
-To connect Forza telemetry:
-
-1. Open the game settings.
+1. Open the game's HUD/gameplay telemetry settings.
 2. Enable Data Out / UDP Race Telemetry.
-3. Set the target IP to `127.0.0.1`.
-4. Set the target port to `5300`.
+3. Set target IP to `127.0.0.1`.
+4. Set target port to `5300`.
 5. Start DualSense Command Center from the Start menu or tray app.
+6. Select the detected Forza game/profile in the DSCC UI.
 
-The local UI is served at:
+Supported Forza effects include brake pressure, ABS/front slip, handbrake wall, throttle load, paddle shift thump, rev limiter buzz, road texture, rumble strips, tire slip, puddle drag, suspension/impact thumps, RGB/RPM lightbar behavior, and player LEDs.
 
-```text
-http://127.0.0.1:43473/
-```
+### Assetto Corsa Rally
 
-## Controller Glyphs
+Assetto Corsa Rally is the first shared-memory game module. DSCC detects `acr.exe`, watches Assetto-compatible shared-memory pages on Windows, and feeds normalized racing signals into the same haptic/profile runtime used by the rest of the app.
 
-The Forza controller glyph toggle can install PlayStation-style button glyphs for supported Forza installs.
+To use it, launch Assetto Corsa Rally, enter a driving session, and select the detected game/profile in DSCC. No Forza UDP port setup is required.
 
-When the toggle is enabled, DSCC first saves the original `ControllerIcons.zip` files beside the game files as DSCC backups. When the toggle is disabled, DSCC restores those saved originals.
+### Adapter Catalog
 
-If DSCC cannot find a safe original file or backup, it refuses to overwrite the game icons and asks the user to verify the game files first. This prevents the app from leaving PlayStation glyphs installed without a path back to the original icons.
+The repo also catalogs additional adapter directions such as EA F1 UDP, EA SPORTS WRC UDP, BeamNG.drive, Live for Speed, and RaceRoom. These are contribution targets and metadata/catalog entries unless a live parser/runtime is explicitly listed above.
+
+## Safety Model
+
+DSCC is intentionally loopback-first and hardware-gated:
+
+- The local API defaults to `127.0.0.1:43473`.
+- The Forza UDP adapter defaults to `127.0.0.1:5300`.
+- Mutating API routes reject cross-origin requests.
+- Hardware output flows through typed frame models and encoder clamps.
+- Game haptics require a supported detected game, an active profile, and fresh telemetry.
+- Manual effect tests bypass game gating only for the requested test duration.
+- Steam Input writes are limited to guarded `controller_*.vdf` files under trusted Steam roots.
+- HID paths, Steam userdata paths, PnP values, serials, Bluetooth addresses, and raw reports are sanitized from API/log/test surfaces.
 
 ## Project Layout
 
 ```text
 crates/
-  dscc-core/       Core profile and effect evaluation model
-  dscc-device/     HID device discovery and output transport
-  dscc-telemetry/  Shared telemetry signal types
-  dscc-adapters/   Protocol/runtime telemetry adapters
-  dscc-agent/      Local API, runtime state, profiles, and adapters
-  dscc-tray/       Windows tray launcher
+  dscc-core/       Profiles, effect rules, value sources, and output frame model
+  dscc-device/     HID discovery, diagnostics, registry, output encoding, transport
+  dscc-telemetry/  Shared telemetry signals, snapshots, adapter contracts
+  dscc-adapters/   Built-in adapter catalog and telemetry parsers
+  dscc-agent/      Local API, state, persistence, profiles, adapters, output loops
+  dscc-tray/       Windows tray launcher and agent starter
   dscc-cli/        Diagnostics and utility commands
-web/               Svelte web UI
-docs/              Public module format documentation
+web/               Svelte 5 + Vite web UI
+docs/              Public architecture, contribution, and module docs
 packaging/         Windows MSI packaging scripts
 ```
 
-Draft public module format notes live in `docs/module-manifest-format.md`. Community modules are planned as data-only manifest packs; the installer/loader is not implemented yet. Native telemetry parsers stay built in until a parser sandbox/signing model exists.
+Useful docs:
 
-Contributor docs live in `docs/contributing.md`, with a backend/frontend map in `docs/architecture.md`. Release readiness gates and unsigned-beta guidance live in `docs/production-readiness-plan.md`.
+- `docs/architecture.md`: Backend/frontend map and runtime flow.
+- `docs/contributing.md`: Contributor workflow and safety rules.
+- `docs/game-module-contribution-guide.md`: How to add or propose game modules.
+- `docs/module-manifest-format.md`: Draft data-only community module format.
+- `docs/production-readiness-plan.md`: Release and beta-readiness notes.
 
-Local research notes, planning documents, assistant files, generated builds, release archives, `target/`, `web/dist/`, and `web/node_modules/` are intentionally ignored and should not be committed.
+Community modules are currently data-only manifest/profile packs. The external installer/loader is not implemented yet. Native telemetry parsers remain built into Rust until DSCC has a parser sandbox/signing model.
 
 ## Development
 
-Install the Rust and Node.js toolchains, then install the web dependencies:
+Install Rust, Node.js, and web dependencies:
 
 ```powershell
 npm.cmd --prefix web ci
 ```
 
-Use the root package helpers for common local workflows:
+Common root commands:
 
 ```powershell
 npm.cmd run check:web
@@ -120,53 +202,48 @@ npm.cmd run dev:agent
 npm.cmd run dev
 ```
 
-`check:web` runs the web typecheck, button-map performance guard, and web build. `check:rust` runs Rust fmt, tests, and clippy; on Windows it selects the installed GNU toolchain, while other platforms use normal `cargo`. `dev` starts the local agent and Vite UI together. `dev:web:mock` starts the UI with a stable in-browser fixture and does not require a running agent, controller, Steam, or Forza.
+- `check:web`: Svelte typecheck, button-mapping p95 guard, and Vite build.
+- `check:rust`: Rust fmt, workspace tests, and clippy. On this Windows host it uses the installed GNU toolchain.
+- `check`: web and Rust checks.
+- `dev:agent`: starts `dscc-cli serve --addr 127.0.0.1:43473`.
+- `dev:web`: starts Vite on `127.0.0.1:5173` with `/api` proxied to the local agent.
+- `dev:web:mock`: starts the dev-only mock UI fixture with no agent, controller, Steam, or game required.
+- `dev`: starts the local agent and Vite UI together.
 
-Manual equivalents:
-
-```bash
-cd web
-npm ci
-npm run typecheck
-npm run test:button-map
-npm run build
-cd ..
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-```
-
-On the current Windows development host, the default MSVC Rust toolchain fails because `link.exe` is not installed or not on `PATH`. Use the installed GNU toolchain for local verification:
+Manual validation set:
 
 ```powershell
+cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
 cargo +stable-x86_64-pc-windows-gnu test --workspace
 cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warnings
-```
-
-In PowerShell, use `npm.cmd` if script execution policy blocks `npm.ps1`:
-
-```powershell
 npm.cmd --prefix web run typecheck
-npm.cmd --prefix web run test:button-map
 npm.cmd --prefix web run build
+npm.cmd --prefix web run test:button-map
 ```
 
-Run the local agent during development:
+On this Windows development host, plain `cargo` may fail because MSVC `link.exe` is not installed or not on `PATH`. Use the GNU toolchain shown above.
+
+Run the local agent:
 
 ```powershell
 cargo +stable-x86_64-pc-windows-gnu run -p dscc-cli -- serve --addr 127.0.0.1:43473
 ```
 
-Build the Windows release binaries:
-
-```bash
-cargo build -p dscc-agent -p dscc-tray --release --target x86_64-pc-windows-gnu
-```
-
-Build the MSI:
+Build Windows release binaries:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File packaging\package-msi.ps1 -Version 0.2.6 -TargetTriple x86_64-pc-windows-gnu
+cargo +stable-x86_64-pc-windows-gnu build -p dscc-agent -p dscc-tray --release --target x86_64-pc-windows-gnu
 ```
+
+Build the Windows MSI:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File packaging\package-msi.ps1 -Version 0.2.8 -TargetTriple x86_64-pc-windows-gnu
+```
+
+## Clean-Room Policy
+
+DSCC is a clean-room implementation. Do not copy code, constants, packet layouts, schemas, comments, defaults, or structure from incompatible projects. Before changing HID reports, Forza telemetry, Steam Input, Sony tooling, controller assets, packet layouts, schemas, or protocol constants, read `PROVENANCE.md` and record any new public source or hardware experiment there before code depends on it.
 
 ## License
 
