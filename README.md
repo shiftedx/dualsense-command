@@ -7,7 +7,8 @@ The app is built around two extension concepts:
 - **Adapters** own protocol/runtime plumbing, such as Forza Data Out UDP or Assetto shared memory.
 - **Game modules** own one supported game, including detection hints, profile defaults, labels, and adapter bindings.
 
-<img width="2095" height="1422" alt="DualSense Command Center haptics UI" src="https://github.com/user-attachments/assets/a3481779-af9d-46dd-bbc6-c544573d807e" />
+<img width="2095" height="1422" alt="image" src="https://github.com/user-attachments/assets/76650865-d946-45e5-a723-88e978988822" />
+
 
 ## Current Status
 
