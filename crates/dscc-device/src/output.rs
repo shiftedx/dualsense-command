@@ -8,8 +8,9 @@ use dscc_core::{ControllerOutputFrame, PlayerLedsOutput, RumbleOutput, TriggerOu
 
 use crate::{
     edge_profile::{
-        edge_onboard_transport_supported, read_edge_onboard_profiles_from_handle,
-        write_edge_onboard_profile_to_handle, EdgeOnboardProfile,
+        edge_onboard_transport_supported, edge_onboard_write_transport_supported,
+        read_edge_onboard_profiles_from_handle, write_edge_onboard_profile_to_handle,
+        EdgeOnboardProfile,
     },
     error::DeviceError,
     manager::OutputMode,
@@ -228,9 +229,9 @@ impl<T: DeviceTransport> ControllerOutputManager<T> {
         target: &ControllerOutputTarget,
         profile: &EdgeOnboardProfile,
     ) -> Result<(), DeviceError> {
-        if !edge_onboard_transport_supported(target.transport) {
+        if !edge_onboard_write_transport_supported(target.transport) {
             return Err(DeviceError::TransportFault(
-                "DualSense Edge onboard profile writes require USB or Bluetooth HID feature report access"
+                "DualSense Edge onboard profile writes require USB HID feature report access; Bluetooth onboard writes are staged locally"
                     .to_string(),
             ));
         }
@@ -807,15 +808,22 @@ mod tests {
 
         let mut write_profile = EdgeOnboardProfile::new(EdgeOnboardSlotId::Square, "Road Tune");
         write_profile.trigger_deadzone.right = [3, 97];
-        transport.push_feature_report(raw_id.clone(), 0x63, vec![0x63]);
-        manager
-            .write_edge_onboard_profile(&target, &write_profile)
-            .unwrap();
+        if transport_kind == DeviceTransportKind::Bluetooth {
+            let error = manager
+                .write_edge_onboard_profile(&target, &write_profile)
+                .expect_err("Bluetooth onboard writes are staged locally until proven");
+            assert!(error.to_string().contains("USB HID"));
+        } else {
+            transport.push_feature_report(raw_id.clone(), 0x63, vec![0x63]);
+            manager
+                .write_edge_onboard_profile(&target, &write_profile)
+                .unwrap();
 
-        let writes = transport.feature_writes_for(&raw_id, 0x60);
-        assert_eq!(writes.len(), 3);
-        assert_eq!(writes[0].len(), 64);
-        assert_eq!(writes[0][0], 0x60);
+            let writes = transport.feature_writes_for(&raw_id, 0x60);
+            assert_eq!(writes.len(), 3);
+            assert_eq!(writes[0].len(), 64);
+            assert_eq!(writes[0][0], 0x60);
+        }
     }
 
     #[test]

@@ -5,7 +5,6 @@ use crate::{
 };
 
 const EDGE_PROFILE_REPORT_LEN: usize = 64;
-const EDGE_PROFILE_PAYLOAD_LEN: usize = EDGE_PROFILE_REPORT_LEN;
 const EDGE_PROFILE_CHECKSUM_INPUT_LEN: usize = 170;
 const EDGE_PROFILE_DATA_CHECKSUM_OFFSET: usize = 56;
 const EDGE_PROFILE_READ_PAYLOAD_LEN: usize = 64;
@@ -417,9 +416,9 @@ pub fn write_edge_onboard_profile<T: DeviceTransport>(
     transport_kind: DeviceTransportKind,
     profile: &EdgeOnboardProfile,
 ) -> Result<(), DeviceError> {
-    if !edge_onboard_transport_supported(transport_kind) {
+    if !edge_onboard_write_transport_supported(transport_kind) {
         return Err(DeviceError::TransportFault(
-            "DualSense Edge onboard profile writes require USB or Bluetooth HID feature report access"
+            "DualSense Edge onboard profile writes require USB HID feature report access; Bluetooth onboard writes are staged locally"
                 .to_string(),
         ));
     }
@@ -433,6 +432,10 @@ pub fn edge_onboard_transport_supported(transport_kind: DeviceTransportKind) -> 
         transport_kind,
         DeviceTransportKind::Usb | DeviceTransportKind::Bluetooth
     )
+}
+
+pub fn edge_onboard_write_transport_supported(transport_kind: DeviceTransportKind) -> bool {
+    matches!(transport_kind, DeviceTransportKind::Usb)
 }
 
 pub fn read_edge_onboard_profiles_from_handle(
@@ -476,9 +479,9 @@ pub fn write_edge_onboard_profile_to_handle(
     let reports = encode_edge_onboard_profile(profile)?;
     for report in reports {
         let written = handle.send_feature_report(report_id, &report)?;
-        if written < EDGE_PROFILE_PAYLOAD_LEN {
+        if written < EDGE_PROFILE_REPORT_LEN {
             return Err(DeviceError::TransportFault(format!(
-                "short DualSense Edge profile feature report write: expected {EDGE_PROFILE_PAYLOAD_LEN} bytes, wrote {written}"
+                "short DualSense Edge profile feature report write: expected {EDGE_PROFILE_REPORT_LEN} bytes, wrote {written}"
             )));
         }
     }

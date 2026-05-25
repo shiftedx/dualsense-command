@@ -111,9 +111,9 @@ Edge onboard profile support is typed and guarded:
   exposes HID feature-report access.
 - `Fn + Circle`, `Fn + Cross`, and `Fn + Square` are editable.
 - `Fn + Triangle` remains the default/read-only slot.
-- Enabled hardware output can write supported static profile data over USB or
-  Bluetooth HID feature reports when available.
-- Unavailable hardware paths stage changes locally.
+- Enabled hardware output can write supported static profile data over guarded
+  USB HID feature reports.
+- Bluetooth and unavailable hardware paths stage changes locally.
 - Live telemetry effects are not stored onboard.
 
 ## Safety Rules

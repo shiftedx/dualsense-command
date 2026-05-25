@@ -34,8 +34,9 @@ use dscc_core::{
     TriggerOutput, ValuePoint, ValueSource,
 };
 use dscc_device::{
-    edge_onboard_transport_supported, BatteryInfo as DeviceBatteryInfo,
-    BatteryState as DeviceBatteryState, ConnectionState as DeviceConnectionState,
+    edge_onboard_transport_supported, edge_onboard_write_transport_supported,
+    BatteryInfo as DeviceBatteryInfo, BatteryState as DeviceBatteryState,
+    ConnectionState as DeviceConnectionState,
     ControllerCapabilities as DeviceControllerCapabilities, ControllerId as DeviceControllerId,
     ControllerInfo as DeviceControllerInfo, ControllerInputState, ControllerOutputManager,
     ControllerOutputTarget, ControllerOutputWrite, ControllerState as DeviceControllerState,
@@ -6714,7 +6715,7 @@ impl EdgeProfilesResponse {
         Self {
             controller_id: detail.id.clone(),
             support_state: EdgeProfileSupportState::Unknown,
-            warning: "Edge onboard slot editing is available as DSCC staged configuration. Hardware profile sync is attempted over USB or Bluetooth when this host exposes safe HID feature-report access.".to_string(),
+            warning: "Edge onboard slot editing is available as DSCC staged configuration. DSCC reads slots over USB or Bluetooth; controller-memory sync requires USB HID feature-report access.".to_string(),
             slots: edge_profile_slots(store),
         }
     }
@@ -6732,7 +6733,7 @@ impl EdgeProfilesResponse {
 
         let Some(hardware_profiles) = hardware_profiles else {
             let warning = hardware_warning.unwrap_or_else(|| {
-                "Edge onboard slots can be staged locally. Connect the DualSense Edge over USB or Bluetooth and refresh to read or write controller memory.".to_string()
+                "Edge onboard slots can be staged locally. Connect the DualSense Edge over USB or Bluetooth and refresh to read slots; connect over USB to sync controller memory.".to_string()
             });
             return Self {
                 controller_id: detail.id.clone(),
@@ -6742,7 +6743,12 @@ impl EdgeProfilesResponse {
             };
         };
 
-        let (support_state, warning) = if hardware_writes_enabled {
+        let (support_state, warning) = if detail.transport == "bluetooth" {
+            (
+                EdgeProfileSupportState::ReadOnly,
+                "DualSense Edge onboard slots were read over bluetooth. DSCC can stage slot changes over Bluetooth; connect over USB to sync controller memory.".to_string(),
+            )
+        } else if hardware_writes_enabled {
             (
                 EdgeProfileSupportState::ReadWrite,
                 format!("DualSense Edge onboard slots were read over {}. DSCC can write static onboard trigger, stick, and button settings; live telemetry effects still require DSCC to be running.", detail.transport),
@@ -11911,9 +11917,9 @@ async fn write_edge_profile_to_hardware(
             Err(error) => return EdgeHardwareProfileWriteResult::StagedOnly(error),
         }
     };
-    if !edge_onboard_transport_supported(target.transport) {
+    if !edge_onboard_write_transport_supported(target.transport) {
         return EdgeHardwareProfileWriteResult::StagedOnly(
-            "DualSense Edge onboard profile writes require USB or Bluetooth HID feature report access"
+            "DualSense Edge onboard profile writes require USB HID feature report access; Bluetooth slot changes are staged locally"
                 .to_string(),
         );
     }
