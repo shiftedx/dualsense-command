@@ -1,114 +1,129 @@
-# DSCC Architecture
+# Architecture
 
-This map reflects the backend and frontend structure after the contributor-ease cleanup waves. It is meant to help contributors find the extension point before opening a broad refactor.
+This is a quick map for contributors. It explains where the main pieces live
+and which boundaries should stay intact.
 
-## Backend Crates
+## Big Picture
 
-- `crates/dscc-core`: Domain model for controllers, profiles, effect rules, value sources, and validated `ControllerOutputFrame` output. New output concepts should start here only when they are part of DSCC's public internal model.
-- `crates/dscc-telemetry`: Shared signal names, signal values, snapshots, adapter status, and adapter traits. Telemetry signals are lowercase dotted names such as `input.brake` or `vehicle.rpm_ratio`.
-- `crates/dscc-adapters`: Built-in adapter catalog plus clean-room telemetry parsers. Adapter modules own protocol/runtime plumbing, such as Forza Data Out, and are not game identity containers.
-- `crates/dscc-device`: Hardware boundary. It owns sanitized HID enumeration, device registry reconciliation, diagnostics, mock transport, `hidapi` transport, output report encoding, input report reads, and guarded writes through `ControllerOutputManager`.
-- `crates/dscc-agent`: Runtime and local API. Address policy, output env policy, HTTP mutation security, Forza glyph filesystem operations, and the built-in game module registry are now split into small modules, but `src/lib.rs` still owns most state, routes, persistence, process scan orchestration, Steam Input, the generic UDP adapter runtime, snapshots, WebSocket invalidation, and hardware output loops.
-- `crates/dscc-cli`: Diagnostics and local helper commands, including agent status, app paths, mock devices, sanitized HID listing, and device diagnosis.
-- `crates/dscc-tray`: Windows tray launcher that starts the local agent hidden and opens the bundled UI.
+DSCC has three visible parts:
 
-## Agent Module Map
+- **Tray app**: starts/stops the local agent and opens the UI.
+- **Local agent**: owns controllers, profiles, telemetry, safety gates, and API
+  routes.
+- **Web UI**: the Svelte app users interact with in the browser.
 
-- `crates/dscc-agent/src/main.rs`: Binary entry point.
-- `crates/dscc-agent/src/bind_addr.rs`: Default bind addresses, `DSCC_AGENT_ADDR`, the current Forza adapter bind env (`DSCC_FORZA_BIND_ADDR`), and explicit LAN opt-in gates.
-- `crates/dscc-agent/src/env_policy.rs`: Hardware output mode from `DSCC_DISABLE_HARDWARE_OUTPUT` and `DSCC_ENABLE_HARDWARE_OUTPUT`.
-- `crates/dscc-agent/src/forza_glyphs.rs`: Trusted Forza Horizon 6 install path resolution plus PlayStation glyph install/restore with canonical root checks, backups, and refusal rules.
-- `crates/dscc-agent/src/game_modules.rs`: Built-in game module registry. Each supported game owns one game id, display name, process detection hints, Steam metadata, adapter binding, default profile id, profile template labels, aliases, and supported-game summary helpers. External community module loading is not implemented yet.
-- `crates/dscc-agent/src/http_security.rs`: Same-origin `Origin`/`Host` guard for non-GET API requests and WebSocket upgrades.
-- `crates/dscc-agent/src/lib.rs`: Application state, API DTOs, route handlers, persistence, profile resolution, process scanning, Steam Input layout discovery/writes, generic UDP adapter loop, Forza effect materialization, output watchdog, hardware output loop, static web serving, and most API tests.
+The app is local-first. The normal UI/API address is `127.0.0.1:43473`.
+Forza telemetry listens on `127.0.0.1:5300`.
 
-The main local API router is `app(state)` in `dscc-agent/src/lib.rs`. It registers `/api/status`, app settings, controllers, controller input, Edge onboard profiles, profiles, adapters, Steam Input, Steam library/custom games, game art, modules, game detection, effects, profile resolution, telemetry, update checks, logs, diagnostics, and `/api/ws`, then applies `reject_cross_origin_mutations`.
+## Rust Crates
 
-Update checks are link-only. The agent checks GitHub Releases through the cached `/api/update-check` route, the web UI can show a download banner, and the tray **Check for Updates...** action opens the latest release page. DSCC does not auto-install updates.
+| Crate | Purpose |
+| --- | --- |
+| `dscc-core` | Profiles, effect rules, telemetry value sources, and typed controller output frames. |
+| `dscc-telemetry` | Shared signal names, snapshots, adapter status, and adapter traits. |
+| `dscc-adapters` | Built-in adapter catalog and telemetry parsers, including Forza Data Out. |
+| `dscc-device` | HID discovery, diagnostics, output encoding, input reads, and guarded device writes. |
+| `dscc-agent` | Local API, persistence, profile resolution, game detection, Steam Input, telemetry runtimes, and hardware output loops. |
+| `dscc-tray` | Windows tray launcher. |
+| `dscc-cli` | Diagnostics and local helper commands. |
+
+## Agent Modules
+
+Useful entry points:
+
+- `crates/dscc-agent/src/main.rs`: agent binary.
+- `crates/dscc-agent/src/lib.rs`: router, state, routes, runtimes, and tests.
+- `crates/dscc-agent/src/bind_addr.rs`: loopback/LAN binding policy.
+- `crates/dscc-agent/src/env_policy.rs`: hardware output env policy.
+- `crates/dscc-agent/src/game_modules.rs`: built-in supported games.
+- `crates/dscc-agent/src/forza_glyphs.rs`: guarded Forza Horizon 6 glyph install/restore.
+- `crates/dscc-agent/src/http_security.rs`: same-origin mutation guard.
+
+Important routes include status, snapshots, controllers, controller input,
+profiles, Edge onboard profiles, adapters, Steam Input, Steam library/custom
+games, game art, modules, game detection, telemetry, update checks, logs,
+diagnostics, and `/api/ws`.
+
+Update checks are link-only: the agent checks GitHub Releases, the web UI can
+show a download banner, and the tray opens the latest release page. DSCC does
+not auto-install updates.
 
 ## Runtime Flow
 
-1. `dscc-cli serve` or `dscc-agent` resolves the loopback API address and starts the axum router.
-2. `hid_agent_state()` opens `HidApiTransport`, chooses the output mode, creates `DeviceManager` and `ControllerOutputManager`, and starts periodic device scanning.
-3. Telemetry runtimes start registered sources: the generic UDP runtime handles adapters such as `forza-data-out`, while the Windows shared-memory runtime handles `assetto-shared-memory`. Both apply normalized `SignalUpdate`s into the agent telemetry snapshot.
-4. Profile resolution picks the active profile from controller/game override, game detection, game assignment, global override, or global default.
-5. `EffectEngine` evaluates a runtime `Profile` into a `ControllerOutputFrame`.
-6. Racing telemetry enhancements add trigger overlays, rumble, lightbar, and player LEDs when live driving telemetry is present. A supported detected game may emit a lightbar-only frame before telemetry arrives; triggers and rumble remain gated on fresh telemetry.
-7. `ControllerOutputManager` encodes USB or Bluetooth reports and writes only when hardware output mode allows it.
-8. `/api/snapshot` and `/api/ws` carry normalized runtime state to the Svelte UI.
+1. The tray starts the agent, or a developer starts `dscc-cli serve`.
+2. The agent scans controllers through `hidapi`.
+3. Telemetry runtimes start for registered sources:
+   - `forza-data-out`: UDP, default `127.0.0.1:5300`.
+   - `assetto-shared-memory`: Windows shared memory.
+4. Profile resolution chooses Global Profile or a supported game profile.
+5. The effect engine turns profile rules into a typed controller output frame.
+6. Hardware output writes only after safety gates pass.
+7. The web UI receives state through `/api/snapshot` and `/api/ws`.
 
-Controller display names are persisted as aliases keyed by the stable controller id. The alias can change in the UI, but profile resolution and controller-specific overrides must continue to use the stable id.
+Supported-game detection may set the lightbar before telemetry arrives. Trigger
+and rumble effects require fresh telemetry or a manual test.
 
-## Frontend Structure Target
+## Web UI
 
-The current UI is a plain Svelte 5 + Vite app, not SvelteKit:
+The UI is Svelte 5 + Vite, not SvelteKit.
 
-- `web/src/main.ts`: Mounts the app.
-- `web/src/App.svelte`: App shell, hash-view routing, snapshot lifecycle, controller/game selection, cross-feature state, and profile coordination.
-- `web/src/lib/api.ts`: Browser API calls, DTO normalization, snapshot WebSocket handling, and fallback polling support.
-- `web/src/lib/types.ts`: UI-side DTOs and domain types.
-- `web/src/lib/features/buttonMapping`: First extracted feature folder. It owns the Steam Input mirror view, pure source-aware slot/binding helpers, and feature exports used by the p95 guard.
-- `web/src/lib/features/haptics/HapticsView.svelte`: Extracted adaptive trigger and haptics view.
-- `web/src/components/ControllerCard.svelte` and `AddGameDialog.svelte`: Extracted Games view pieces for controller state and custom game registration.
-- `web/src/lib/mock`: Dev-only in-browser mock API and fixture data for contributor UI work without a running agent, controller, Steam, or Forza. Production builds ignore mock toggles and do not include the fixture bundle.
-- `web/src/styles/app.css`: Global styling for the dense operational UI.
+| Path | Purpose |
+| --- | --- |
+| `web/src/main.ts` | Mounts the app. |
+| `web/src/App.svelte` | App shell, hash routing, snapshot lifecycle, and shared state. |
+| `web/src/lib/api.ts` | API calls, DTO normalization, WebSocket setup, fallback polling. |
+| `web/src/lib/types.ts` | UI-side DTOs and shared types. |
+| `web/src/lib/features/haptics/HapticsView.svelte` | Adaptive triggers and haptics view. |
+| `web/src/lib/features/buttonMapping` | Steam Input mirror view and p95-tested helpers. |
+| `web/src/components/ControllerCard.svelte` | Games page controller panel. |
+| `web/src/components/AddGameDialog.svelte` | Custom Steam game registration. |
+| `web/src/lib/mock` | Dev-only mock API. Production builds ignore mock toggles. |
 
-Current primary hash views are `#/games`, `#/adaptive-triggers-haptics`, and `#/button-mapping`.
+Primary routes:
 
-For new frontend work, prefer this target shape:
+- `#/games`
+- `#/adaptive-triggers-haptics`
+- `#/button-mapping`
 
-- Keep `App.svelte` as the app shell and state coordinator.
-- Keep the `#/games` view as the low-complexity entry point. It selects the target controller plus either Global Profile or a supported Steam game before revealing tuning surfaces; Global Profile is the default scope.
-- Preserve profile scope explicitly: `gameId: null`/missing is global, and a concrete `gameId` is a per-game profile.
-- Treat global scope as controller-only tuning. Do not show telemetry streams, RPM controls, adapter packet status, or game-signal routing unless a game profile is selected.
-- Keep controller display names as editable labels only. Stable controller ids remain the identity used for profile loading, overrides, and persistence.
-- Put feature views and feature-local helpers in `web/src/lib/features/<featureName>/`.
-- Export feature entry points from `web/src/lib/features/<featureName>/index.ts`.
-- Put shared UI-side contracts in `web/src/lib/types.ts`.
-- Put API fetch functions and DTO normalization in `web/src/lib/api.ts`.
-- Keep timers, socket handles, event listeners, and polling cleanup in `stopAppRuntime` or the component teardown that created them.
-- Keep expensive filesystem or Steam discovery work out of render-time and hot UI paths; consume cached API results instead.
-- Keep Steam Input mapping UI source-aware. Game-specific layouts can reuse raw input ids across D-pad, trackpad, trigger, and joystick groups, so matching and writes must preserve `groupId`, source, source mode, and activator.
+## Game And Adapter Modules
 
-## Built-In Modules
+- Game modules identify a supported game.
+- Adapter modules read telemetry and publish normalized signals.
+- Game detection uses `moduleId` for the game and `adapterId` for the telemetry
+  adapter. Do not collapse those fields.
 
-`/api/modules` should present adapter modules and game modules as first-class contribution units:
+Current live telemetry adapters:
 
-- Adapter modules own protocol/runtime plumbing. They parse telemetry, expose adapter status, and publish shared signals.
-- Game modules own one supported game each. They bind game detection, profiles, UI labels, optional glyph helpers, and adapter dependencies.
-- Game detection keeps game module identity and adapter identity separate: `moduleId` is the game module id, while `adapterId` is the protocol adapter id.
-- `/api/modules` exposes both through one summary shape with `kind: "adapter"` or `kind: "game"`. Adapter summaries do not own game profile templates.
+- `forza-data-out`
+- `assetto-shared-memory`
 
-Forza Horizon 5, Forza Horizon 6, and Forza Motorsport are separate game modules. They share the `forza-data-out` adapter when their public Data Out / UDP Race Telemetry protocol is compatible. Assetto Corsa Rally is a built-in game module that uses the `assetto-shared-memory` adapter.
+Catalog-only adapter entries exist for future work, but metadata alone does not
+start a parser or listener.
 
-`dscc-adapters` currently exposes these built-in adapter summaries:
-
-- `forza-data-out`: UDP, default port `5300`, active parser hosted by the generic UDP adapter runtime and shared by supported Forza game modules.
-- `assetto-shared-memory`: Windows shared-memory reader for Assetto Corsa Rally's public Assetto telemetry pages.
-- `ea-f1-udp`: UDP catalog entry for F1 telemetry.
-- `ea-wrc-udp`: UDP catalog entry for EA SPORTS WRC.
-- `beamng`: UDP catalog entry for BeamNG.drive protocols.
-- `live-for-speed`: UDP catalog entry for LFS InSim/OutGauge.
-- `raceroom`: Shared-memory catalog entry.
-
-Community modules remain draft data-only manifest packs; the installer/loader is not implemented yet. Native parser code stays in built-in adapter modules until a native parser sandbox/signing model exists.
+Community modules are still draft data-only manifest/profile packs. They cannot
+add native parsers, process hooks, filesystem writers, or executable code.
 
 ## DualSense Edge Onboard Slots
 
 Edge onboard profile support is typed and guarded:
 
-- USB-connected DualSense Edge controllers can read onboard slot state.
-- `Fn + Circle`, `Fn + Cross`, and `Fn + Square` are editable from DSCC.
+- USB-connected Edge controllers can read onboard slot state.
+- `Fn + Circle`, `Fn + Cross`, and `Fn + Square` are editable.
 - `Fn + Triangle` remains the default/read-only slot.
-- USB plus hardware output can write supported static profile data to the controller.
-- Bluetooth, fallback device entries, or disabled hardware output stage changes locally and report why controller memory was not written.
-- Live telemetry effects are never stored onboard; they require DSCC to be running.
+- USB plus enabled hardware output can write supported static profile data.
+- Bluetooth or unavailable hardware paths stage changes locally.
+- Live telemetry effects are not stored onboard.
 
-## Security And Safety Boundaries
+## Safety Rules
 
-- The API and UDP adapter listeners are loopback-first. Installed tray builds may grant the agent `DSCC_ENABLE_LAN_API=1`, but persisted app settings still decide whether the API binds to `0.0.0.0`. Direct `dscc-agent` non-loopback binding requires `DSCC_ENABLE_LAN_API=1`; direct `dscc-cli serve --addr ...` is a deliberate developer override. The current Forza adapter uses `DSCC_ENABLE_LAN_FORZA=1` for non-loopback binding.
-- Non-GET mutations must keep same-origin `Origin`/`Host` rejection.
-- Raw HID-byte write APIs are not allowed. All hardware output must flow through validated `ControllerOutputFrame` paths.
-- Steam Input writes must stay under canonical Steam roots, target guarded `controller_*.vdf` files, respect the file-size limit, create backups before real writes, and support dry-run validation.
-- Forza glyph writes must stay under a trusted Forza install root, keep backups, and refuse unbacked originals.
-- HID paths, Steam userdata paths, PnP values, serials, Bluetooth addresses, and raw report bytes must stay sanitized in logs, docs, tests, and API output.
+- Default API binding is loopback.
+- LAN API exposure requires user opt-in in app settings.
+- Direct `dscc-agent` non-loopback binding requires `DSCC_ENABLE_LAN_API=1`.
+- Forza non-loopback UDP binding requires `DSCC_ENABLE_LAN_FORZA=1`.
+- Mutating HTTP requests and WebSocket upgrades must keep same-origin checks.
+- Do not add raw HID-byte API routes.
+- Hardware output must flow through typed frame/profile paths.
+- Steam Input writes stay under guarded `controller_*.vdf` paths with backups.
+- Forza glyph writes stay under trusted game roots with backups.
+- Logs and API output must not expose raw HID paths, serials, Bluetooth
+  addresses, Steam account paths, or raw report bytes.

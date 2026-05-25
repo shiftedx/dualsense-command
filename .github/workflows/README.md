@@ -1,21 +1,45 @@
-# GitHub Actions workflows
+# GitHub Actions
 
-- `ci.yml` runs on every push to `main` / `develop` and on every pull request. It
-  builds and tests the Rust workspace on Ubuntu and Windows (`cargo fmt --check`,
-  `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`) and runs
-  the web UI check path (`npm ci && npm run check` in `web/`), including typecheck,
-  the button-map p95 guard, and the production build.
+## CI
 
-## Running locally
+`ci.yml` runs on pushes to `main` / `develop` and on pull requests.
 
-```sh
-# Rust
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+It checks:
 
-# Web
-cd web && npm ci && npm run check
+- Rust format.
+- Rust clippy.
+- Rust workspace tests on Ubuntu and Windows.
+- Web typecheck.
+- Button-mapping p95 guard.
+- Vite production build.
+
+Linux runners install `libudev-dev` so `hidapi` can compile.
+
+## Release
+
+`release.yml` runs when a `v*` tag is pushed.
+
+It builds:
+
+- Unsigned Windows MSI.
+- Windows raw binary zip.
+- Experimental Linux raw binary archive.
+- SHA256 checksum files.
+
+The release workflow publishes the GitHub Release and uploads artifacts. Windows
+artifacts are unsigned unless signing is added later.
+
+## Local Checks
+
+```powershell
+npm.cmd run check
 ```
 
-On Linux you may need `sudo apt-get install -y libudev-dev` so `hidapi` compiles.
+On this Windows host, use the GNU Rust toolchain if running Rust commands by
+hand:
+
+```powershell
+cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
+cargo +stable-x86_64-pc-windows-gnu test --workspace
+cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warnings
+```

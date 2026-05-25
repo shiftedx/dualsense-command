@@ -1,25 +1,22 @@
 # DualSense Command Center
 
-DualSense Command Center, or DSCC, is a Windows tray app for PlayStation
-DualSense and DualSense Edge controllers. It gives you adaptive trigger tuning,
-haptics, lightbar controls, profiles, and racing telemetry without setting up
-Python, scripts, or command-line tools.
+DualSense Command Center, or DSCC, is an easy Windows app for PlayStation
+DualSense and DualSense Edge controllers. It gives you adaptive triggers,
+haptics, profiles, lightbar controls, and racing telemetry without setting up
+Python or running scripts.
 
-<img width="2095" height="1422" alt="image" src="https://github.com/user-attachments/assets/76650865-d946-45e5-a723-88e978988822" />
-
+<img width="2095" height="1422" alt="DualSense Command Center haptics screen" src="https://github.com/user-attachments/assets/76650865-d946-45e5-a723-88e978988822" />
 
 ## Download
 
-- Latest release: `0.2.8`
-- Main platform: Windows x86_64
-- Installer: unsigned Windows MSI from GitHub Releases
-- Linux: experimental raw binaries only
+Get the latest Windows installer from [GitHub Releases](https://github.com/shiftedx/dualsense-command/releases/latest).
 
-Download DSCC from the [latest GitHub Release](https://github.com/shiftedx/dualsense-command/releases/latest).
+- Current release: `0.2.8`
+- Recommended download: Windows x86_64 MSI
+- Linux builds: experimental raw binaries
 
-The MSI is currently unsigned, so Windows SmartScreen may warn during install.
-Release assets include checksum files, and your existing DSCC profiles/settings
-are stored in your user config folder so they are preserved during upgrades.
+The MSI is unsigned right now, so Windows SmartScreen may warn you. Profiles and
+settings are stored in your user folder and are preserved during upgrades.
 
 ## Quick Start
 
@@ -28,29 +25,29 @@ are stored in your user config folder so they are preserved during upgrades.
 3. Connect a DualSense or DualSense Edge controller over USB or Bluetooth.
 4. Open DSCC from the tray icon, or visit `http://127.0.0.1:43473/`.
 5. Use **Global Profile** for normal controller tuning.
-6. Start a supported game and select its detected profile for telemetry haptics.
+6. Start a supported game to use telemetry-powered haptics.
 
 For Forza games, enable the in-game **Data Out** / **UDP Race Telemetry** option:
 
 - Target IP: `127.0.0.1`
 - Target port: `5300`
 
-That is the main setup. DSCC runs locally and handles the agent, tray, web UI,
-profiles, and controller output for you.
+That is the main setup. DSCC runs locally from the tray and opens a local web UI
+at `http://127.0.0.1:43473/`.
 
-## What DSCC Does
+## Main Features
 
-- Tunes adaptive trigger feel for L2 and R2.
+- Tunes L2/R2 adaptive trigger feel.
 - Lets you create, save, import, export, and switch profiles.
 - Provides 4-8 point custom trigger curves for detailed brake/throttle feel.
-- Drives racing haptics from supported games when live telemetry is available.
-- Adds body-rumble event cues such as paddle-shift and landing thumps.
+- Uses live game telemetry for racing haptics when available.
+- Adds body-rumble cues such as paddle-shift and landing thumps.
 - Controls lightbar color, brightness, RPM colors, and player LEDs.
-- Shows controller health, battery, connection, and diagnostics.
-- Mirrors Steam Input button mappings for supported game layouts.
-- Offers experimental DualSense Edge onboard slot staging.
-- Checks GitHub Releases and links to updates; it does not install updates
-  automatically.
+- Shows controller health, battery, connection, and basic diagnostics.
+- Helps with Steam Input button mappings for supported game layouts.
+- Supports experimental DualSense Edge onboard profile reads/writes over USB.
+- Checks GitHub Releases for updates and links you there. It does not install
+  updates automatically.
 
 ## Supported Games
 
@@ -62,9 +59,9 @@ Supported through the game's built-in Data Out / UDP telemetry:
 - Forza Horizon 6
 - Forza Motorsport
 
-DSCC can use Forza telemetry for brake pressure, ABS/front slip, handbrake wall,
-throttle load, shift thump, rev limiter buzz, road texture, rumble strips, tire
-slip, puddle drag, suspension/impact thumps, RPM lighting, and player LEDs.
+DSCC can use Forza telemetry for brake pressure, ABS/front slip, throttle load,
+shift thump, rev limiter buzz, road texture, rumble strips, tire slip, puddle
+drag, suspension/impact thumps, RPM lighting, and player LEDs.
 
 ### Assetto Corsa Rally
 
@@ -88,28 +85,25 @@ DSCC is local-first by default:
 When no supported game is active, DSCC defaults to the Global Profile instead of
 taking over game-specific haptics.
 
+## Need Help?
+
+- Start with [Troubleshooting](docs/troubleshooting.md).
+- Report bugs or feedback in [GitHub Issues](https://github.com/shiftedx/dualsense-command/issues).
+- For feature ideas, include your controller model, connection type, game, and
+  what you expected to feel or see.
+
 ## DualSense Edge Notes
 
-DualSense Edge onboard profile support is experimental. DSCC can stage static
-settings locally for Fn profile slots and can attempt guarded USB writes for
-supported static data when the controller and platform allow it.
+DualSense Edge onboard profile support is experimental. DSCC can read/write
+supported static settings for Fn profile slots over USB when the controller and
+platform allow it.
 
 Live telemetry haptics are not stored on the controller. They require DSCC to be
 running.
 
-## LAN Access
-
-LAN Access is intended for users who want to open the DSCC web UI from another
-device on the same network.
-
-Use **Web UI Location -> LAN Access** in the app, then restart DSCC. Direct
-non-loopback launches still require `DSCC_ENABLE_LAN_API=1`, and non-loopback
-Forza telemetry binding requires `DSCC_ENABLE_LAN_FORZA=1`.
-
 ## For Developers
 
-Most users do not need this section. These commands are for contributors working
-from source.
+Most users do not need this section.
 
 Install web dependencies:
 
@@ -134,8 +128,9 @@ npm.cmd --prefix web run build
 npm.cmd --prefix web run test:button-map
 ```
 
-Useful contributor docs:
+Contributor docs:
 
+- [Docs index](docs/README.md)
 - [Architecture](docs/architecture.md)
 - [Contributing](docs/contributing.md)
 - [Game module guide](docs/game-module-contribution-guide.md)
