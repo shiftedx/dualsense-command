@@ -3,9 +3,11 @@
 DSCC has two module layers:
 
 - **Game modules** identify one supported game: names, process hints, Steam ids, install directories, default profile, profile templates, and detection lightbar color.
-- **Adapter modules** read telemetry: UDP, shared memory, SDK, or another trusted built-in runtime, then publish normalized DSCC signals such as `input.brake`, `vehicle.rpm_ratio`, and `wheel.slip.max`.
+- **Adapter modules** describe telemetry integrations. Some are live runtimes; today the parser-backed/runtime-backed adapters are `forza-data-out` and `assetto-shared-memory`. Other first-wave catalog entries are setup-ready metadata until a Rust runtime/parser is added.
 
 Community modules are data-only until DSCC has a parser sandbox/signing model. If a game needs packet parsing, shared-memory reads, filesystem access, or runtime hooks, contribute it as a built-in Rust adapter plus a built-in Rust game module.
+
+The current Add Game UI creates local `custom-*` Steam entries with profile auto-load only. Those entries are not community module manifests and do not add telemetry adapters.
 
 ## Choose The Contribution Path
 
@@ -21,17 +23,20 @@ Community modules are data-only until DSCC has a parser sandbox/signing model. I
 ## Built-In Game Checklist
 
 1. Record public sources in `PROVENANCE.md` before using process names, app ids, packet layouts, shared-memory page names, or telemetry fields.
-2. Add adapter metadata to `crates/dscc-adapters/src/lib.rs` if the game needs a new telemetry source.
+2. If the game needs a new telemetry source, add adapter metadata to `crates/dscc-adapters/src/lib.rs` and add the live runtime registration too: `built_in_udp_adapters()` for UDP parsers, or an agent-side/shared-memory loop like the Assetto reader. Catalog metadata alone does not parse packets or start a listener.
 3. Add game metadata to `crates/dscc-agent/src/game_modules.rs`.
-4. Add a built-in profile or map the game to an existing profile in `crates/dscc-agent/src/lib.rs`.
-5. Normalize telemetry into existing signal names whenever possible.
-6. Add tests for process detection, module metadata, adapter status, profile resolution, waiting-for-telemetry behavior, and parser normalization.
-7. Keep hardware output gated: detection may write a lightbar-only frame, but trigger tension and rumble require fresh telemetry.
-8. Run Rust and web validation before opening the PR.
+4. Set `steam_catalog: true` only when the Steam app id and install directory are provenance-backed and should appear in the Games view. Process-detection-only modules can remain out of the Steam catalog.
+5. Add a built-in profile or map the game to an existing profile in `crates/dscc-agent/src/lib.rs`.
+6. Normalize telemetry into existing signal names whenever possible.
+7. Add tests for process detection, module metadata, adapter status, profile resolution, waiting-for-telemetry behavior, and parser normalization.
+8. Keep hardware output gated: detection may write a lightbar-only frame, but trigger tension and rumble require fresh telemetry.
+9. Run Rust and web validation before opening the PR.
+
+Do not inspect or derive packet layouts, profile defaults, schemas, tuning values, comments, or structure from incompatible implementations such as `Forza-Horizon-DualSense-Python`. Record public sources or original experiments in `PROVENANCE.md` before depending on them.
 
 ## Assetto Corsa Rally Example
 
-Assetto Corsa Rally is the reference first-party shared-memory module:
+Assetto Corsa Rally is the built-in shared-memory reference module:
 
 - Game module id: `assetto-corsa-rally`
 - Steam app id: `3917090`
@@ -41,7 +46,7 @@ Assetto Corsa Rally is the reference first-party shared-memory module:
 - Telemetry transport: read-only Windows shared memory
 - Detection behavior: red lightbar as soon as the supported process is detected; triggers remain neutral until fresh physics telemetry is live
 
-The adapter reads the public Assetto shared-memory physics prefix and publishes normalized racing signals, so the existing haptic engine can reuse brake, throttle, RPM, slip, shift, and surface cues.
+The adapter reads public Assetto-compatible shared-memory pages (`acpmf_*`, with `acevo_pmf_*` compatibility), uses the physics prefix plus optional graphics/static data, and publishes normalized racing signals so the existing haptic engine can reuse brake, throttle, RPM, slip, shift, and surface cues.
 
 ## Required Validation
 

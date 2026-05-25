@@ -49,7 +49,8 @@ profiles, and controller output for you.
 - Shows controller health, battery, connection, and diagnostics.
 - Mirrors Steam Input button mappings for supported game layouts.
 - Offers experimental DualSense Edge onboard slot staging.
-- Checks GitHub Releases for app updates.
+- Checks GitHub Releases and links to updates; it does not install updates
+  automatically.
 
 ## Supported Games
 
