@@ -34,8 +34,8 @@ use dscc_core::{
     TriggerOutput, ValuePoint, ValueSource,
 };
 use dscc_device::{
-    BatteryInfo as DeviceBatteryInfo, BatteryState as DeviceBatteryState,
-    ConnectionState as DeviceConnectionState,
+    edge_onboard_transport_supported, BatteryInfo as DeviceBatteryInfo,
+    BatteryState as DeviceBatteryState, ConnectionState as DeviceConnectionState,
     ControllerCapabilities as DeviceControllerCapabilities, ControllerId as DeviceControllerId,
     ControllerInfo as DeviceControllerInfo, ControllerInputState, ControllerOutputManager,
     ControllerOutputTarget, ControllerOutputWrite, ControllerState as DeviceControllerState,
@@ -103,6 +103,7 @@ const TELEMETRY_PACKET_STALE_AFTER: Duration = Duration::from_secs(2);
 const HARDWARE_OUTPUT_INTERVAL: Duration = Duration::from_millis(33);
 const HARDWARE_OUTPUT_KEEPALIVE_INTERVAL: Duration = Duration::from_millis(750);
 const MANUAL_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
+const BASE_FEEL_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_millis(33);
 const HARDWARE_GAME_DETECTION_INTERVAL: Duration = Duration::from_millis(500);
 const DEFAULT_EFFECT_TEST_DURATION_MS: u64 = 650;
 const MAX_EFFECT_TEST_DURATION_MS: u64 = 1_500;
@@ -1528,6 +1529,165 @@ pub struct AgentSnapshotResponse {
     pub logs: Vec<LogEntry>,
     pub diagnostics: DiagnosticsResponse,
     pub partial_errors: Vec<SnapshotPartialError>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SupportBundleResponse {
+    pub schema: String,
+    pub generated_at: String,
+    pub privacy: SupportPrivacy,
+    pub environment: SupportEnvironment,
+    pub status: StatusResponse,
+    pub paths: SupportPaths,
+    pub controllers: Vec<ControllerSummary>,
+    pub diagnostics: DiagnosticsResponse,
+    pub profile_resolution: ProfileResolutionResponse,
+    pub game_detection: SupportGameDetectionSummary,
+    pub adapters: Vec<SupportAdapterSummary>,
+    pub telemetry: SupportTelemetrySummary,
+    pub steam_input: SupportSteamInputSummary,
+    pub app_settings: SupportAppSettingsSummary,
+    pub safety: SupportSafetySummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SupportPrivacy {
+    pub sanitized: bool,
+    pub omitted: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SupportEnvironment {
+    pub product: String,
+    pub version: String,
+    pub os: String,
+    pub arch: String,
+    pub family: String,
+    pub debug_build: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SupportPaths {
+    pub app_paths_available: bool,
+    pub config_dir: Option<String>,
+    pub data_dir: Option<String>,
+    pub log_dir: Option<String>,
+    pub custom_config_dir: bool,
+    pub web_dist_dir: String,
+    pub web_dist_index_found: bool,
+    pub web_dist_configured: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SupportGameDetectionSummary {
+    pub active_game_id: Option<String>,
+    pub active_game_name: Option<String>,
+    pub source: String,
+    pub confidence: u8,
+    pub process_name: Option<String>,
+    pub module_id: Option<String>,
+    pub adapter_id: Option<String>,
+    pub profile_id: Option<String>,
+    pub candidate_count: usize,
+    pub selected_game: Option<SupportGameSummary>,
+    pub supported_game_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SupportGameSummary {
+    pub game_id: String,
+    pub name: String,
+    pub app_id: Option<String>,
+    pub installed: bool,
+    pub running: bool,
+    pub support_level: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SupportAdapterSummary {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub state: String,
+    pub packet_rate_hz: Option<u16>,
+    pub protocol: String,
+    pub default_port: Option<u16>,
+    pub listener_bound: bool,
+    pub packet_count: u64,
+    pub last_packet_age_ms: Option<u64>,
+    pub last_packet_len: Option<usize>,
+    pub parse_error_count: u64,
+    pub last_parse_error_age_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SupportTelemetrySummary {
+    pub signal_count: usize,
+    pub source_id: Option<String>,
+    pub live: bool,
+    pub sample_signals: Vec<SupportTelemetrySignalSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SupportTelemetrySignalSummary {
+    pub name: String,
+    pub unit: Option<String>,
+    pub updated_ms_ago: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SupportSteamInputSummary {
+    pub running: bool,
+    pub available: bool,
+    pub install_detected: bool,
+    pub layout_count: usize,
+    pub binding_count: usize,
+    pub warnings: Vec<String>,
+    pub layouts: Vec<SupportSteamInputLayoutSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SupportSteamInputLayoutSummary {
+    pub app_id: Option<String>,
+    pub title: String,
+    pub controller_type: Option<String>,
+    pub controller_label: Option<String>,
+    pub source: String,
+    pub binding_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SupportAppSettingsSummary {
+    pub listen_on_all_interfaces: bool,
+    pub effective_bind_address: String,
+    pub desired_bind_address: String,
+    pub restart_required: bool,
+    pub forza_playstation_glyphs_enabled: bool,
+    pub forza_playstation_glyphs_status: String,
+    pub forza_playstation_glyphs_message: String,
+    pub forza_playstation_glyphs_path_configured: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SupportSafetySummary {
+    pub hardware_output_enabled: bool,
+    pub lan_api_enabled: bool,
+    pub lan_forza_enabled: bool,
+    pub api_bind_address: String,
+    pub mutating_routes_origin_guarded: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -4937,6 +5097,15 @@ impl AgentState {
         );
     }
 
+    fn has_non_neutral_output_frames(&self) -> bool {
+        let runtime = self.lock_output_runtime();
+        let neutral = ControllerOutputFrame::default();
+        runtime
+            .last_output_frames
+            .values()
+            .any(|last| last.frame != neutral)
+    }
+
     fn non_neutral_output_controller_ids(&self) -> Vec<String> {
         let runtime = self.lock_output_runtime();
         let neutral = ControllerOutputFrame::default();
@@ -5048,21 +5217,40 @@ impl AgentState {
         Ok(write)
     }
 
+    async fn read_input_state_for_controller(
+        &self,
+        controller_id: &str,
+    ) -> Result<Option<ControllerInputState>, String> {
+        let manager = self
+            .output_manager
+            .clone()
+            .ok_or_else(|| "HID output manager is unavailable".to_string())?;
+        let target = {
+            let inner = self.inner.read().await;
+            inner
+                .controllers
+                .detail(controller_id)
+                .ok_or_else(|| format!("Controller {controller_id} was not found"))?;
+            controller_output_target_or_reason(&inner, controller_id)?
+        };
+
+        tokio::task::spawn_blocking(move || manager.read_input_state(&target))
+            .await
+            .map_err(|error| format!("HID input task failed: {error}"))?
+            .map_err(|error| error.to_string())
+    }
+
     async fn write_current_output_frame_if_due(
         &self,
         game_detection: Option<&GameDetectionResponse>,
     ) -> Result<Option<ControllerOutputWrite>, String> {
         let candidate = {
             let inner = self.inner.read().await;
-            if hardware_output_any_allowed(&inner, game_detection) {
-                self.output_frame_for_current_resolution_cached(
-                    &inner,
-                    game_detection,
-                    EffectEnginePurpose::Hardware,
-                )
-            } else {
-                None
-            }
+            self.output_frame_for_current_resolution_cached(
+                &inner,
+                game_detection,
+                EffectEnginePurpose::Hardware,
+            )
         };
         let Some((controller_id, frame)) = candidate else {
             return Ok(None);
@@ -5151,9 +5339,13 @@ impl AgentState {
         let resolution = profile_resolution(inner, game_detection);
         let controller_id = resolution.controller_id.clone()?;
         if purpose == EffectEnginePurpose::Hardware
-            && !hardware_output_runtime_allowed(inner, game_detection)
+            && !hardware_output_runtime_allowed_for_resolution(inner, game_detection, &resolution)
         {
-            if hardware_output_detection_lightbar_allowed(inner, game_detection) {
+            if hardware_output_detection_lightbar_allowed_for_resolution(
+                inner,
+                game_detection,
+                &resolution,
+            ) {
                 let detection = game_detection?;
                 let output = ControllerOutputFrame {
                     lightbar: detection_lightbar_output(detection),
@@ -5161,8 +5353,10 @@ impl AgentState {
                 };
                 return Some((controller_id, output));
             }
-            if let Some(output) = global_lightbar_output(inner, &resolution) {
-                return Some((controller_id, output));
+            if hardware_output_global_lightbar_allowed_for_resolution(game_detection, &resolution) {
+                if let Some(output) = global_lightbar_output(inner, &resolution) {
+                    return Some((controller_id, output));
+                }
             }
             return None;
         }
@@ -5210,8 +5404,7 @@ impl AgentState {
             if racing_shift_adapter(adapter_id) {
                 let current_gear = update_number(&updates, "drivetrain.gear");
                 let telemetry_on = update_text(&updates, "game.state") == Some("driving");
-                let shift_enabled = shift_thump_detection_enabled(&inner);
-                let suspension_impact_enabled = suspension_impact_detection_enabled(&inner);
+                let effect_toggles = racing_effect_toggles(&inner);
                 let suspension_travel = update_number(&updates, "suspension.travel.max");
                 let acceleration_magnitude =
                     update_number(&updates, "vehicle.acceleration.magnitude");
@@ -5220,7 +5413,7 @@ impl AgentState {
                 if let Some(shift_event) = inner.forza_effect_runtime.detect_shift_event(
                     current_gear,
                     telemetry_on,
-                    shift_enabled,
+                    effect_toggles.shift_thump,
                     now,
                 ) {
                     updates.push(
@@ -5237,7 +5430,7 @@ impl AgentState {
                     acceleration_magnitude,
                     speed_kmh,
                     telemetry_on,
-                    suspension_impact_enabled,
+                    effect_toggles.suspension_impact,
                     now,
                 );
                 updates.push(sequenced_signal_update(
@@ -5301,13 +5494,12 @@ impl AgentState {
     }
 
     async fn cached_game_detection_with_ttl(&self, ttl: Duration) -> GameDetectionResponse {
+        let mut cache = self.discovery_cache.game_detection.lock().await;
         let now = Instant::now();
-        {
-            let cache = self.discovery_cache.game_detection.lock().await;
-            if let Some(value) = cache.fresh(ttl, now) {
-                return value;
-            }
+        if let Some(value) = cache.fresh(ttl, now) {
+            return value;
         }
+
         let user_games = {
             let inner = self.inner.read().await;
             inner.user_games.clone()
@@ -5332,7 +5524,6 @@ impl AgentState {
             let mut inner = self.inner.write().await;
             sync_auto_loaded_profile_for_detection(&mut inner, &detection);
         }
-        let mut cache = self.discovery_cache.game_detection.lock().await;
         cache.store(detection, Instant::now())
     }
 
@@ -5527,6 +5718,16 @@ impl AgentState {
     ) -> DiagnosticsResponse {
         let inner = self.inner.read().await;
         let hardware_output_enabled = self.hardware_output_enabled();
+        self.diagnostics_from_inner(&inner, steam_input, game_detection, hardware_output_enabled)
+    }
+
+    fn diagnostics_from_inner(
+        &self,
+        inner: &AgentStateInner,
+        steam_input: &SteamInputStatus,
+        game_detection: &GameDetectionResponse,
+        hardware_output_enabled: bool,
+    ) -> DiagnosticsResponse {
         let mut checks = vec![
             HealthCheck {
                 name: "api".to_string(),
@@ -5609,11 +5810,14 @@ impl AgentState {
     async fn snapshot(&self) -> AgentSnapshotResponse {
         let game_detection = self.cached_game_detection().await;
         let steam_input = self.cached_steam_input_status_or_refresh().await;
-        let diagnostics = self
-            .diagnostics_with_discovery(&steam_input, &game_detection)
-            .await;
         let hardware_output_enabled = self.hardware_output_enabled();
         let inner = self.inner.read().await;
+        let diagnostics = self.diagnostics_from_inner(
+            &inner,
+            &steam_input,
+            &game_detection,
+            hardware_output_enabled,
+        );
         let status = self.status_from_inner(&inner, Some(&game_detection));
         let profile_resolution = profile_resolution(&inner, Some(&game_detection));
         let effect_state = self.current_effect_response_cached(
@@ -5648,6 +5852,374 @@ impl AgentState {
             partial_errors: Vec::new(),
         }
     }
+
+    pub async fn support_bundle(&self) -> SupportBundleResponse {
+        let game_detection = self.cached_game_detection().await;
+        let steam_input = self.cached_steam_input_status_or_refresh().await;
+        let hardware_output_enabled = self.hardware_output_enabled();
+        let inner = self.inner.read().await;
+        let diagnostics = self.diagnostics_from_inner(
+            &inner,
+            &steam_input,
+            &game_detection,
+            hardware_output_enabled,
+        );
+        let status = self.status_from_inner(&inner, Some(&game_detection));
+        let app_settings = self.app_settings_response(&inner.app_settings);
+
+        SupportBundleResponse {
+            schema: "dev.dscc.support-bundle.v1".to_string(),
+            generated_at: current_timestamp(),
+            privacy: SupportPrivacy {
+                sanitized: true,
+                omitted: vec![
+                    "raw HID paths".to_string(),
+                    "raw controller hardware IDs".to_string(),
+                    "serial numbers".to_string(),
+                    "Bluetooth addresses".to_string(),
+                    "raw HID report bytes".to_string(),
+                    "Steam user IDs".to_string(),
+                    "Steam install paths".to_string(),
+                    "Forza install paths".to_string(),
+                    "raw Steam bindings".to_string(),
+                ],
+            },
+            environment: support_environment(),
+            status: sanitize_status_response(status),
+            paths: support_paths(),
+            controllers: apply_controller_names(
+                inner.controllers.summaries(),
+                &inner.controller_names,
+            ),
+            diagnostics: sanitize_diagnostics_response(diagnostics),
+            profile_resolution: profile_resolution(&inner, Some(&game_detection)),
+            game_detection: support_game_detection_summary(&game_detection),
+            adapters: support_adapter_summaries(&inner, Some(&game_detection)),
+            telemetry: support_telemetry_summary(&inner, Some(&game_detection)),
+            steam_input: support_steam_input_summary(&steam_input),
+            app_settings: support_app_settings_summary(app_settings),
+            safety: SupportSafetySummary {
+                hardware_output_enabled,
+                lan_api_enabled: lan_api_enabled(),
+                lan_forza_enabled: env_flag_enabled(FORZA_LAN_ENABLE_ENV),
+                api_bind_address: self.bind_addr.to_string(),
+                mutating_routes_origin_guarded: true,
+            },
+        }
+    }
+}
+
+fn support_environment() -> SupportEnvironment {
+    SupportEnvironment {
+        product: "DualSense Command Center Agent".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        os: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+        family: std::env::consts::FAMILY.to_string(),
+        debug_build: cfg!(debug_assertions),
+    }
+}
+
+fn support_paths() -> SupportPaths {
+    let paths = app_paths();
+    let web_dist = web_dist_dir();
+    SupportPaths {
+        app_paths_available: paths.is_some(),
+        config_dir: paths
+            .as_ref()
+            .map(|paths| sanitize_support_path(&paths.config_dir)),
+        data_dir: paths
+            .as_ref()
+            .map(|paths| sanitize_support_path(&paths.data_dir)),
+        log_dir: paths
+            .as_ref()
+            .map(|paths| sanitize_support_path(&paths.log_dir)),
+        custom_config_dir: std::env::var_os("DSCC_CONFIG_DIR").is_some(),
+        web_dist_dir: sanitize_support_path(&web_dist.display().to_string()),
+        web_dist_index_found: web_dist.join("index.html").is_file(),
+        web_dist_configured: configured_web_dist_dir().is_some(),
+    }
+}
+
+fn sanitize_status_response(mut status: StatusResponse) -> StatusResponse {
+    status.bind_address = sanitize_support_text(&status.bind_address);
+    status
+}
+
+fn sanitize_diagnostics_response(mut diagnostics: DiagnosticsResponse) -> DiagnosticsResponse {
+    for check in &mut diagnostics.checks {
+        check.detail = sanitize_support_text(&check.detail);
+    }
+    diagnostics
+}
+
+fn support_game_detection_summary(
+    detection: &GameDetectionResponse,
+) -> SupportGameDetectionSummary {
+    SupportGameDetectionSummary {
+        active_game_id: detection.active_game_id.clone(),
+        active_game_name: detection.active_game_name.clone(),
+        source: detection.source.clone(),
+        confidence: detection.confidence,
+        process_name: detection.process_name.clone(),
+        module_id: detection.module_id.clone(),
+        adapter_id: detection.adapter_id.clone(),
+        profile_id: detection.profile_id.clone(),
+        candidate_count: detection.candidates.len(),
+        selected_game: detection.selected_game.as_ref().map(support_game_summary),
+        supported_game_count: detection.supported_games.len(),
+    }
+}
+
+fn support_game_summary(game: &SupportedGameSummary) -> SupportGameSummary {
+    SupportGameSummary {
+        game_id: game.game_id.clone(),
+        name: game.name.clone(),
+        app_id: game.app_id.clone(),
+        installed: game.installed,
+        running: game.running,
+        support_level: game.support_level.clone(),
+    }
+}
+
+fn support_adapter_summaries(
+    inner: &AgentStateInner,
+    game_detection: Option<&GameDetectionResponse>,
+) -> Vec<SupportAdapterSummary> {
+    let now = Instant::now();
+    materialized_adapters(inner, game_detection)
+        .into_iter()
+        .map(|adapter| {
+            let runtime = inner.adapter_runtime(&adapter.id);
+            SupportAdapterSummary {
+                id: adapter.id,
+                name: adapter.name,
+                enabled: adapter.enabled,
+                state: adapter.state,
+                packet_rate_hz: adapter.packet_rate_hz,
+                protocol: adapter.protocol,
+                default_port: runtime.and_then(|runtime| runtime.default_port),
+                listener_bound: runtime.is_some_and(|runtime| runtime.listener_bound),
+                packet_count: runtime
+                    .map(|runtime| runtime.packet_count)
+                    .unwrap_or_default(),
+                last_packet_age_ms: runtime
+                    .and_then(|runtime| runtime.last_packet_at)
+                    .map(|last| duration_millis_u64(now.duration_since(last))),
+                last_packet_len: runtime.and_then(|runtime| runtime.last_packet_len),
+                parse_error_count: runtime
+                    .map(|runtime| runtime.parse_error_count)
+                    .unwrap_or_default(),
+                last_parse_error_age_ms: runtime
+                    .and_then(|runtime| runtime.last_parse_error_at)
+                    .map(|last| duration_millis_u64(now.duration_since(last))),
+            }
+        })
+        .collect()
+}
+
+fn support_telemetry_summary(
+    inner: &AgentStateInner,
+    game_detection: Option<&GameDetectionResponse>,
+) -> SupportTelemetrySummary {
+    let telemetry = materialized_telemetry_response(inner, game_detection);
+    let source_id = inner.telemetry.text("source.id").map(str::to_string);
+    let live = game_detection
+        .and_then(|detection| detection.adapter_id.as_deref())
+        .and_then(|adapter_id| inner.adapter_runtime(adapter_id))
+        .is_some_and(|runtime| runtime.has_recent_packet(Instant::now()));
+    SupportTelemetrySummary {
+        signal_count: telemetry.len(),
+        source_id,
+        live,
+        sample_signals: telemetry
+            .into_iter()
+            .take(64)
+            .map(|signal| SupportTelemetrySignalSummary {
+                name: signal.name,
+                unit: signal.unit,
+                updated_ms_ago: signal.updated_ms_ago,
+            })
+            .collect(),
+    }
+}
+
+fn support_steam_input_summary(status: &SteamInputStatus) -> SupportSteamInputSummary {
+    SupportSteamInputSummary {
+        running: status.running,
+        available: status.available,
+        install_detected: status.steam_path.is_some(),
+        layout_count: status.layouts.len(),
+        binding_count: status
+            .layouts
+            .iter()
+            .map(|layout| layout.binding_count)
+            .sum(),
+        warnings: status
+            .warnings
+            .iter()
+            .map(|warning| sanitize_support_text(warning))
+            .collect(),
+        layouts: status
+            .layouts
+            .iter()
+            .map(|layout| SupportSteamInputLayoutSummary {
+                app_id: layout.app_id.clone(),
+                title: layout.title.clone(),
+                controller_type: layout.controller_type.clone(),
+                controller_label: layout.controller_label.clone(),
+                source: sanitize_support_text(&layout.source),
+                binding_count: layout.binding_count,
+            })
+            .collect(),
+    }
+}
+
+fn support_app_settings_summary(settings: AppSettingsResponse) -> SupportAppSettingsSummary {
+    let glyphs = settings.settings.forza_playstation_glyphs;
+    SupportAppSettingsSummary {
+        listen_on_all_interfaces: settings.settings.listen_on_all_interfaces,
+        effective_bind_address: settings.effective_bind_address,
+        desired_bind_address: settings.desired_bind_address,
+        restart_required: settings.restart_required,
+        forza_playstation_glyphs_enabled: glyphs.enabled,
+        forza_playstation_glyphs_status: glyphs.last_status,
+        forza_playstation_glyphs_message: sanitize_support_text(&glyphs.last_message),
+        forza_playstation_glyphs_path_configured: glyphs.install_path.is_some(),
+    }
+}
+
+fn duration_millis_u64(duration: Duration) -> u64 {
+    duration.as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+fn sanitize_support_path(path: &str) -> String {
+    sanitize_support_text(path)
+}
+
+fn sanitize_support_text(value: &str) -> String {
+    let mut redacted = redact_windows_absolute_paths(value.to_string());
+    for (raw, replacement) in support_redaction_roots() {
+        if !raw.is_empty() {
+            redacted = redacted.replace(&raw, &replacement);
+        }
+    }
+    redact_steam_user_ids(redacted)
+}
+
+fn support_redaction_roots() -> Vec<(String, String)> {
+    let mut roots = [
+        ("USERPROFILE", "$HOME"),
+        ("HOME", "$HOME"),
+        ("LOCALAPPDATA", "%LOCALAPPDATA%"),
+        ("APPDATA", "%APPDATA%"),
+    ]
+    .into_iter()
+    .filter_map(|(name, replacement)| {
+        std::env::var(name)
+            .ok()
+            .filter(|value| !value.is_empty())
+            .map(|value| (value, replacement.to_string()))
+    })
+    .collect::<Vec<_>>();
+    roots.sort_by_key(|root| std::cmp::Reverse(root.0.len()));
+    roots.dedup_by(|a, b| a.0 == b.0);
+    roots
+}
+
+fn redact_steam_user_ids(mut value: String) -> String {
+    for marker in [
+        "userdata\\",
+        "userdata/",
+        "Steam Controller Configs\\",
+        "Steam Controller Configs/",
+    ] {
+        let mut search_from = 0;
+        while let Some(relative_start) = value[search_from..].find(marker) {
+            let start = search_from + relative_start + marker.len();
+            let end = value[start..]
+                .char_indices()
+                .take_while(|(_, ch)| ch.is_ascii_digit())
+                .last()
+                .map(|(index, ch)| start + index + ch.len_utf8())
+                .unwrap_or(start);
+            if end > start {
+                value.replace_range(start..end, "<steam-user>");
+                search_from = start + "<steam-user>".len();
+            } else {
+                search_from = start;
+            }
+        }
+    }
+    value
+}
+
+fn redact_windows_absolute_paths(value: String) -> String {
+    let chars = value.chars().collect::<Vec<_>>();
+    let mut redacted = String::with_capacity(value.len());
+    let mut index = 0;
+    while index < chars.len() {
+        if let Some(end) = windows_absolute_path_end(&chars, index) {
+            redacted.push_str("[local-path]");
+            index = end;
+        } else {
+            redacted.push(chars[index]);
+            index += 1;
+        }
+    }
+    redacted
+}
+
+fn windows_absolute_path_end(chars: &[char], start: usize) -> Option<usize> {
+    if !starts_extended_windows_path(chars, start) && !starts_windows_drive_path(chars, start) {
+        return None;
+    }
+
+    let mut end = start;
+    while end < chars.len() {
+        if is_support_path_boundary(chars[end])
+            || (chars[end] == '.'
+                && chars
+                    .get(end + 1)
+                    .is_none_or(|next| next.is_ascii_whitespace()))
+        {
+            break;
+        }
+        end += 1;
+    }
+    Some(end)
+}
+
+fn starts_extended_windows_path(chars: &[char], start: usize) -> bool {
+    start + 6 < chars.len()
+        && chars[start] == '\\'
+        && chars[start + 1] == '\\'
+        && (chars[start + 2] == '?' || chars[start + 2] == '.')
+        && chars[start + 3] == '\\'
+        && chars[start + 4].is_ascii_alphabetic()
+        && chars[start + 5] == ':'
+        && is_windows_separator(chars[start + 6])
+}
+
+fn starts_windows_drive_path(chars: &[char], start: usize) -> bool {
+    start + 2 < chars.len()
+        && chars[start].is_ascii_alphabetic()
+        && chars[start + 1] == ':'
+        && is_windows_separator(chars[start + 2])
+}
+
+fn is_windows_separator(ch: char) -> bool {
+    ch == '\\' || ch == '/'
+}
+
+fn is_support_path_boundary(ch: char) -> bool {
+    matches!(ch, '"' | '\'' | '\r' | '\n' | '\t')
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
 }
 
 impl DiscoveredController {
@@ -6142,7 +6714,7 @@ impl EdgeProfilesResponse {
         Self {
             controller_id: detail.id.clone(),
             support_state: EdgeProfileSupportState::Unknown,
-            warning: "Edge onboard slot editing is available as DSCC staged configuration. Hardware profile sync remains disabled until clean-room protocol validation proves it safe on this host/controller.".to_string(),
+            warning: "Edge onboard slot editing is available as DSCC staged configuration. Hardware profile sync is attempted over USB or Bluetooth when this host exposes safe HID feature-report access.".to_string(),
             slots: edge_profile_slots(store),
         }
     }
@@ -6160,7 +6732,7 @@ impl EdgeProfilesResponse {
 
         let Some(hardware_profiles) = hardware_profiles else {
             let warning = hardware_warning.unwrap_or_else(|| {
-                "Edge onboard slots can be staged locally. Connect the DualSense Edge over USB to read or write controller memory.".to_string()
+                "Edge onboard slots can be staged locally. Connect the DualSense Edge over USB or Bluetooth and refresh to read or write controller memory.".to_string()
             });
             return Self {
                 controller_id: detail.id.clone(),
@@ -6173,12 +6745,12 @@ impl EdgeProfilesResponse {
         let (support_state, warning) = if hardware_writes_enabled {
             (
                 EdgeProfileSupportState::ReadWrite,
-                "DualSense Edge onboard slots were read over USB. DSCC can write static onboard trigger, stick, and button settings; live telemetry effects still require DSCC to be running.".to_string(),
+                format!("DualSense Edge onboard slots were read over {}. DSCC can write static onboard trigger, stick, and button settings; live telemetry effects still require DSCC to be running.", detail.transport),
             )
         } else {
             (
                 EdgeProfileSupportState::ReadOnly,
-                "DualSense Edge onboard slots were read over USB, but hardware writes are disabled by DSCC output mode. Slot changes will be staged locally.".to_string(),
+                format!("DualSense Edge onboard slots were read over {}, but hardware writes are disabled by DSCC output mode. Slot changes will be staged locally.", detail.transport),
             )
         };
 
@@ -8183,49 +8755,58 @@ fn racing_shift_adapter(adapter_id: &str) -> bool {
     )
 }
 
-fn shift_thump_detection_enabled(inner: &AgentStateInner) -> bool {
-    racing_effect_detection_enabled(inner, "gear_shift_thump")
+#[derive(Debug, Clone, Copy)]
+struct RacingEffectToggles {
+    shift_thump: bool,
+    suspension_impact: bool,
 }
 
-fn suspension_impact_detection_enabled(inner: &AgentStateInner) -> bool {
-    racing_effect_detection_enabled(inner, "suspension_impact")
-}
-
-fn racing_effect_detection_enabled(inner: &AgentStateInner, effect_id: &str) -> bool {
-    let connected = inner
+fn racing_effect_toggles(inner: &AgentStateInner) -> RacingEffectToggles {
+    let mut toggles = RacingEffectToggles {
+        shift_thump: false,
+        suspension_impact: false,
+    };
+    let mut saw_connected = false;
+    for controller in inner
         .controllers
         .summaries()
         .into_iter()
         .filter(|controller| controller.connected)
-        .collect::<Vec<_>>();
-    if connected.is_empty() {
-        return true;
+    {
+        saw_connected = true;
+        let default_config;
+        let config = match inner.controller_configs.get(&controller.id) {
+            Some(config) => config,
+            None => {
+                default_config = ControllerConfig::default_for(&controller.id, controller.model);
+                &default_config
+            }
+        };
+        toggles.shift_thump |= forza_effect_enabled(config, "gear_shift_thump");
+        toggles.suspension_impact |= forza_effect_enabled(config, "suspension_impact");
+        if toggles.shift_thump && toggles.suspension_impact {
+            break;
+        }
     }
-
-    connected.into_iter().any(|controller| {
-        let config = inner
-            .controller_configs
-            .get(&controller.id)
-            .cloned()
-            .or_else(|| {
-                inner
-                    .controllers
-                    .detail(&controller.id)
-                    .map(|detail| ControllerConfig::default_for(&controller.id, detail.model))
-            });
-        config.is_some_and(|config| forza_effect_enabled(&config, effect_id))
-    })
+    if !saw_connected {
+        return RacingEffectToggles {
+            shift_thump: true,
+            suspension_impact: true,
+        };
+    }
+    toggles
 }
 
 fn forza_effect_enabled(config: &ControllerConfig, effect_id: &str) -> bool {
+    let default = default_forza_effect(effect_id);
     config
         .forza
         .effects
         .iter()
         .find(|effect| effect.id == effect_id)
         .cloned()
-        .unwrap_or_else(|| default_forza_effect(effect_id))
-        .normalized_with_default(&default_forza_effect(effect_id))
+        .unwrap_or_else(|| default.clone())
+        .normalized_with_default(&default)
         .scalar()
         > 0.0
 }
@@ -8281,9 +8862,10 @@ fn detected_telemetry_game(
     ))
 }
 
-fn hardware_output_runtime_allowed(
+fn hardware_output_runtime_allowed_for_resolution(
     inner: &AgentStateInner,
     game_detection: Option<&GameDetectionResponse>,
+    resolution: &ProfileResolutionResponse,
 ) -> bool {
     let Some(detection) = game_detection else {
         return false;
@@ -8294,7 +8876,6 @@ fn hardware_output_runtime_allowed(
     let Some(adapter_id) = detection.adapter_id.as_deref() else {
         return false;
     };
-    let resolution = profile_resolution(inner, Some(detection));
     if resolution.controller_id.is_none()
         || resolution.selected_profile_id.is_none()
         || resolution.validation != "valid"
@@ -8308,9 +8889,10 @@ fn hardware_output_runtime_allowed(
         && inner.telemetry.text("source.id") == Some(adapter_id)
 }
 
-fn hardware_output_detection_lightbar_allowed(
-    inner: &AgentStateInner,
+fn hardware_output_detection_lightbar_allowed_for_resolution(
+    _inner: &AgentStateInner,
     game_detection: Option<&GameDetectionResponse>,
+    resolution: &ProfileResolutionResponse,
 ) -> bool {
     let Some(detection) = game_detection else {
         return false;
@@ -8321,34 +8903,36 @@ fn hardware_output_detection_lightbar_allowed(
     {
         return false;
     }
-    let resolution = profile_resolution(inner, Some(detection));
     resolution.controller_id.is_some()
         && resolution.selected_profile_id.is_some()
         && resolution.validation == "valid"
         && detection_game_module(detection).is_some()
 }
 
-fn hardware_output_global_lightbar_allowed(
-    inner: &AgentStateInner,
+fn hardware_output_global_lightbar_allowed_for_resolution(
     game_detection: Option<&GameDetectionResponse>,
+    resolution: &ProfileResolutionResponse,
 ) -> bool {
     if game_detection.is_some_and(|detection| detection.profile_id.is_some()) {
         return false;
     }
 
-    let resolution = profile_resolution(inner, game_detection);
-    resolution.controller_id.is_some()
-        && resolution.validation == "valid"
-        && global_lightbar_output(inner, &resolution).is_some()
+    resolution.controller_id.is_some() && resolution.validation == "valid"
 }
 
 fn hardware_output_any_allowed(
     inner: &AgentStateInner,
     game_detection: Option<&GameDetectionResponse>,
 ) -> bool {
-    hardware_output_runtime_allowed(inner, game_detection)
-        || hardware_output_detection_lightbar_allowed(inner, game_detection)
-        || hardware_output_global_lightbar_allowed(inner, game_detection)
+    let resolution = profile_resolution(inner, game_detection);
+    hardware_output_runtime_allowed_for_resolution(inner, game_detection, &resolution)
+        || hardware_output_detection_lightbar_allowed_for_resolution(
+            inner,
+            game_detection,
+            &resolution,
+        )
+        || (hardware_output_global_lightbar_allowed_for_resolution(game_detection, &resolution)
+            && global_lightbar_output(inner, &resolution).is_some())
 }
 
 fn detection_game_module(detection: &GameDetectionResponse) -> Option<&'static GameModule> {
@@ -10337,6 +10921,8 @@ pub fn app(state: AgentState) -> Router {
         .route("/api/telemetry", get(list_telemetry))
         .route("/api/logs", get(list_logs))
         .route("/api/diagnostics", get(get_diagnostics))
+        .route("/api/diagnostics/support-bundle", get(get_support_bundle))
+        .route("/api/support-bundle", get(get_support_bundle))
         .route("/api/ws", get(ws_handler))
         .layer(middleware::from_fn(reject_cross_origin_mutations))
         .fallback_service(static_assets)
@@ -10454,7 +11040,10 @@ async fn output_watchdog_loop(state: AgentState, interval_duration: Duration) {
 
     loop {
         interval.tick().await;
-        if !state.hardware_output_enabled() || state.manual_output_override_active() {
+        if !state.hardware_output_enabled()
+            || state.manual_output_override_active()
+            || !state.has_non_neutral_output_frames()
+        {
             continue;
         }
 
@@ -10986,21 +11575,57 @@ pub fn app_paths() -> Option<AppPaths> {
 }
 
 fn web_dist_dir() -> PathBuf {
-    if let Some(path) = std::env::var_os("DSCC_WEB_DIST").map(PathBuf::from) {
+    let current_exe = std::env::current_exe().ok();
+    let current_dir = std::env::current_dir().ok();
+    web_dist_dir_from_parts(
+        configured_web_dist_dir(),
+        current_exe.as_deref(),
+        current_dir.as_deref(),
+    )
+}
+
+fn configured_web_dist_dir() -> Option<PathBuf> {
+    std::env::var_os("DSCC_WEB_DIST")
+        .or_else(|| std::env::var_os("DSCC_WEB_DIST_DIR"))
+        .map(PathBuf::from)
+}
+
+fn web_dist_dir_from_parts(
+    configured: Option<PathBuf>,
+    executable: Option<&FsPath>,
+    current_dir: Option<&FsPath>,
+) -> PathBuf {
+    if let Some(path) = configured {
         return path;
     }
 
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            for candidate in [dir.join("web").join("dist"), dir.join("dist")] {
-                if candidate.exists() {
-                    return candidate;
-                }
-            }
+    let candidates = web_dist_candidates(executable, current_dir);
+    candidates
+        .iter()
+        .find(|candidate| candidate.join("index.html").is_file())
+        .cloned()
+        .unwrap_or_else(|| {
+            candidates
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| PathBuf::from("web/dist"))
+        })
+}
+
+fn web_dist_candidates(executable: Option<&FsPath>, current_dir: Option<&FsPath>) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(current_dir) = current_dir {
+        candidates.push(current_dir.join("web").join("dist"));
+    }
+    if let Some(executable_dir) = executable.and_then(FsPath::parent) {
+        candidates.push(executable_dir.join("web").join("dist"));
+        candidates.push(executable_dir.join("dist"));
+        if let Some(install_parent) = executable_dir.parent() {
+            candidates.push(install_parent.join("web").join("dist"));
         }
     }
-
-    PathBuf::from("web/dist")
+    candidates.push(PathBuf::from("web/dist"));
+    candidates
 }
 
 async fn get_status(State(state): State<AgentState>) -> Json<StatusResponse> {
@@ -11244,8 +11869,11 @@ async fn read_edge_profiles_from_hardware(
         let inner = state.inner.read().await;
         controller_output_target_or_reason(&inner, controller_id)?
     };
-    if target.transport != DeviceTransportKind::Usb {
-        return Err("DualSense Edge onboard profile reads require a USB connection".to_string());
+    if !edge_onboard_transport_supported(target.transport) {
+        return Err(
+            "DualSense Edge onboard profile reads require USB or Bluetooth HID feature report access"
+                .to_string(),
+        );
     }
 
     let hardware_writes_enabled = manager.hardware_writes_enabled();
@@ -11283,9 +11911,10 @@ async fn write_edge_profile_to_hardware(
             Err(error) => return EdgeHardwareProfileWriteResult::StagedOnly(error),
         }
     };
-    if target.transport != DeviceTransportKind::Usb {
+    if !edge_onboard_transport_supported(target.transport) {
         return EdgeHardwareProfileWriteResult::StagedOnly(
-            "DualSense Edge onboard profile writes require a USB connection".to_string(),
+            "DualSense Edge onboard profile writes require USB or Bluetooth HID feature report access"
+                .to_string(),
         );
     }
 
@@ -11405,9 +12034,7 @@ async fn write_edge_profile(
             config.hardware_synced = false;
             (
                 StatusCode::CONFLICT,
-                format!(
-                    "Staged Edge slot {slot} locally, but the USB hardware write failed: {error}"
-                ),
+                format!("Staged Edge slot {slot} locally, but the hardware write failed: {error}"),
                 false,
                 "warn",
             )
@@ -11470,30 +12097,12 @@ async fn read_controller_input_state(
     id: String,
     state: AgentState,
 ) -> Result<ControllerInputResponse, StatusCode> {
-    let target = {
+    {
         let inner = state.inner.read().await;
         inner.controllers.detail(&id).ok_or(StatusCode::NOT_FOUND)?;
-        match controller_output_target_or_reason(&inner, &id) {
-            Ok(target) => target,
-            Err(reason) => {
-                return Ok(controller_input_unavailable(id, "hid", reason));
-            }
-        }
-    };
+    }
 
-    let Some(manager) = state.output_manager.clone() else {
-        return Ok(controller_input_unavailable(
-            id,
-            "hid",
-            "Hardware HID manager is unavailable in this output mode".to_string(),
-        ));
-    };
-
-    let read_result = tokio::task::spawn_blocking(move || manager.read_input_state(&target))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    match read_result {
+    match state.read_input_state_for_controller(&id).await {
         Ok(Some(input)) => Ok(controller_input_available(id, input)),
         Ok(None) => Ok(controller_input_unavailable(
             id,
@@ -11613,6 +12222,11 @@ async fn run_effect_test_for_controller(
     } else {
         effect_test_output_frame(&request)
     };
+    let base_feel_trigger = if target == "base_feel" && !stop_manual_override {
+        Some(request.trigger.clone().unwrap_or_default())
+    } else {
+        None
+    };
     let hardware_output_enabled = state.hardware_output_enabled();
     let mut accepted = true;
     let mut status = StatusCode::ACCEPTED;
@@ -11631,15 +12245,21 @@ async fn run_effect_test_for_controller(
                     let state_for_reset = state.clone();
                     let id_for_reset = id.clone();
                     let output_for_refresh = output.clone();
+                    let base_feel_trigger = base_feel_trigger.clone();
                     tokio::spawn(async move {
                         let deadline = Instant::now() + Duration::from_millis(duration_ms);
+                        let refresh_interval = if base_feel_trigger.is_some() {
+                            BASE_FEEL_OUTPUT_REFRESH_INTERVAL
+                        } else {
+                            MANUAL_OUTPUT_REFRESH_INTERVAL
+                        };
                         loop {
                             let now = Instant::now();
                             if now >= deadline {
                                 break;
                             }
-                            let sleep_for = MANUAL_OUTPUT_REFRESH_INTERVAL
-                                .min(deadline.saturating_duration_since(now));
+                            let sleep_for =
+                                refresh_interval.min(deadline.saturating_duration_since(now));
                             tokio::time::sleep(sleep_for).await;
                             if !state_for_reset.manual_output_override_active_for(generation) {
                                 if !state_for_reset
@@ -11652,6 +12272,35 @@ async fn run_effect_test_for_controller(
                             if Instant::now() >= deadline {
                                 break;
                             }
+                            let output_for_refresh = if let Some(trigger_config) =
+                                base_feel_trigger.as_ref()
+                            {
+                                match state_for_reset
+                                    .read_input_state_for_controller(&id_for_reset)
+                                    .await
+                                {
+                                    Ok(Some(input)) => base_feel_test_output_frame(
+                                        trigger_config.clone(),
+                                        Some(input.l2),
+                                        Some(input.r2),
+                                    ),
+                                    Ok(None) => base_feel_test_output_frame(
+                                        trigger_config.clone(),
+                                        None,
+                                        None,
+                                    ),
+                                    Err(error) => {
+                                        state_for_reset
+                                                .note_hardware_output_error(format!(
+                                                    "Hardware effect test input read for controller {id_for_reset} failed: {error}"
+                                                ))
+                                                .await;
+                                        output_for_refresh.clone()
+                                    }
+                                }
+                            } else {
+                                output_for_refresh.clone()
+                            };
                             if let Err(error) = state_for_reset
                                 .write_output_frame_to_controller(
                                     &id_for_reset,
@@ -12639,6 +13288,10 @@ async fn get_diagnostics(State(state): State<AgentState>) -> Json<DiagnosticsRes
     Json(state.diagnostics().await)
 }
 
+async fn get_support_bundle(State(state): State<AgentState>) -> Json<SupportBundleResponse> {
+    Json(state.support_bundle().await)
+}
+
 async fn ws_handler(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
@@ -12771,6 +13424,41 @@ mod tests {
         ))
     }
 
+    #[test]
+    fn web_dist_uses_configured_path_without_probing() {
+        let configured = PathBuf::from("custom-web-dist");
+
+        assert_eq!(
+            web_dist_dir_from_parts(Some(configured.clone()), None, None),
+            configured
+        );
+    }
+
+    #[test]
+    fn web_dist_finds_packaged_assets_next_to_binary() {
+        let root = temp_test_dir("dscc-web-dist");
+        let exe = root.join("dscc-cli");
+        let web_dist = root.join("web").join("dist");
+        fs::create_dir_all(&web_dist).expect("web dist fixture directory");
+        fs::write(web_dist.join("index.html"), "<!doctype html>").expect("web dist fixture");
+
+        let found = web_dist_dir_from_parts(None, Some(&exe), Some(&root.join("other-cwd")));
+
+        assert_eq!(found, web_dist);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn web_dist_candidates_cover_repo_and_packaged_layouts() {
+        let repo = PathBuf::from("repo-root");
+        let exe = PathBuf::from("install-root").join("dscc-cli");
+        let candidates = web_dist_candidates(Some(&exe), Some(&repo));
+
+        assert!(candidates.contains(&repo.join("web").join("dist")));
+        assert!(candidates.contains(&PathBuf::from("install-root").join("web").join("dist")));
+        assert!(candidates.contains(&PathBuf::from("install-root").join("dist")));
+    }
+
     fn test_udp_adapter_runtime() -> AdapterRuntime {
         let adapter = built_in_udp_adapters()
             .iter()
@@ -12818,6 +13506,132 @@ mod tests {
             status.active_profile_id.as_deref(),
             Some(DEFAULT_PROFILE_ID)
         );
+    }
+
+    #[tokio::test]
+    async fn support_bundle_route_returns_sanitized_shareable_payload() {
+        let _env = TestEnv::new(&["USERPROFILE", "HOME", "DSCC_WEB_DIST"]);
+        std::env::set_var("USERPROFILE", r"C:\Users\Kyle");
+        std::env::set_var("HOME", "/home/kyle");
+        std::env::set_var("DSCC_WEB_DIST", r"D:\PrivateLab\DSCC Secret Web Dist");
+        let state = AgentState::mock();
+        {
+            let mut inner = state.inner.write().await;
+            inner.app_settings.forza_playstation_glyphs.install_path =
+                Some(r"C:\Users\Kyle\SteamLibrary\ForzaHorizon6".to_string());
+            inner.app_settings.forza_playstation_glyphs.last_message =
+                r"Installed from C:\Users\Kyle\SteamLibrary\ForzaHorizon6\userdata\123456789\config"
+                    .to_string();
+        }
+
+        let response = app(state)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/support-bundle")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let bundle: SupportBundleResponse = serde_json::from_slice(&body).unwrap();
+        let body_text = String::from_utf8(body.to_vec()).unwrap();
+
+        assert_eq!(bundle.schema, "dev.dscc.support-bundle.v1");
+        assert!(bundle.privacy.sanitized);
+        assert!(bundle
+            .privacy
+            .omitted
+            .iter()
+            .any(|item| item == "raw controller hardware IDs"));
+        assert!(bundle.app_settings.forza_playstation_glyphs_path_configured);
+        assert!(!body_text.contains(r"C:\Users\Kyle"));
+        assert!(!body_text.contains(r"C:\\Users\\Kyle"));
+        assert!(!body_text.contains("123456789"));
+        assert!(!body_text.contains("SteamLibrary"));
+        assert!(!body_text.contains("PrivateLab"));
+        assert!(!body_text.contains("DSCC Secret Web Dist"));
+        assert!(!body_text.contains("installPath"));
+        assert!(!body_text.contains("steamPath"));
+        assert!(!body_text.contains("rawBinding"));
+    }
+
+    #[tokio::test]
+    async fn support_bundle_diagnostics_alias_matches_primary_route() {
+        for uri in ["/api/support-bundle", "/api/diagnostics/support-bundle"] {
+            let response = app(AgentState::mock())
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK, "{uri}");
+            let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+            let bundle: SupportBundleResponse = serde_json::from_slice(&body).unwrap();
+            assert_eq!(bundle.schema, "dev.dscc.support-bundle.v1");
+            assert!(bundle.privacy.sanitized);
+        }
+    }
+
+    #[test]
+    fn support_steam_input_summary_omits_raw_layout_details() {
+        let status = SteamInputStatus {
+            running: true,
+            available: true,
+            steam_path: Some(r"C:\Program Files (x86)\Steam".to_string()),
+            layouts: vec![SteamInputLayout {
+                app_id: Some("1551360".to_string()),
+                title: "Forza Horizon 5".to_string(),
+                controller_type: Some("dual_sense".to_string()),
+                controller_label: Some("DualSense Edge".to_string()),
+                source: r"steamapps/common/Steam Controller Configs/60706926/config/1551360/controller_edge.vdf"
+                    .to_string(),
+                binding_count: 1,
+                bindings: vec![SteamInputBinding {
+                    input: "Cross".to_string(),
+                    input_id: "button_south".to_string(),
+                    binding: "Secret binding".to_string(),
+                    raw_binding: "key_press SECRET_VALUE".to_string(),
+                    kind: "keyboard".to_string(),
+                    source: Some("buttons".to_string()),
+                    source_mode: Some("button".to_string()),
+                    activator: Some("full_press".to_string()),
+                    group_id: Some("0".to_string()),
+                }],
+            }],
+            warnings: vec![
+                r"Read warning in userdata\76561198000000000\config\controller.vdf".to_string(),
+            ],
+        };
+
+        let summary = support_steam_input_summary(&status);
+        let json = serde_json::to_string(&summary).unwrap();
+
+        assert!(summary.install_detected);
+        assert_eq!(summary.layout_count, 1);
+        assert_eq!(summary.binding_count, 1);
+        assert!(json.contains("<steam-user>"));
+        assert!(!json.contains("60706926"));
+        assert!(!json.contains("76561198000000000"));
+        assert!(!json.contains("SECRET_VALUE"));
+        assert!(!json.contains("rawBinding"));
+        assert!(!json.contains("steamPath"));
+    }
+
+    #[test]
+    fn support_sanitizer_redacts_absolute_paths_and_steam_ids() {
+        let sanitized = sanitize_support_text(
+            r"Installed at \\?\D:\SteamLibrary\steamapps\common\ForzaHorizon6. User path C:\Users\Kyle\Documents\dscc. Layout steamapps/common/Steam Controller Configs/60706926/config/controller.vdf and userdata\76561198000000000\config.",
+        );
+
+        assert!(sanitized.contains("[local-path]"));
+        assert!(sanitized.contains("<steam-user>"));
+        assert!(!sanitized.contains("D:\\"));
+        assert!(!sanitized.contains("C:\\Users\\Kyle"));
+        assert!(!sanitized.contains("SteamLibrary"));
+        assert!(!sanitized.contains("60706926"));
+        assert!(!sanitized.contains("76561198000000000"));
     }
 
     #[test]
@@ -14926,10 +15740,16 @@ mod tests {
         }
 
         let inner = state.inner.read().await;
-        assert!(!hardware_output_runtime_allowed(&inner, Some(&detection)));
-        assert!(hardware_output_detection_lightbar_allowed(
+        let resolution = profile_resolution(&inner, Some(&detection));
+        assert!(!hardware_output_runtime_allowed_for_resolution(
             &inner,
-            Some(&detection)
+            Some(&detection),
+            &resolution
+        ));
+        assert!(hardware_output_detection_lightbar_allowed_for_resolution(
+            &inner,
+            Some(&detection),
+            &resolution
         ));
 
         let (controller_id, frame) = state

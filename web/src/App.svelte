@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Cable, CopyPlus, ExternalLink, Minus, Plus, RefreshCw, RotateCcw, Save } from '@lucide/svelte';
+  import { Cable, ClipboardCopy, CopyPlus, Download, ExternalLink, LifeBuoy, Minus, Plus, RefreshCw, RotateCcw, Save } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import Tooltip from './components/Tooltip.svelte';
   import InitialBadge from './components/InitialBadge.svelte';
@@ -11,7 +11,6 @@
     assembleSteamBindingRaw,
     buildDefaultSteamBindingBySlotKey,
     buildSteamBindingBySlotKey,
-    createMappingChipModels,
     createSteamMirrorGroups,
     parseSteamBindingTriple,
     steamBindingKey,
@@ -20,7 +19,7 @@
     steamSlotGlyphs
   } from './lib/features/buttonMapping';
   import HapticsView from './lib/features/haptics/HapticsView.svelte';
-  import type { MappingChipModel, SteamBindingSlot } from './lib/features/buttonMapping';
+  import type { SteamBindingSlot, SteamMirrorGroup } from './lib/features/buttonMapping';
   import {
     activateProfile,
     addCustomGame,
@@ -30,6 +29,7 @@
     deleteProfile,
     exportProfile,
     getAppSnapshot,
+    getSupportBundle,
     getAppUpdateCheck,
     getControllerInput,
     getControllerConfig,
@@ -70,6 +70,7 @@
     SteamInputBinding,
     SteamInputLayout,
     SteamLibraryEntry,
+    SupportBundle,
     SupportedGame,
     TriggerCurvePoint
   } from './lib/types';
@@ -92,6 +93,7 @@
     tone: ToastTone;
     message: string;
   };
+  type SupportBundleBusy = 'copy' | 'download' | '';
   type UpdateCheckState = {
     state: 'idle' | 'checking' | 'current' | 'available' | 'error';
     currentVersion?: string;
@@ -110,6 +112,21 @@
     { id: 'haptics', label: 'Adaptive Triggers & Haptics', hash: '#/adaptive-triggers-haptics' },
     { id: 'buttonMapping', label: 'Button Mapping', hash: '#/button-mapping' }
   ];
+  const EMPTY_STEAM_INPUT_BINDINGS: SteamInputBinding[] = [];
+  const EMPTY_STEAM_BINDING_MAP = new Map<string, SteamInputBinding>();
+  const EMPTY_STEAM_MIRROR_GROUPS: SteamMirrorGroup[] = [];
+  let defaultSteamBindingCacheReady = false;
+  let defaultSteamBindingCacheFamily: ControllerStatus['family'] | undefined | null;
+  let defaultSteamBindingCache = EMPTY_STEAM_BINDING_MAP;
+
+  const defaultSteamBindingsForFamily = (family: ControllerStatus['family'] | undefined | null) => {
+    if (!defaultSteamBindingCacheReady || defaultSteamBindingCacheFamily !== family) {
+      defaultSteamBindingCacheReady = true;
+      defaultSteamBindingCacheFamily = family;
+      defaultSteamBindingCache = buildDefaultSteamBindingBySlotKey(family);
+    }
+    return defaultSteamBindingCache;
+  };
 
   // Steam Input target catalog. The raw VDF form for every binding is
   // `<command> <param>, <icon>, <label>` — the third field is a free-form
@@ -620,6 +637,10 @@
   let applyMessage = '';
   let appSettingsMessage = '';
   let appSettingsBusy = false;
+  let supportPanelOpen = false;
+  let supportBundleBusy: SupportBundleBusy = '';
+  let supportBundleMessage = '';
+  let supportBundleTone: ToastTone = 'info';
   let profileOverrideMessage = '';
   let toastMessages: ToastMessage[] = [];
   let nextToastId = 1;
@@ -865,6 +886,7 @@
     if (event.key === 'Escape' && pickerOpen) closePicker();
   }
   let forzaEffects: ForzaEffectConfiguration[] = defaultForzaEffects();
+  const DEFAULT_FORZA_EFFECT_BY_ID = new Map(defaultForzaEffects().map((effect) => [effect.id, effect]));
   $: enabledForzaEffectCount = forzaEffects.filter((effect) => effect.enabled).length;
   $: allForzaEffectsEnabled = enabledForzaEffectCount === forzaEffectMetas.length;
   // Reactive lookup map so {@const tuning = ...} inside {#each} re-evaluates
@@ -1019,55 +1041,71 @@
         : 'Custom / Global';
     return activeProfileHeader.id === activeProfileId ? `${scope} / live` : `${scope} / editing`;
   })();
+  $: buttonMappingActive = activeView === 'buttonMapping';
   $: steamInputStatus = snapshot?.steamInput;
-  $: steamInputLayout = selectSteamInputLayout(steamInputStatus?.layouts ?? [], steamContextGame, controller?.family);
-  $: rawSteamInputBindings = steamInputLayout?.bindings ?? [];
+  $: steamInputLayout = buttonMappingActive
+    ? selectSteamInputLayout(steamInputStatus?.layouts ?? [], steamContextGame, controller?.family)
+    : null;
+  $: rawSteamInputBindings = buttonMappingActive
+    ? steamInputLayout?.bindings ?? EMPTY_STEAM_INPUT_BINDINGS
+    : EMPTY_STEAM_INPUT_BINDINGS;
   $: steamMappingContextKey = [
-    steamInputLayout?.source ?? '',
-    steamContextGame?.gameId ?? '',
-    controller?.id ?? '',
-    controller?.family ?? ''
+    buttonMappingActive ? steamInputLayout?.source ?? '' : '',
+    buttonMappingActive ? steamContextGame?.gameId ?? '' : '',
+    buttonMappingActive ? controller?.id ?? '' : '',
+    buttonMappingActive ? controller?.family ?? '' : ''
   ].join('|');
-  $: if (steamMappingContextKey !== activeSteamMappingContextKey) {
+  $: if (buttonMappingActive && steamMappingContextKey !== activeSteamMappingContextKey) {
     activeSteamMappingContextKey = steamMappingContextKey;
     optimisticSteamInputBindings = null;
     activeSteamSlotKey = '';
     hoveredSteamSlotKey = '';
   }
-  $: realSteamInputBindings = optimisticSteamInputBindings ?? rawSteamInputBindings;
-  $: realSteamBindingBySlotKey = buildSteamBindingBySlotKey(realSteamInputBindings, steamBindingSlots);
-  $: defaultSteamBindingBySlotKey = buildDefaultSteamBindingBySlotKey(controller?.family);
-  $: steamBindingBySlotKey = new Map([...defaultSteamBindingBySlotKey, ...realSteamBindingBySlotKey]);
-  $: steamInputBindings = [
-    ...realSteamInputBindings,
-    ...[...defaultSteamBindingBySlotKey.entries()]
-      .filter(([slotKey]) => !realSteamBindingBySlotKey.has(slotKey))
-      .map(([, binding]) => binding)
-  ];
+  $: realSteamInputBindings = buttonMappingActive
+    ? optimisticSteamInputBindings ?? rawSteamInputBindings
+    : EMPTY_STEAM_INPUT_BINDINGS;
+  $: realSteamBindingBySlotKey = buttonMappingActive
+    ? buildSteamBindingBySlotKey(realSteamInputBindings, steamBindingSlots)
+    : EMPTY_STEAM_BINDING_MAP;
+  $: defaultSteamBindingBySlotKey = buttonMappingActive
+    ? defaultSteamBindingsForFamily(controller?.family)
+    : EMPTY_STEAM_BINDING_MAP;
+  $: steamBindingBySlotKey = buttonMappingActive
+    ? new Map([...defaultSteamBindingBySlotKey, ...realSteamBindingBySlotKey])
+    : EMPTY_STEAM_BINDING_MAP;
+  $: steamInputBindings = buttonMappingActive
+    ? [
+        ...realSteamInputBindings,
+        ...[...defaultSteamBindingBySlotKey.entries()]
+          .filter(([slotKey]) => !realSteamBindingBySlotKey.has(slotKey))
+          .map(([, binding]) => binding)
+      ]
+    : EMPTY_STEAM_INPUT_BINDINGS;
   $: if (
+    buttonMappingActive &&
     steamInputBindings.length &&
     !activeSteamSlotKey &&
     !steamInputBindings.some((binding) => steamBindingKey(binding) === selectedSteamBindingKey)
   ) {
     selectedSteamBindingKey = steamBindingKey(steamInputBindings[0]);
   }
-  $: if (!steamInputBindings.length && selectedSteamBindingKey) {
+  $: if (buttonMappingActive && !steamInputBindings.length && selectedSteamBindingKey) {
     selectedSteamBindingKey = '';
   }
   $: selectedSteamBinding =
-    selectedSteamBindingKey
+    buttonMappingActive && selectedSteamBindingKey
       ? steamInputBindings.find((binding) => steamBindingKey(binding) === selectedSteamBindingKey) ?? null
       : null;
-  $: if (selectedSteamBinding && steamBindingKey(selectedSteamBinding) !== lastSteamBindingDraftKey) {
+  $: if (buttonMappingActive && selectedSteamBinding && steamBindingKey(selectedSteamBinding) !== lastSteamBindingDraftKey) {
     lastSteamBindingDraftKey = steamBindingKey(selectedSteamBinding);
     steamBindingDraft = selectedSteamBinding.rawBinding;
     steamBindingLabelDraft = parseSteamBindingTriple(selectedSteamBinding.rawBinding).label;
     clearSteamBindingMessage();
   }
-  $: steamLayoutTitle = steamInputLayout?.title ?? 'Steam Input Layout';
+  $: steamLayoutTitle = buttonMappingActive ? steamInputLayout?.title ?? 'Steam Input Layout' : 'Steam Input Layout';
   // Focused slot drives the controller-stage focus highlight. Hover wins, then
   // explicitly-clicked slot, then the slot owning the currently selected binding.
-  $: focusedSlotKey = (() => {
+  $: focusedSlotKey = buttonMappingActive ? (() => {
     if (hoveredSteamSlotKey) return hoveredSteamSlotKey;
     if (activeSteamSlotKey) return activeSteamSlotKey;
     const fromBinding = steamBindingSlots.find((slot) => {
@@ -1075,7 +1113,7 @@
       return Boolean(binding && steamBindingKey(binding) === selectedSteamBindingKey);
     });
     return fromBinding?.key ?? '';
-  })();
+  })() : '';
   $: focusedSlotMeta = focusedSlotKey
     ? steamBindingSlots.find((slot) => slot.key === focusedSlotKey) ?? null
     : null;
@@ -1085,18 +1123,14 @@
   $: focusedSlotBinding = focusedSlotMeta ? steamBindingBySlotKey.get(focusedSlotMeta.key) ?? null : null;
   $: focusedSlotSelectedBinding =
     focusedSlotBinding && steamBindingKey(focusedSlotBinding) === selectedSteamBindingKey ? focusedSlotBinding : null;
-  $: visibleMappingChips = createMappingChipModels({
-    bindingBySlotKey: steamBindingBySlotKey,
-    controllerFamily: controller?.family,
-    selectedBindingKey: selectedSteamBindingKey,
-    activeSlotKey: activeSteamSlotKey
-  });
-  $: steamMirrorGroups = createSteamMirrorGroups({
-    bindingBySlotKey: steamBindingBySlotKey,
-    controllerFamily: controller?.family,
-    selectedBindingKey: selectedSteamBindingKey,
-    activeSlotKey: activeSteamSlotKey
-  });
+  $: steamMirrorGroups = buttonMappingActive
+    ? createSteamMirrorGroups({
+        bindingBySlotKey: steamBindingBySlotKey,
+        controllerFamily: controller?.family,
+        selectedBindingKey: selectedSteamBindingKey,
+        activeSlotKey: activeSteamSlotKey
+      })
+    : EMPTY_STEAM_MIRROR_GROUPS;
   $: mappedVisibleChipCount = steamMirrorGroups.reduce(
     (count, group) => count + group.rows.filter((row) => row.binding).length,
     0
@@ -1309,6 +1343,7 @@
   const defaultTriggerCurve = (side: TriggerSide) => (side === 'l2' ? 1.35 : 2.25);
   const TRIGGER_CURVE_POINT_MIN = 4;
   const TRIGGER_CURVE_POINT_MAX = 8;
+  const TRIGGER_CURVE_SAMPLE_POSITIONS = Array.from({ length: 101 }, (_, index) => index / 100);
 
   const appViewFromHash = (): AppView => {
     if (typeof window === 'undefined') return 'games';
@@ -2096,8 +2131,7 @@
   const forzaEffectScalarForGraph = (effect: ForzaEffectConfiguration | undefined) =>
     effect?.enabled ? clampForzaIntensity(effect.intensity) / 100 : 0;
   const forzaEffectForGraph = (id: string, effects: ForzaEffectConfiguration[]) =>
-    effects.find((effect) => effect.id === id) ??
-    defaultForzaEffects().find((effect) => effect.id === id);
+    effects.find((effect) => effect.id === id) ?? DEFAULT_FORZA_EFFECT_BY_ID.get(id);
 
   const forzaTriggerForceModelFor = (
     side: TriggerSide,
@@ -2171,6 +2205,19 @@
     return clampUnit(model.baselineForce + (model.normalForce - model.baselineForce) * curved);
   };
 
+  const baseTriggerCurveValueFromParts = (
+    position: number,
+    start: number,
+    end: number,
+    points: TriggerCurvePoint[],
+    strength: number
+  ) => {
+    if (strength <= 0) return 0;
+    const x = clampUnit(position);
+    const active = x <= start ? 0 : triggerCurvePointOutput(points, clampUnit((x - start) / (end - start)));
+    return clampUnit(active * strength);
+  };
+
   const triggerCurveValueFor = (
     side: TriggerSide,
     position: number,
@@ -2198,10 +2245,7 @@
     const curve = normalizeTriggerCurve(curveRaw, fallbackCurve);
     const points = normalizeTriggerCurvePoints(pointsRaw, curve);
     const strength = triggerStrengthScalarFor(effect, intensity);
-    if (strength <= 0) return 0;
-    const x = clampUnit(position);
-    const active = x <= start ? 0 : triggerCurvePointOutput(points, clampUnit((x - start) / (end - start)));
-    return clampUnit(active * strength);
+    return baseTriggerCurveValueFromParts(position, start, end, points, strength);
   };
 
   const triggerCurveValue = (side: TriggerSide, position: number) =>
@@ -2219,10 +2263,9 @@
     effect: string,
     intensity: string,
     displayMode: TriggerCurveDisplayMode,
-    effects: ForzaEffectConfiguration[],
-    livePress?: number
+    effects: ForzaEffectConfiguration[]
   ) => {
-    const samplePositions = Array.from({ length: 101 }, (_, index) => index / 100);
+    const samplePositions = [...TRIGGER_CURVE_SAMPLE_POSITIONS];
     const model =
       displayMode === 'forza'
         ? forzaTriggerForceModelFor(side, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, effects)
@@ -2231,16 +2274,25 @@
       samplePositions.push(model.start, model.end, model.wall);
       if (model.rampStart !== undefined) samplePositions.push(model.rampStart);
     }
-    if (livePress !== undefined) {
-      samplePositions.push(clampUnit(livePress));
-    }
-    const points = [...new Set(samplePositions)]
+
+    const range = displayMode === 'base' ? triggerRangeValuesFor(fromRaw, toRaw) : null;
+    const start = range ? range.from / 100 : 0;
+    const end = range ? Math.max(start + 0.01, range.to / 100) : 1;
+    const curve = displayMode === 'base' ? normalizeTriggerCurve(curveRaw, fallbackCurve) : fallbackCurve;
+    const basePoints = displayMode === 'base' ? normalizeTriggerCurvePoints(pointsRaw, curve) : [];
+    const strength = displayMode === 'base' ? triggerStrengthScalarFor(effect, intensity) : 0;
+    const valueAt = (x: number) =>
+      displayMode === 'forza'
+        ? forzaTriggerCurveValueFor(side, x, model)
+        : baseTriggerCurveValueFromParts(x, start, end, basePoints, strength);
+
+    const pathPoints = [...new Set(samplePositions)]
       .sort((a, b) => a - b)
       .map((x) => {
-        const y = 1 - triggerCurveValueFor(side, x, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, displayMode, effects);
+        const y = 1 - valueAt(x);
         return `${(x * 100).toFixed(2)},${(y * 100).toFixed(2)}`;
       });
-    return `M ${points.join(' L ')}`;
+    return `M ${pathPoints.join(' L ')}`;
   };
 
   const curveControlPointsFor = (
@@ -2266,11 +2318,16 @@
         : null;
     const editableEnd = model ? model.rampStart ?? model.wall : end;
     const span = Math.max(0.01, editableEnd - start);
+    const strength = displayMode === 'base' ? triggerStrengthScalarFor(effect, intensity) : 0;
+    const valueAt = (x: number) =>
+      displayMode === 'forza'
+        ? forzaTriggerCurveValueFor(side, x, model)
+        : baseTriggerCurveValueFromParts(x, start, end, points, strength);
 
     return points.map((point, index) => {
       const active = point.input / 100;
       const x = clampUnit(start + span * active);
-      const y = 1 - triggerCurveValueFor(side, x, fromRaw, toRaw, curveRaw, points, fallbackCurve, effect, intensity, displayMode, effects);
+      const y = 1 - valueAt(x);
       return {
         index,
         input: point.input,
@@ -2282,7 +2339,30 @@
     });
   };
 
-  const triggerCurveView = (
+  const triggerCurveShapeView = (
+    side: TriggerSide,
+    fromRaw: number | string,
+    toRaw: number | string,
+    curveRaw: number | string,
+    pointsRaw: TriggerCurvePoint[],
+    fallbackCurve: number,
+    effect: string,
+    intensity: string,
+    displayMode: TriggerCurveDisplayMode,
+    effects: ForzaEffectConfiguration[]
+  ) => {
+    const range = triggerRangeValuesFor(fromRaw, toRaw);
+    const curvePoints = curveControlPointsFor(side, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, displayMode, effects);
+    return {
+      rangeStart: range.from.toFixed(2),
+      rangeEnd: range.to.toFixed(2),
+      rangeWidth: range.width.toFixed(2),
+      path: triggerCurvePathFor(side, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, displayMode, effects),
+      curvePoints
+    };
+  };
+
+  const triggerCurveLiveView = (
     side: TriggerSide,
     fromRaw: number | string,
     toRaw: number | string,
@@ -2295,23 +2375,18 @@
     displayMode: TriggerCurveDisplayMode,
     effects: ForzaEffectConfiguration[]
   ) => {
-    const range = triggerRangeValuesFor(fromRaw, toRaw);
     const liveX = clampUnit(livePress) * 100;
     const liveY = 100 - triggerCurveValueFor(side, livePress, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, displayMode, effects) * 100;
-    const curvePoints = curveControlPointsFor(side, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, displayMode, effects);
     return {
-      rangeStart: range.from.toFixed(2),
-      rangeEnd: range.to.toFixed(2),
-      rangeWidth: range.width.toFixed(2),
-      path: triggerCurvePathFor(side, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, displayMode, effects, livePress),
-      curvePoints,
       liveX: liveX.toFixed(2),
       liveY: liveY.toFixed(2)
     };
   };
 
-  $: l2CurveView = triggerCurveView('l2', l2From, l2To, l2Curve, l2CurvePoints, defaultTriggerCurve('l2'), l2LivePress, triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects);
-  $: r2CurveView = triggerCurveView('r2', r2From, r2To, r2Curve, r2CurvePoints, defaultTriggerCurve('r2'), r2LivePress, triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects);
+  $: l2CurveShape = triggerCurveShapeView('l2', l2From, l2To, l2Curve, l2CurvePoints, defaultTriggerCurve('l2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects);
+  $: r2CurveShape = triggerCurveShapeView('r2', r2From, r2To, r2Curve, r2CurvePoints, defaultTriggerCurve('r2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects);
+  $: l2CurveLive = triggerCurveLiveView('l2', l2From, l2To, l2Curve, l2CurvePoints, defaultTriggerCurve('l2'), l2LivePress, triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects);
+  $: r2CurveLive = triggerCurveLiveView('r2', r2From, r2To, r2Curve, r2CurvePoints, defaultTriggerCurve('r2'), r2LivePress, triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects);
 
   const triggerPressLabel = (value: number) => `${Math.round(clampUnit(value) * 100)}%`;
   const showTriggerPress = (_side: 'l2' | 'r2', value: number) =>
@@ -2622,7 +2697,7 @@
 
   const edgeSlotName = (slot: EdgeProfileSlot) => slot.name || slot.staged?.name || 'Empty Slot';
   const edgeSlotsReadTooltip =
-    'Reads onboard slots from a USB-connected DualSense Edge. Bluetooth and Windows fallback controllers can only show local staged status.';
+    'Reads onboard slots from a DualSense Edge over USB or Bluetooth when Windows exposes HID feature-report access. Fallback controllers only show local staged status.';
   const edgeSlotInfoTooltip = (slot: EdgeProfileSlot) => {
     if (slot.state === 'default') {
       return 'The Fn + Triangle default profile is readable but not writable from DSCC.';
@@ -2631,12 +2706,15 @@
       return `${slot.shortcut} is currently synced with controller memory.`;
     }
     if (slot.staged) {
-      return `${slot.shortcut} has local staged settings that still need a USB hardware write.`;
+      return `${slot.shortcut} has local staged settings that still need a controller hardware write.`;
     }
-    return `${slot.shortcut} has no synced profile data available yet. Connect over USB and read slots to refresh controller memory state.`;
+    return `${slot.shortcut} has no synced profile data available yet. Connect over USB or Bluetooth and read slots to refresh controller memory state.`;
   };
   const edgeSlotWriteTooltip = (slot: EdgeProfileSlot) =>
-    `Writes the current trigger ranges, lightbar color, stick presets, and supported button remaps to ${slot.shortcut}. Live telemetry effects still require DSCC to be running.`;
+    edgeProfiles?.supportState === 'read_write'
+      ? `Writes the current trigger ranges, lightbar color, stick presets, and supported button remaps to ${slot.shortcut}. Live telemetry effects still require DSCC to be running.`
+      : `Stages the current trigger ranges, lightbar color, stick presets, and supported button remaps for ${slot.shortcut}. Hardware sync will be available when DSCC has read/write access to controller memory.`;
+  const edgeSlotWriteLabel = () => (edgeProfiles?.supportState === 'read_write' ? 'Write' : 'Stage');
 
   const edgeProfileNameForSlot = (slot: EdgeProfileSlot) => {
     const profileName = activeProfileHeaderName || activeProfile?.name || 'DSCC Profile';
@@ -2933,6 +3011,168 @@
   const setProfileOverrideMessage = (message: string, tone: ToastTone = toastToneForMessage(message)) => {
     profileOverrideMessage = message;
     showToast(message, tone);
+  };
+
+  const setSupportBundleMessage = (message: string, tone: ToastTone = toastToneForMessage(message, 'info')) => {
+    supportBundleMessage = message;
+    supportBundleTone = tone;
+    showToast(message, tone);
+  };
+
+  const sanitizeSupportText = (value: string | undefined | null) =>
+    (value ?? '').replace(/[A-Z]:\\[^"'\s]+/gi, '[local-path]').replace(/\/(?:home|Users)\/[^"'\s]+/gi, '[local-path]');
+
+  const buildUiSupportBundle = (agentBundleError?: string): SupportBundle => ({
+    schema: 'dev.dscc.support-bundle.ui.v1',
+    generatedAt: new Date().toISOString(),
+    source: 'web-ui-sanitized-fallback',
+    privacy: {
+      sanitized: true,
+      omitted: ['raw HID paths', 'raw controller hardware IDs', 'serial numbers', 'Bluetooth addresses', 'Steam install paths']
+    },
+    app: {
+      version: status?.version ?? 'unknown',
+      health: status?.health ?? 'unavailable',
+      uptime: status?.uptime ?? 'unknown',
+      apiBinding: listenOnAllInterfaces ? 'lan' : 'loopback',
+      activeAdapter: status?.activeAdapter ?? 'None'
+    },
+    environment: {
+      userAgent: navigator.userAgent,
+      language: navigator.language,
+      viewport: `${window.innerWidth}x${window.innerHeight}`
+    },
+    selectedContext: {
+      scope: selectedTuningScope,
+      game: selectedTuningGame ? { gameId: selectedTuningGame.gameId, name: selectedTuningGame.name } : null,
+      profile: activeProfile ? { scope: activeProfile.scope, builtIn: activeProfile.builtIn, name: activeProfile.name } : null
+    },
+    controllers: controllers.map((item, index) => ({
+      index,
+      family: item.family,
+      transport: item.transport,
+      connected: item.connected,
+      batteryState: item.batteryState,
+      battery: item.battery,
+      permission: item.permission,
+      diagnosticState: item.diagnosticState,
+      capabilities: item.capabilities
+    })),
+    adapters: snapshot?.adapters.map((item) => ({
+      id: item.id,
+      name: item.name,
+      state: item.state,
+      packetRateHz: item.packetRateHz,
+      setupHint: item.setupHint
+    })) ?? [],
+    diagnostics,
+    partialErrors: snapshot?.partialErrors ?? [],
+    gameDetection: {
+      activeGameName: snapshot?.gameDetection.activeGameName ?? null,
+      source: snapshot?.gameDetection.source ?? 'unknown',
+      confidence: snapshot?.gameDetection.confidence ?? 0,
+      moduleId: snapshot?.gameDetection.moduleId ?? null,
+      adapterId: snapshot?.gameDetection.adapterId ?? null,
+      supportedGames: supportedGames.map((game) => ({
+        gameId: game.gameId,
+        name: game.name,
+        installed: game.installed,
+        running: game.running,
+        supportLevel: game.supportLevel
+      }))
+    },
+    profileResolution: {
+      reason: snapshot?.profileResolution.reason ?? 'unknown',
+      validation: snapshot?.profileResolution.validation ?? 'unknown',
+      detectedGameId: snapshot?.profileResolution.detectedGameId ?? null,
+      activeAdapterId: snapshot?.profileResolution.activeAdapterId ?? null
+    },
+    steamInput: {
+      running: snapshot?.steamInput.running ?? false,
+      available: snapshot?.steamInput.available ?? false,
+      layoutCount: snapshot?.steamInput.layouts.length ?? 0,
+      warnings: snapshot?.steamInput.warnings.map(sanitizeSupportText) ?? []
+    },
+    effectState: effectState
+      ? {
+        reason: effectState.reason,
+        dryRun: effectState.dryRun,
+        hardwareOutputEnabled: effectState.hardwareOutputEnabled,
+        warnings: effectState.warnings.map(sanitizeSupportText),
+        parityEffects: effectState.parityEffects
+      }
+      : null,
+    logs: logs.slice(-40).map((entry) => ({
+      level: entry.level,
+      time: entry.time,
+      source: entry.source,
+      message: sanitizeSupportText(entry.message)
+    })),
+    agentBundleError: agentBundleError ? sanitizeSupportText(agentBundleError) : undefined
+  });
+
+  const loadSupportBundle = async (): Promise<{ bundle: SupportBundle; fallback: boolean }> => {
+    try {
+      return { bundle: await getSupportBundle(), fallback: false };
+    } catch (caught) {
+      if (!snapshot) throw caught;
+      const message = caught instanceof Error ? caught.message : 'Support bundle endpoint unavailable.';
+      return { bundle: buildUiSupportBundle(message), fallback: true };
+    }
+  };
+
+  const supportBundleFileName = () =>
+    `dscc-support-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.json`;
+
+  const downloadSupportBundleText = (text: string) => {
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = supportBundleFileName();
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const copySupportBundle = async () => {
+    if (supportBundleBusy) return;
+    supportBundleBusy = 'copy';
+    try {
+      const { bundle, fallback } = await loadSupportBundle();
+      const body = JSON.stringify(bundle, null, 2);
+      if (!navigator.clipboard?.writeText) {
+        downloadSupportBundleText(body);
+        setSupportBundleMessage('Clipboard unavailable. Exported a sanitized support bundle instead.', 'info');
+        return;
+      }
+      await navigator.clipboard.writeText(body);
+      setSupportBundleMessage(
+        fallback ? 'Copied a sanitized UI support bundle. The agent bundle endpoint was unavailable.' : 'Copied sanitized support bundle.',
+        fallback ? 'info' : 'success'
+      );
+    } catch (caught) {
+      setSupportBundleMessage(caught instanceof Error ? caught.message : 'Unable to copy support bundle.', 'error');
+    } finally {
+      supportBundleBusy = '';
+    }
+  };
+
+  const exportSupportBundle = async () => {
+    if (supportBundleBusy) return;
+    supportBundleBusy = 'download';
+    try {
+      const { bundle, fallback } = await loadSupportBundle();
+      downloadSupportBundleText(JSON.stringify(bundle, null, 2));
+      setSupportBundleMessage(
+        fallback ? 'Exported a sanitized UI support bundle. The agent bundle endpoint was unavailable.' : 'Exported sanitized support bundle.',
+        fallback ? 'info' : 'success'
+      );
+    } catch (caught) {
+      setSupportBundleMessage(caught instanceof Error ? caught.message : 'Unable to export support bundle.', 'error');
+    } finally {
+      supportBundleBusy = '';
+    }
   };
 
   const updateLanAccess = async (nextListenOnAllInterfaces = !listenOnAllInterfaces) => {
@@ -3457,18 +3697,11 @@
     try {
       const input = await getControllerInput(controller?.id);
       if (input.available) {
-        const wasFresh = controllerInputFresh;
-        const previousL2 = l2ControllerPress;
-        const previousR2 = r2ControllerPress;
         const nextL2 = clampUnit(input.l2);
         const nextR2 = clampUnit(input.r2);
         l2ControllerPress = nextL2;
         r2ControllerPress = nextR2;
         controllerInputFresh = true;
-        const triggerMoved = Math.abs(nextL2 - previousL2) >= 0.01 || Math.abs(nextR2 - previousR2) >= 0.01;
-        if (baseFeelTestActive && (!wasFresh || triggerMoved)) {
-          scheduleBaseFeelTestRefresh();
-        }
       } else {
         controllerInputFresh = false;
       }
@@ -3825,10 +4058,26 @@
         {/each}
       </nav>
 
-      <div class="dm-system-readout" title={selectedTuningScope === 'global' ? systemReadoutDetail : adapter?.setupHint ?? telemetryRateDetail}>
-        <span>{systemReadoutTitle}</span>
-        <strong>{systemReadoutValue}</strong>
-        <small>{systemReadoutDetail}</small>
+      <div class="dm-system-cluster">
+        <div class="dm-system-readout" title={selectedTuningScope === 'global' ? systemReadoutDetail : adapter?.setupHint ?? telemetryRateDetail}>
+          <span>{systemReadoutTitle}</span>
+          <strong>{systemReadoutValue}</strong>
+          <small>{systemReadoutDetail}</small>
+        </div>
+        <Tooltip text="Copy or export a sanitized support bundle for GitHub issues or Discord help. Raw hardware ids are excluded." side="bottom" align="end">
+          <button
+            class:active={supportPanelOpen}
+            class="dm-support-trigger"
+            type="button"
+            aria-expanded={supportPanelOpen}
+            aria-controls="support-bundle-panel"
+            onclick={() => {
+              supportPanelOpen = !supportPanelOpen;
+            }}
+          >
+            <LifeBuoy size={14} /> Support
+          </button>
+        </Tooltip>
       </div>
     </header>
 
@@ -3848,6 +4097,27 @@
           </a>
           <button type="button" aria-label="Dismiss update notice" onclick={dismissUpdateBanner}>dismiss</button>
         </div>
+      </aside>
+    {/if}
+
+    {#if supportPanelOpen}
+      <aside id="support-bundle-panel" class="dm-support-panel" aria-label="Support diagnostics bundle">
+        <div class="dm-support-copy">
+          <span>Support Diagnostics</span>
+          <strong>Sanitized support bundle</strong>
+          <p>No raw HID paths, raw hardware IDs, serial numbers, or Bluetooth addresses are included.</p>
+        </div>
+        <div class="dm-support-actions">
+          <button class="dm-mini-button" type="button" disabled={Boolean(supportBundleBusy)} onclick={() => void copySupportBundle()}>
+            <ClipboardCopy size={13} /> {supportBundleBusy === 'copy' ? 'Copying' : 'Copy JSON'}
+          </button>
+          <button class="dm-mini-button" type="button" disabled={Boolean(supportBundleBusy)} onclick={() => void exportSupportBundle()}>
+            <Download size={13} /> {supportBundleBusy === 'download' ? 'Exporting' : 'Export JSON'}
+          </button>
+        </div>
+        {#if supportBundleMessage}
+          <p class:error={supportBundleTone === 'error'} class:success={supportBundleTone === 'success'} class="dm-support-message">{supportBundleMessage}</p>
+        {/if}
       </aside>
     {/if}
 
@@ -3928,7 +4198,7 @@
                             disabled={!currentControllerConfig || edgeProfilesBusySlot === slot.slotId}
                             onclick={() => void writeCurrentConfigToEdgeSlot(slot)}
                           >
-                            {edgeProfilesBusySlot === slot.slotId ? '...' : 'Write'}
+                            {edgeProfilesBusySlot === slot.slotId ? '...' : edgeSlotWriteLabel()}
                           </button>
                         </Tooltip>
                       {/if}
@@ -4275,19 +4545,19 @@
                 </defs>
                 <path class="curve-grid" d="M 0 75 H 100 M 0 50 H 100 M 0 25 H 100 M 25 0 V 100 M 50 0 V 100 M 75 0 V 100" />
                 <path class="curve-linear" d="M 0 100 L 100 0" />
-                <rect class="curve-range-fill" x={l2CurveView.rangeStart} y="96" width={l2CurveView.rangeWidth} height="2.5" rx="1.25" />
-                <line class="curve-range-edge" x1={l2CurveView.rangeStart} y1="0" x2={l2CurveView.rangeStart} y2="100" />
-                <line class="curve-range-edge" x1={l2CurveView.rangeEnd} y1="0" x2={l2CurveView.rangeEnd} y2="100" />
-                <path class="curve-force" d={l2CurveView.path} />
+                <rect class="curve-range-fill" x={l2CurveShape.rangeStart} y="96" width={l2CurveShape.rangeWidth} height="2.5" rx="1.25" />
+                <line class="curve-range-edge" x1={l2CurveShape.rangeStart} y1="0" x2={l2CurveShape.rangeStart} y2="100" />
+                <line class="curve-range-edge" x1={l2CurveShape.rangeEnd} y1="0" x2={l2CurveShape.rangeEnd} y2="100" />
+                <path class="curve-force" d={l2CurveShape.path} />
                 {#if curveHover?.side === 'l2'}
                   <line class="curve-crosshair" x1={curveHover.left.toFixed(2)} y1="0" x2={curveHover.left.toFixed(2)} y2="100" />
                 {/if}
                 {#if showTriggerPress('l2', l2LivePress)}
-                  <line class="curve-live" x1={l2CurveView.liveX} y1="0" x2={l2CurveView.liveX} y2="100" />
-                  <circle class="curve-live-dot" cx={l2CurveView.liveX} cy={l2CurveView.liveY} r="1.75" />
+                  <line class="curve-live" x1={l2CurveLive.liveX} y1="0" x2={l2CurveLive.liveX} y2="100" />
+                  <circle class="curve-live-dot" cx={l2CurveLive.liveX} cy={l2CurveLive.liveY} r="1.75" />
                 {/if}
               </svg>
-              {#each l2CurveView.curvePoints as point}
+              {#each l2CurveShape.curvePoints as point}
                 <button
                   class:active={curveDragPoint?.side === 'l2' && curveDragPoint.index === point.index}
                   class:locked={point.locked}
@@ -4366,19 +4636,19 @@
               <svg class="dm-trigger-curve" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
                 <path class="curve-grid" d="M 0 75 H 100 M 0 50 H 100 M 0 25 H 100 M 25 0 V 100 M 50 0 V 100 M 75 0 V 100" />
                 <path class="curve-linear" d="M 0 100 L 100 0" />
-                <rect class="curve-range-fill" x={r2CurveView.rangeStart} y="96" width={r2CurveView.rangeWidth} height="2.5" rx="1.25" />
-                <line class="curve-range-edge" x1={r2CurveView.rangeStart} y1="0" x2={r2CurveView.rangeStart} y2="100" />
-                <line class="curve-range-edge" x1={r2CurveView.rangeEnd} y1="0" x2={r2CurveView.rangeEnd} y2="100" />
-                <path class="curve-force" d={r2CurveView.path} />
+                <rect class="curve-range-fill" x={r2CurveShape.rangeStart} y="96" width={r2CurveShape.rangeWidth} height="2.5" rx="1.25" />
+                <line class="curve-range-edge" x1={r2CurveShape.rangeStart} y1="0" x2={r2CurveShape.rangeStart} y2="100" />
+                <line class="curve-range-edge" x1={r2CurveShape.rangeEnd} y1="0" x2={r2CurveShape.rangeEnd} y2="100" />
+                <path class="curve-force" d={r2CurveShape.path} />
                 {#if curveHover?.side === 'r2'}
                   <line class="curve-crosshair" x1={curveHover.left.toFixed(2)} y1="0" x2={curveHover.left.toFixed(2)} y2="100" />
                 {/if}
                 {#if showTriggerPress('r2', r2LivePress)}
-                  <line class="curve-live" x1={r2CurveView.liveX} y1="0" x2={r2CurveView.liveX} y2="100" />
-                  <circle class="curve-live-dot" cx={r2CurveView.liveX} cy={r2CurveView.liveY} r="1.75" />
+                  <line class="curve-live" x1={r2CurveLive.liveX} y1="0" x2={r2CurveLive.liveX} y2="100" />
+                  <circle class="curve-live-dot" cx={r2CurveLive.liveX} cy={r2CurveLive.liveY} r="1.75" />
                 {/if}
               </svg>
-              {#each r2CurveView.curvePoints as point}
+              {#each r2CurveShape.curvePoints as point}
                 <button
                   class:active={curveDragPoint?.side === 'r2' && curveDragPoint.index === point.index}
                   class:locked={point.locked}

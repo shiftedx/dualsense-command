@@ -192,6 +192,14 @@ code,
   fill: var(--haptic);
 }
 
+.dm-system-cluster {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
 .dm-system-readout {
   justify-content: flex-end;
   text-align: right;
@@ -244,6 +252,30 @@ code,
 .dm-system-readout span,
 .dm-system-readout small {
   display: block;
+}
+
+.dm-support-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(113, 113, 122, 0.44);
+  border-radius: 6px;
+  color: var(--haptic);
+  background: rgba(18, 18, 20, 0.72);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  transition: border-color 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out;
+}
+
+.dm-support-trigger:hover,
+.dm-support-trigger.active {
+  border-color: rgba(0, 112, 204, 0.72);
+  color: #FFFFFF;
+  background: rgba(0, 112, 204, 0.14);
 }
 
 .dm-tuning-ribbon {
@@ -1337,6 +1369,73 @@ small.dm-scope-chip-detail {
 .dm-warning.update button {
   border-color: rgba(216, 236, 255, 0.32);
   color: #D8ECFF;
+}
+
+.dm-support-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px 18px;
+  width: min(1380px, 100%);
+  margin: 0 auto 10px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--actuation);
+  color: var(--haptic);
+  background: rgba(18, 18, 20, 0.92);
+  box-shadow:
+    inset 0 1px 0 rgba(226, 232, 240, 0.055),
+    inset 0 0 0 1px rgba(113, 113, 122, 0.16);
+}
+
+.dm-support-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.dm-support-copy span {
+  color: var(--actuation);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.dm-support-copy strong {
+  color: #FFFFFF;
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.2;
+}
+
+.dm-support-copy p,
+.dm-support-message {
+  margin: 0;
+  color: var(--tungsten);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.dm-support-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.dm-support-message {
+  grid-column: 1 / -1;
+  color: #D8ECFF;
+}
+
+.dm-support-message.success {
+  color: #BBF7D0;
+}
+
+.dm-support-message.error {
+  color: #FECACA;
 }
 
 .dm-toast-stack {
@@ -4570,6 +4669,10 @@ small.dm-scope-chip-detail {
     align-items: stretch;
   }
 
+  .dm-system-cluster {
+    justify-content: flex-start;
+  }
+
   .dm-system-readout {
     justify-content: flex-start;
     text-align: left;
@@ -4701,6 +4804,7 @@ small.dm-scope-chip-detail {
   .dm-led-row,
   .dm-tuning-ribbon,
   .dm-system-toggles,
+  .dm-support-panel,
   .dm-action-row,
   .dm-scope-strip button,
   .dm-game-grid > button,

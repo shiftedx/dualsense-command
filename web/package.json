@@ -7,11 +7,12 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "dev:mock": "vite --host 127.0.0.1 --mode mock",
-    "check": "npm run typecheck && npm run test:button-map && npm run build",
+    "check": "npm run typecheck && npm run test:button-map && npm run build && npm run test:release-size",
     "build": "vite build",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json",
     "preview": "vite preview --host 127.0.0.1",
-    "test:button-map": "node --experimental-strip-types scripts/button-mapping-p95.mjs"
+    "test:button-map": "node --experimental-strip-types scripts/button-mapping-p95.mjs",
+    "test:release-size": "node scripts/release-web-budget.mjs"
   },
   "devDependencies": {
     "@lucide/svelte": "^1.16.0",

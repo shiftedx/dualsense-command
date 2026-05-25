@@ -9,6 +9,9 @@ const EDGE_PROFILE_PAYLOAD_LEN: usize = EDGE_PROFILE_REPORT_LEN;
 const EDGE_PROFILE_CHECKSUM_INPUT_LEN: usize = 170;
 const EDGE_PROFILE_DATA_CHECKSUM_OFFSET: usize = 56;
 const EDGE_PROFILE_READ_PAYLOAD_LEN: usize = 64;
+const EDGE_PROFILE_FIRST_READ_MIN_LEN: usize = 60;
+const EDGE_PROFILE_SECOND_READ_MIN_LEN: usize = 60;
+const EDGE_PROFILE_THIRD_READ_MIN_LEN: usize = 40;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EdgeOnboardSlotId {
@@ -397,9 +400,10 @@ pub fn read_edge_onboard_profiles<T: DeviceTransport>(
     target_id: &crate::status::RawDeviceId,
     transport_kind: DeviceTransportKind,
 ) -> Result<Vec<EdgeOnboardProfile>, DeviceError> {
-    if transport_kind != DeviceTransportKind::Usb {
+    if !edge_onboard_transport_supported(transport_kind) {
         return Err(DeviceError::TransportFault(
-            "DualSense Edge onboard profile reads require a USB connection".to_string(),
+            "DualSense Edge onboard profile reads require USB or Bluetooth HID feature report access"
+                .to_string(),
         ));
     }
 
@@ -413,14 +417,22 @@ pub fn write_edge_onboard_profile<T: DeviceTransport>(
     transport_kind: DeviceTransportKind,
     profile: &EdgeOnboardProfile,
 ) -> Result<(), DeviceError> {
-    if transport_kind != DeviceTransportKind::Usb {
+    if !edge_onboard_transport_supported(transport_kind) {
         return Err(DeviceError::TransportFault(
-            "DualSense Edge onboard profile writes require a USB connection".to_string(),
+            "DualSense Edge onboard profile writes require USB or Bluetooth HID feature report access"
+                .to_string(),
         ));
     }
 
     let mut handle = transport.open(target_id)?;
     write_edge_onboard_profile_to_handle(handle.as_mut(), profile)
+}
+
+pub fn edge_onboard_transport_supported(transport_kind: DeviceTransportKind) -> bool {
+    matches!(
+        transport_kind,
+        DeviceTransportKind::Usb | DeviceTransportKind::Bluetooth
+    )
 }
 
 pub fn read_edge_onboard_profiles_from_handle(
@@ -435,9 +447,18 @@ pub fn read_edge_onboard_profiles_from_handle(
     .into_iter()
     .map(|slot| {
         let reports = slot.read_report_ids();
-        let first = handle.receive_feature_report(reports[0], EDGE_PROFILE_READ_PAYLOAD_LEN)?;
-        let second = handle.receive_feature_report(reports[1], EDGE_PROFILE_READ_PAYLOAD_LEN)?;
-        let third = handle.receive_feature_report(reports[2], EDGE_PROFILE_READ_PAYLOAD_LEN)?;
+        let first = normalize_edge_profile_read_report(
+            reports[0],
+            handle.receive_feature_report(reports[0], EDGE_PROFILE_READ_PAYLOAD_LEN)?,
+        );
+        let second = normalize_edge_profile_read_report(
+            reports[1],
+            handle.receive_feature_report(reports[1], EDGE_PROFILE_READ_PAYLOAD_LEN)?,
+        );
+        let third = normalize_edge_profile_read_report(
+            reports[2],
+            handle.receive_feature_report(reports[2], EDGE_PROFILE_READ_PAYLOAD_LEN)?,
+        );
         decode_edge_onboard_profile([&first, &second, &third])
     })
     .collect()
@@ -462,18 +483,37 @@ pub fn write_edge_onboard_profile_to_handle(
         }
     }
     if let Some(ack_report_id) = profile.slot.write_ack_report_id() {
-        let _ = handle.receive_feature_report(ack_report_id, EDGE_PROFILE_READ_PAYLOAD_LEN);
+        let ack = handle
+            .receive_feature_report(ack_report_id, EDGE_PROFILE_READ_PAYLOAD_LEN)
+            .map_err(|error| {
+                DeviceError::TransportFault(format!(
+                    "DualSense Edge profile write acknowledgement 0x{ack_report_id:02x} failed: {error}"
+                ))
+            })?;
+        if ack.is_empty() {
+            return Err(DeviceError::TransportFault(format!(
+                "DualSense Edge profile write acknowledgement 0x{ack_report_id:02x} returned no bytes"
+            )));
+        }
     }
     Ok(())
 }
 
+fn normalize_edge_profile_read_report(report_id: u8, mut report: Vec<u8>) -> Vec<u8> {
+    if report.first().copied() != Some(report_id) {
+        report.insert(0, report_id);
+    }
+    report
+}
+
 pub fn decode_edge_onboard_profile(reports: [&[u8]; 3]) -> Result<EdgeOnboardProfile, DeviceError> {
-    if reports
-        .iter()
-        .any(|report| report.len() < EDGE_PROFILE_REPORT_LEN)
+    if reports[0].len() < EDGE_PROFILE_FIRST_READ_MIN_LEN
+        || reports[1].len() < EDGE_PROFILE_SECOND_READ_MIN_LEN
+        || reports[2].len() < EDGE_PROFILE_THIRD_READ_MIN_LEN
     {
         return Err(DeviceError::TransportFault(
-            "DualSense Edge profile feature report was shorter than 64 bytes".to_string(),
+            "DualSense Edge profile feature report was shorter than the decoded profile fields"
+                .to_string(),
         ));
     }
 
@@ -750,6 +790,50 @@ mod tests {
             .iter()
             .any(|mapping| mapping.source == EdgeButton::BackLeft
                 && mapping.target == EdgeButton::L1));
+    }
+
+    #[test]
+    fn edge_profile_decodes_bluetooth_sized_read_reports() {
+        let mut profile = EdgeOnboardProfile::new(EdgeOnboardSlotId::Cross, "BT Tune");
+        profile.trigger_deadzone.right = [7, 93];
+        profile.left_stick.preset = EdgeStickPreset::Precise;
+        profile.right_stick.preset = EdgeStickPreset::Dynamic;
+
+        let mut read_encoded = encode_edge_onboard_profile(&profile).unwrap();
+        read_encoded[0][0] = 0x76;
+        read_encoded[1][0] = 0x76;
+        read_encoded[2][0] = 0x76;
+
+        let first = read_encoded[0][..63].to_vec();
+        let second = read_encoded[1][..63].to_vec();
+        let third = read_encoded[2][..63].to_vec();
+        let decoded = decode_edge_onboard_profile([&first, &second, &third]).unwrap();
+
+        assert_eq!(decoded.slot, EdgeOnboardSlotId::Cross);
+        assert_eq!(decoded.name, "BT Tune");
+        assert_eq!(decoded.trigger_deadzone.right, [7, 93]);
+        assert_eq!(decoded.left_stick.preset, EdgeStickPreset::Precise);
+        assert_eq!(decoded.right_stick.preset, EdgeStickPreset::Dynamic);
+    }
+
+    #[test]
+    fn edge_profile_read_normalization_restores_selectorless_reports() {
+        let mut profile = EdgeOnboardProfile::new(EdgeOnboardSlotId::Circle, "Wireless Tune");
+        profile.trigger_deadzone.left = [8, 92];
+
+        let mut read_encoded = encode_edge_onboard_profile(&profile).unwrap();
+        read_encoded[0][0] = 0x79;
+        read_encoded[1][0] = 0x7a;
+        read_encoded[2][0] = 0x7b;
+
+        let first = normalize_edge_profile_read_report(0x79, read_encoded[0][1..].to_vec());
+        let second = normalize_edge_profile_read_report(0x7a, read_encoded[1][1..].to_vec());
+        let third = normalize_edge_profile_read_report(0x7b, read_encoded[2][1..].to_vec());
+        let decoded = decode_edge_onboard_profile([&first, &second, &third]).unwrap();
+
+        assert_eq!(decoded.slot, EdgeOnboardSlotId::Circle);
+        assert_eq!(decoded.name, "Wireless Tune");
+        assert_eq!(decoded.trigger_deadzone.left, [8, 92]);
     }
 
     #[test]

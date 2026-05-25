@@ -37,6 +37,12 @@ enum Command {
         #[arg(long, alias = "base-url", env = "DSCC_AGENT_URL", default_value = DEFAULT_AGENT_URL)]
         url: String,
     },
+    /// Print a sanitized support bundle from the local agent.
+    SupportBundle {
+        /// Base URL for the agent API.
+        #[arg(long, alias = "base-url", env = "DSCC_AGENT_URL", default_value = DEFAULT_AGENT_URL)]
+        url: String,
+    },
     /// Print OS-specific app directories used by the agent.
     Paths {
         /// Output JSON instead of a readable report.
@@ -182,6 +188,7 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Serve { addr } => dscc_agent::serve(addr).await,
         Command::Status { url } => print_status(&url).await,
+        Command::SupportBundle { url } => print_support_bundle(&url).await,
         Command::Paths { json } => print_paths(json),
         Command::Devices { command } => match command {
             DevicesCommand::List(args) => devices_list(args).await,
@@ -219,6 +226,23 @@ async fn print_status(url: &str) -> anyhow::Result<()> {
         .context("agent status response was not valid JSON")?;
 
     println!("{}", serde_json::to_string_pretty(&status)?);
+    Ok(())
+}
+
+async fn print_support_bundle(url: &str) -> anyhow::Result<()> {
+    let endpoint = api_endpoint(url, "/api/support-bundle");
+    let bundle: serde_json::Value = http_client()?
+        .get(&endpoint)
+        .send()
+        .await
+        .with_context(|| format!("failed to reach {endpoint}"))?
+        .error_for_status()
+        .with_context(|| format!("agent returned an error for {endpoint}"))?
+        .json()
+        .await
+        .context("agent support bundle response was not valid JSON")?;
+
+    println!("{}", serde_json::to_string_pretty(&bundle)?);
     Ok(())
 }
 

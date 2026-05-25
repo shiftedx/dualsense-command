@@ -271,6 +271,14 @@ export interface AppSnapshot {
   partialErrors: SnapshotPartialError[];
 }
 
+export interface SupportBundle {
+  schema?: string;
+  generatedAt?: string;
+  source?: string;
+  privacy?: unknown;
+  [key: string]: unknown;
+}
+
 export interface EffectTestRequest {
   target: 'l2' | 'r2' | 'base_feel' | 'lightbar' | 'rumble';
   mode: string;

@@ -229,6 +229,8 @@ $releaseAgent = Join-Path $buildRoot "release\dscc-agent.exe"
 $debugAgent = Join-Path $buildRoot "debug\dscc-agent.exe"
 $releaseTray = Join-Path $buildRoot "release\dscc-tray.exe"
 $debugTray = Join-Path $buildRoot "debug\dscc-tray.exe"
+$releaseCli = Join-Path $buildRoot "release\dscc-cli.exe"
+$debugCli = Join-Path $buildRoot "debug\dscc-cli.exe"
 if (Test-Path $releaseAgent) {
     $agentExe = $releaseAgent
 } elseif ($AllowDebugAgent -and (Test-Path $debugAgent)) {
@@ -245,6 +247,14 @@ if (Test-Path $releaseTray) {
     $targetHint = if ([string]::IsNullOrWhiteSpace($TargetTriple)) { "" } else { " --target $TargetTriple" }
     throw "No release dscc-tray.exe found. Build with cargo build -p dscc-tray --release$targetHint, or pass -AllowDebugAgent for a local test MSI."
 }
+if (Test-Path $releaseCli) {
+    $cliExe = $releaseCli
+} elseif ($AllowDebugAgent -and (Test-Path $debugCli)) {
+    $cliExe = $debugCli
+} else {
+    $targetHint = if ([string]::IsNullOrWhiteSpace($TargetTriple)) { "" } else { " --target $TargetTriple" }
+    throw "No release dscc-cli.exe found. Build with cargo build -p dscc-cli --release$targetHint, or pass -AllowDebugAgent for a local test MSI."
+}
 
 $webDist = Join-Path $webRoot "dist"
 if (-not (Test-Path (Join-Path $webDist "index.html"))) {
@@ -259,6 +269,7 @@ New-Item -ItemType Directory -Path $wixRoot -Force | Out-Null
 
 Copy-Item -LiteralPath $agentExe -Destination (Join-Path $stagingRoot "dscc-agent.exe") -Force
 Copy-Item -LiteralPath $trayExe -Destination (Join-Path $stagingRoot "dscc-tray.exe") -Force
+Copy-Item -LiteralPath $cliExe -Destination (Join-Path $stagingRoot "dscc-cli.exe") -Force
 Copy-DirectoryClean -Source $webDist -Destination (Join-Path $stagingRoot "web\dist")
 
 # Resolve signtool once if signing was requested, and prompt for the password if it
@@ -283,7 +294,7 @@ if (-not [string]::IsNullOrWhiteSpace($CertificatePath)) {
         throw "Code signing requested but signtool.exe could not be located. Install the Windows 10/11 SDK or add signtool.exe to PATH."
     }
 
-    foreach ($staged in @((Join-Path $stagingRoot 'dscc-agent.exe'), (Join-Path $stagingRoot 'dscc-tray.exe'))) {
+    foreach ($staged in @((Join-Path $stagingRoot 'dscc-agent.exe'), (Join-Path $stagingRoot 'dscc-tray.exe'), (Join-Path $stagingRoot 'dscc-cli.exe'))) {
         Invoke-Signtool -SignTool $signTool -FilePath $staged -CertificatePath $CertificatePath -CertificatePassword $CertificatePassword -TimestampUrl $TimestampUrl
     }
 }
@@ -333,6 +344,7 @@ DualSense Command Center test build
 7. For Forza testing, enable Data Out in-game and point it at 127.0.0.1 port 5300.
 8. The local UI opens at http://127.0.0.1:43473/.
 9. During install/upgrade, DSCC backs up persisted user state to state.preinstall-$Version.json when state.json exists.
+10. If the UI will not open, run dscc-cli.exe support-bundle from this folder and attach the sanitized output to a bug report.
 "@
 
 Add-TextFile -Path (Join-Path $stagingRoot "Stop DSCC.cmd") -Content $stopScript
@@ -443,4 +455,5 @@ if ($signTool) {
 Write-Output "MSI: $msiPath"
 Write-Output "Agent: $agentExe"
 Write-Output "Tray: $trayExe"
+Write-Output "CLI: $cliExe"
 Write-Output "Staging: $stagingRoot"

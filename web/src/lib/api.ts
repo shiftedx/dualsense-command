@@ -27,6 +27,7 @@ import type {
   SteamInputStatus,
   SteamLibraryBrowseResponse,
   SteamLibraryResponse,
+  SupportBundle,
   SupportedGame,
   TelemetrySignal,
   UpdateEdgeProfileRequest
@@ -404,6 +405,17 @@ const FALLBACK_APP_SETTINGS: AppSettingsResponse = {
 export async function getAppSnapshot(): Promise<AppSnapshot> {
   if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).getMockAppSnapshot();
   return mapSnapshotDto(await apiFetch<AgentSnapshotDto | AppSnapshot>('/snapshot'));
+}
+
+export async function getSupportBundle(): Promise<SupportBundle> {
+  try {
+    return await apiFetch<SupportBundle>('/diagnostics/support-bundle');
+  } catch (caught) {
+    if (caught instanceof ApiRequestError && caught.status === 404) {
+      return apiFetch<SupportBundle>('/support-bundle');
+    }
+    throw caught;
+  }
 }
 
 export async function getAppUpdateCheck(currentVersion: string): Promise<AppUpdateCheck> {

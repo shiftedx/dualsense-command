@@ -8,8 +8,8 @@ use dscc_core::{ControllerOutputFrame, PlayerLedsOutput, RumbleOutput, TriggerOu
 
 use crate::{
     edge_profile::{
-        read_edge_onboard_profiles_from_handle, write_edge_onboard_profile_to_handle,
-        EdgeOnboardProfile,
+        edge_onboard_transport_supported, read_edge_onboard_profiles_from_handle,
+        write_edge_onboard_profile_to_handle, EdgeOnboardProfile,
     },
     error::DeviceError,
     manager::OutputMode,
@@ -76,6 +76,18 @@ pub struct EncodedOutputReport {
     pub bytes: Vec<u8>,
 }
 
+struct EncodedOutputReportBuffer {
+    kind: OutputReportKind,
+    len: usize,
+    bytes: [u8; BT_REPORT_LEN],
+}
+
+impl EncodedOutputReportBuffer {
+    fn as_slice(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ControllerOutputWrite {
     pub bytes: usize,
@@ -119,19 +131,21 @@ impl<T: DeviceTransport> ControllerOutputManager<T> {
         let session = self.session_for(target)?;
         let write_result = {
             let mut session = lock_session(&session);
-            let report = encode_controller_output_frame(frame, target.transport, session.sequence)?;
+            let report =
+                encode_controller_output_frame_buffer(frame, target.transport, session.sequence)?;
             if report.kind == OutputReportKind::Bluetooth {
                 session.sequence = (session.sequence + 1) & 0x0f;
             }
 
-            let write_result = session.handle.write(&report.bytes);
+            let write_result = session.handle.write(report.as_slice());
             (report, write_result)
         };
 
         let (report, write_result) = write_result;
+        let report_len = report.len;
         match write_result {
-            Ok(backend_bytes) if backend_bytes >= report.bytes.len() => Ok(ControllerOutputWrite {
-                bytes: report.bytes.len(),
+            Ok(backend_bytes) if backend_bytes >= report_len => Ok(ControllerOutputWrite {
+                bytes: report_len,
                 hardware_output: self.hardware_writes_enabled(),
                 report_kind: report.kind,
             }),
@@ -139,8 +153,7 @@ impl<T: DeviceTransport> ControllerOutputManager<T> {
                 self.release(target);
                 Err(DeviceError::TransportFault(format!(
                     "short {:?} output report write: expected {} bytes, wrote {backend_bytes}",
-                    report.kind,
-                    report.bytes.len()
+                    report.kind, report_len
                 )))
             }
             Err(error) => {
@@ -157,12 +170,16 @@ impl<T: DeviceTransport> ControllerOutputManager<T> {
         let session = self.session_for(target)?;
         let read_result = {
             let mut session = lock_session(&session);
+            let mut buffer = [0_u8; 256];
             let mut input = None;
             let mut fault = None;
             for _ in 0..INPUT_READ_ATTEMPTS {
-                match session.handle.read_timeout(Duration::from_millis(3)) {
-                    Ok(Some(report)) => {
-                        if let Some(parsed) = parse_dualsense_input_state(&report) {
+                match session
+                    .handle
+                    .read_timeout_into(&mut buffer, Duration::from_millis(3))
+                {
+                    Ok(Some(size)) => {
+                        if let Some(parsed) = parse_dualsense_input_state(&buffer[..size]) {
                             input = Some(parsed);
                             break;
                         }
@@ -187,9 +204,10 @@ impl<T: DeviceTransport> ControllerOutputManager<T> {
         &self,
         target: &ControllerOutputTarget,
     ) -> Result<Vec<EdgeOnboardProfile>, DeviceError> {
-        if target.transport != DeviceTransportKind::Usb {
+        if !edge_onboard_transport_supported(target.transport) {
             return Err(DeviceError::TransportFault(
-                "DualSense Edge onboard profile reads require a USB connection".to_string(),
+                "DualSense Edge onboard profile reads require USB or Bluetooth HID feature report access"
+                    .to_string(),
             ));
         }
 
@@ -210,9 +228,10 @@ impl<T: DeviceTransport> ControllerOutputManager<T> {
         target: &ControllerOutputTarget,
         profile: &EdgeOnboardProfile,
     ) -> Result<(), DeviceError> {
-        if target.transport != DeviceTransportKind::Usb {
+        if !edge_onboard_transport_supported(target.transport) {
             return Err(DeviceError::TransportFault(
-                "DualSense Edge onboard profile writes require a USB connection".to_string(),
+                "DualSense Edge onboard profile writes require USB or Bluetooth HID feature report access"
+                    .to_string(),
             ));
         }
 
@@ -293,14 +312,28 @@ pub fn encode_controller_output_frame(
     transport: DeviceTransportKind,
     sequence: u8,
 ) -> Result<EncodedOutputReport, DeviceError> {
+    let report = encode_controller_output_frame_buffer(frame, transport, sequence)?;
+    Ok(EncodedOutputReport {
+        kind: report.kind,
+        bytes: report.as_slice().to_vec(),
+    })
+}
+
+fn encode_controller_output_frame_buffer(
+    frame: &ControllerOutputFrame,
+    transport: DeviceTransportKind,
+    sequence: u8,
+) -> Result<EncodedOutputReportBuffer, DeviceError> {
     match transport {
-        DeviceTransportKind::Usb => Ok(EncodedOutputReport {
+        DeviceTransportKind::Usb => Ok(EncodedOutputReportBuffer {
             kind: OutputReportKind::Usb,
-            bytes: encode_usb_output_report(frame),
+            len: USB_REPORT_LEN,
+            bytes: encode_usb_output_report_buffer(frame),
         }),
-        DeviceTransportKind::Bluetooth => Ok(EncodedOutputReport {
+        DeviceTransportKind::Bluetooth => Ok(EncodedOutputReportBuffer {
             kind: OutputReportKind::Bluetooth,
-            bytes: encode_bluetooth_output_report(frame, sequence),
+            len: BT_REPORT_LEN,
+            bytes: encode_bluetooth_output_report_buffer(frame, sequence),
         }),
         DeviceTransportKind::Unknown => Err(DeviceError::TransportFault(
             "cannot encode DualSense output report for unknown transport".to_string(),
@@ -308,15 +341,18 @@ pub fn encode_controller_output_frame(
     }
 }
 
-fn encode_usb_output_report(frame: &ControllerOutputFrame) -> Vec<u8> {
-    let mut report = vec![0; USB_REPORT_LEN];
+fn encode_usb_output_report_buffer(frame: &ControllerOutputFrame) -> [u8; BT_REPORT_LEN] {
+    let mut report = [0; BT_REPORT_LEN];
     report[0] = USB_REPORT_ID;
-    fill_common_output(&mut report, USB_COMMON_OFFSET, frame);
+    fill_common_output(&mut report[..USB_REPORT_LEN], USB_COMMON_OFFSET, frame);
     report
 }
 
-fn encode_bluetooth_output_report(frame: &ControllerOutputFrame, sequence: u8) -> Vec<u8> {
-    let mut report = vec![0; BT_REPORT_LEN];
+fn encode_bluetooth_output_report_buffer(
+    frame: &ControllerOutputFrame,
+    sequence: u8,
+) -> [u8; BT_REPORT_LEN] {
+    let mut report = [0; BT_REPORT_LEN];
     report[0] = BT_REPORT_ID;
     report[1] = (sequence & 0x0f) << 4;
     report[2] = BT_OUTPUT_TAG;
@@ -724,9 +760,14 @@ mod tests {
 
     #[test]
     fn output_manager_reads_and_writes_edge_onboard_profile_feature_reports() {
+        assert_edge_onboard_profile_feature_reports(DeviceTransportKind::Usb);
+        assert_edge_onboard_profile_feature_reports(DeviceTransportKind::Bluetooth);
+    }
+
+    fn assert_edge_onboard_profile_feature_reports(transport_kind: DeviceTransportKind) {
         let device = RawHidDevice::mock("mock://edge-profile")
             .with_family_hint(DeviceFamily::DualSenseEdge)
-            .with_transport_hint(DeviceTransportKind::Usb);
+            .with_transport_hint(transport_kind);
         let raw_id = device.id.clone();
         let transport = MockTransport::with_devices(vec![device]);
 
@@ -754,7 +795,7 @@ mod tests {
         let manager = ControllerOutputManager::new(transport.clone(), OutputMode::DryRunHid);
         let target = ControllerOutputTarget {
             raw_device_id: raw_id.clone(),
-            transport: DeviceTransportKind::Usb,
+            transport: transport_kind,
         };
 
         let profiles = manager.read_edge_onboard_profiles(&target).unwrap();
@@ -766,6 +807,7 @@ mod tests {
 
         let mut write_profile = EdgeOnboardProfile::new(EdgeOnboardSlotId::Square, "Road Tune");
         write_profile.trigger_deadzone.right = [3, 97];
+        transport.push_feature_report(raw_id.clone(), 0x63, vec![0x63]);
         manager
             .write_edge_onboard_profile(&target, &write_profile)
             .unwrap();
@@ -774,6 +816,47 @@ mod tests {
         assert_eq!(writes.len(), 3);
         assert_eq!(writes[0].len(), 64);
         assert_eq!(writes[0][0], 0x60);
+    }
+
+    #[test]
+    fn output_manager_requires_edge_onboard_write_acknowledgement() {
+        let device = RawHidDevice::mock("mock://edge-profile-no-ack")
+            .with_family_hint(DeviceFamily::DualSenseEdge)
+            .with_transport_hint(DeviceTransportKind::Usb);
+        let raw_id = device.id.clone();
+        let transport = MockTransport::with_devices(vec![device]);
+        let manager = ControllerOutputManager::new(transport, OutputMode::DryRunHid);
+        let target = ControllerOutputTarget {
+            raw_device_id: raw_id,
+            transport: DeviceTransportKind::Usb,
+        };
+        let profile = EdgeOnboardProfile::new(EdgeOnboardSlotId::Square, "Road Tune");
+
+        let error = manager
+            .write_edge_onboard_profile(&target, &profile)
+            .expect_err("missing Edge write acknowledgement should fail");
+
+        assert!(error.to_string().contains("acknowledgement"));
+    }
+
+    #[test]
+    fn output_manager_rejects_unknown_transport_for_edge_onboard_profiles() {
+        let device = RawHidDevice::mock("mock://edge-profile-unknown")
+            .with_family_hint(DeviceFamily::DualSenseEdge)
+            .with_transport_hint(DeviceTransportKind::Unknown);
+        let raw_id = device.id.clone();
+        let transport = MockTransport::with_devices(vec![device]);
+        let manager = ControllerOutputManager::new(transport, OutputMode::DryRunHid);
+        let target = ControllerOutputTarget {
+            raw_device_id: raw_id,
+            transport: DeviceTransportKind::Unknown,
+        };
+
+        let error = manager
+            .read_edge_onboard_profiles(&target)
+            .expect_err("unknown transport should not attempt profile reads");
+
+        assert!(error.to_string().contains("USB or Bluetooth"));
     }
 
     #[test]
