@@ -91,6 +91,7 @@ pub(crate) use http_security::{reject_cross_origin_mutations, request_origin_mat
 const GLOBAL_PROFILE_ID: &str = "global";
 const DEFAULT_PROFILE_ID: &str = GLOBAL_PROFILE_ID;
 const IMMERSIVE_PROFILE_ID: &str = FORZA_HORIZON_IMMERSIVE_PROFILE_ID;
+const EDGE_ONBOARD_PROFILE_NAME_MAX_CHARS: usize = 40;
 
 fn current_timestamp() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
@@ -1489,6 +1490,43 @@ pub struct SteamInputBindingWriteResponse {
     pub backup_path: Option<String>,
     pub binding: SteamInputBinding,
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SteamInputPaddlePresetRequest {
+    pub layout_source: String,
+    pub app_id: Option<String>,
+    pub left_key: Option<String>,
+    pub right_key: Option<String>,
+    pub profile_name: Option<String>,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SteamInputPaddlePresetResponse {
+    pub accepted: bool,
+    pub message: String,
+    pub dry_run: bool,
+    pub source: String,
+    pub target_path: String,
+    pub backup_path: Option<String>,
+    pub paddles: Vec<SteamInputPaddlePresetPaddleResult>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SteamInputPaddlePresetPaddleResult {
+    pub paddle: String,
+    pub input_id: String,
+    pub key: String,
+    pub raw_binding: String,
+    pub changed: bool,
+    pub binding: SteamInputBinding,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -4086,6 +4124,264 @@ fn write_steam_input_binding(
         binding,
         warnings: Vec::new(),
     })
+}
+
+const STEAM_EDGE_BACK_LEFT_INPUT_ID: &str = "button_back_left";
+const STEAM_EDGE_BACK_RIGHT_INPUT_ID: &str = "button_back_right";
+const DEFAULT_FORZA_DOWN_SHIFT_KEY: &str = "Q";
+const DEFAULT_FORZA_UP_SHIFT_KEY: &str = "E";
+
+fn write_steam_input_paddle_preset(
+    request: SteamInputPaddlePresetRequest,
+) -> Result<SteamInputPaddlePresetResponse, SteamInputWriteFailure> {
+    if request.layout_source.trim().is_empty() {
+        return Err(SteamInputWriteFailure::bad_request(
+            "Steam layout source is required.",
+        ));
+    }
+
+    let left_key = normalize_steam_keyboard_key(
+        request.left_key.as_deref(),
+        DEFAULT_FORZA_DOWN_SHIFT_KEY,
+        "left paddle",
+    )
+    .map_err(SteamInputWriteFailure::bad_request)?;
+    let right_key = normalize_steam_keyboard_key(
+        request.right_key.as_deref(),
+        DEFAULT_FORZA_UP_SHIFT_KEY,
+        "right paddle",
+    )
+    .map_err(SteamInputWriteFailure::bad_request)?;
+    let left_raw_binding = steam_key_press_binding(&left_key);
+    let right_raw_binding = steam_key_press_binding(&right_key);
+    normalize_steam_raw_binding(&left_raw_binding).map_err(SteamInputWriteFailure::bad_request)?;
+    normalize_steam_raw_binding(&right_raw_binding).map_err(SteamInputWriteFailure::bad_request)?;
+
+    let (steam_root, target_path) =
+        resolve_steam_input_layout_path(&request.layout_source, request.app_id.as_deref())?;
+    let metadata = fs::metadata(&target_path).map_err(|error| {
+        SteamInputWriteFailure::io("Steam Input layout metadata could not be read", error)
+    })?;
+    if metadata.len() > 256 * 1024 {
+        return Err(SteamInputWriteFailure::bad_request(
+            "Steam Input layout is larger than DSCC's guarded write limit.",
+        ));
+    }
+
+    let contents = fs::read_to_string(&target_path).map_err(|error| {
+        SteamInputWriteFailure::io("Steam Input layout could not be read", error)
+    })?;
+    let layout =
+        parse_steam_input_layout(&steam_root, &target_path, &contents).ok_or_else(|| {
+            SteamInputWriteFailure::conflict("Steam Input layout could not be parsed.")
+        })?;
+    ensure_dualsense_edge_steam_layout(&layout)?;
+
+    let left_target = steam_edge_paddle_binding(&layout, STEAM_EDGE_BACK_LEFT_INPUT_ID)?;
+    let right_target = steam_edge_paddle_binding(&layout, STEAM_EDGE_BACK_RIGHT_INPUT_ID)?;
+    let left_request = steam_paddle_binding_write_request(
+        &request,
+        STEAM_EDGE_BACK_LEFT_INPUT_ID,
+        left_target,
+        &left_raw_binding,
+    );
+    let right_request = steam_paddle_binding_write_request(
+        &request,
+        STEAM_EDGE_BACK_RIGHT_INPUT_ID,
+        right_target,
+        &right_raw_binding,
+    );
+
+    let left_updated = replace_steam_binding_value(&contents, &left_request, &left_raw_binding)?
+        .ok_or_else(|| {
+            SteamInputWriteFailure::conflict(
+                "Steam Input layout changed before the left paddle preset could be written.",
+            )
+        })?;
+    let left_changed = left_updated != contents;
+    let right_updated =
+        replace_steam_binding_value(&left_updated, &right_request, &right_raw_binding)?
+            .ok_or_else(|| {
+                SteamInputWriteFailure::conflict(
+                    "Steam Input layout changed before the right paddle preset could be written.",
+                )
+            })?;
+    let right_changed = right_updated != left_updated;
+    let next_contents =
+        mark_dscc_steam_profile_metadata(&right_updated, request.profile_name.as_deref());
+
+    let updated_layout = parse_steam_input_layout(&steam_root, &target_path, &next_contents)
+        .ok_or_else(|| {
+            SteamInputWriteFailure::conflict(
+                "Steam Input layout could not be parsed after the paddle preset update.",
+            )
+        })?;
+    let left_binding = updated_layout
+        .bindings
+        .iter()
+        .find(|binding| steam_binding_matches_write_request(binding, &left_request))
+        .cloned()
+        .ok_or_else(|| {
+            SteamInputWriteFailure::conflict(
+                "Steam Input layout was updated, but the left paddle binding could not be re-read.",
+            )
+        })?;
+    let right_binding = updated_layout
+        .bindings
+        .iter()
+        .find(|binding| steam_binding_matches_write_request(binding, &right_request))
+        .cloned()
+        .ok_or_else(|| {
+            SteamInputWriteFailure::conflict(
+                "Steam Input layout was updated, but the right paddle binding could not be re-read.",
+            )
+        })?;
+
+    let changed = contents != next_contents;
+    let backup_path = if !request.dry_run && changed {
+        Some(backup_and_write_steam_input_layout(
+            &target_path,
+            &next_contents,
+        )?)
+    } else {
+        None
+    };
+    let source = sanitized_steam_path(&steam_root, &target_path)
+        .unwrap_or_else(|| target_path.display().to_string());
+    let action = if request.dry_run {
+        "Validated"
+    } else if changed {
+        "Saved"
+    } else {
+        "Already current"
+    };
+
+    Ok(SteamInputPaddlePresetResponse {
+        accepted: true,
+        message: format!("{action} DualSense Edge paddle shift preset."),
+        dry_run: request.dry_run,
+        source,
+        target_path: target_path.display().to_string(),
+        backup_path: backup_path.map(|path| path.display().to_string()),
+        paddles: vec![
+            SteamInputPaddlePresetPaddleResult {
+                paddle: "Back Left".to_string(),
+                input_id: STEAM_EDGE_BACK_LEFT_INPUT_ID.to_string(),
+                key: left_key,
+                raw_binding: left_raw_binding,
+                changed: left_changed,
+                binding: left_binding,
+                message: "Back Left paddle mapped to downshift key.".to_string(),
+            },
+            SteamInputPaddlePresetPaddleResult {
+                paddle: "Back Right".to_string(),
+                input_id: STEAM_EDGE_BACK_RIGHT_INPUT_ID.to_string(),
+                key: right_key,
+                raw_binding: right_raw_binding,
+                changed: right_changed,
+                binding: right_binding,
+                message: "Back Right paddle mapped to upshift key.".to_string(),
+            },
+        ],
+        warnings: vec![
+            "Steam Input paddle presets are PC-local and do not change portable DualSense Edge onboard profiles."
+                .to_string(),
+        ],
+    })
+}
+
+fn steam_paddle_binding_write_request(
+    preset: &SteamInputPaddlePresetRequest,
+    input_id: &str,
+    target: &SteamInputBinding,
+    raw_binding: &str,
+) -> SteamInputBindingWriteRequest {
+    SteamInputBindingWriteRequest {
+        layout_source: preset.layout_source.clone(),
+        app_id: preset.app_id.clone(),
+        input_id: input_id.to_string(),
+        group_id: target.group_id.clone(),
+        activator: target.activator.clone(),
+        raw_binding: raw_binding.to_string(),
+        profile_name: preset.profile_name.clone(),
+        dry_run: preset.dry_run,
+    }
+}
+
+fn ensure_dualsense_edge_steam_layout(
+    layout: &SteamInputLayout,
+) -> Result<(), SteamInputWriteFailure> {
+    let controller_type = layout.controller_type.as_deref().unwrap_or_default();
+    let has_edge_paddles = layout
+        .bindings
+        .iter()
+        .any(|binding| binding.input_id == STEAM_EDGE_BACK_LEFT_INPUT_ID)
+        && layout
+            .bindings
+            .iter()
+            .any(|binding| binding.input_id == STEAM_EDGE_BACK_RIGHT_INPUT_ID);
+    if !controller_type.to_ascii_lowercase().contains("edge") && !has_edge_paddles {
+        return Err(SteamInputWriteFailure::bad_request(
+            "The paddle preset requires a DualSense Edge Steam Input layout.",
+        ));
+    }
+    Ok(())
+}
+
+fn steam_edge_paddle_binding<'a>(
+    layout: &'a SteamInputLayout,
+    input_id: &str,
+) -> Result<&'a SteamInputBinding, SteamInputWriteFailure> {
+    let mut matches = layout
+        .bindings
+        .iter()
+        .filter(|binding| binding.input_id == input_id);
+    let Some(first) = matches.next() else {
+        let paddle = friendly_steam_input(input_id, Some("switch"));
+        return Err(SteamInputWriteFailure::not_found(format!(
+            "DualSense Edge {paddle} binding was not found in this Steam Input layout. Open Steam's configurator once and map the Edge paddles before applying the preset."
+        )));
+    };
+    let preferred = std::iter::once(first)
+        .chain(matches)
+        .find(|binding| {
+            binding.group_id.is_some()
+                && binding.activator.as_deref().unwrap_or("Full Press") == "Full Press"
+                && binding.source.as_deref().unwrap_or("Switches") == "Switches"
+        })
+        .unwrap_or(first);
+    if preferred.group_id.is_none() {
+        return Err(SteamInputWriteFailure::conflict(
+            "DualSense Edge paddle binding is missing Steam group identity, so DSCC will not edit it.",
+        ));
+    }
+    Ok(preferred)
+}
+
+fn normalize_steam_keyboard_key(
+    value: Option<&str>,
+    fallback: &str,
+    label: &str,
+) -> Result<String, String> {
+    let value = value.map(str::trim).filter(|value| !value.is_empty());
+    let key = value
+        .unwrap_or(fallback)
+        .replace(' ', "_")
+        .to_ascii_uppercase();
+    if key.len() > 32
+        || !key
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
+    {
+        return Err(format!(
+            "{label} key is not a supported Steam keyboard key."
+        ));
+    }
+    Ok(key)
+}
+
+fn steam_key_press_binding(key: &str) -> String {
+    format!("key_press {key}, , ")
 }
 
 fn resolve_steam_input_layout_path(
@@ -6691,6 +6987,7 @@ impl EdgeProfileStore {
 
 impl EdgeProfileSlotConfig {
     fn normalized(mut self) -> Self {
+        self.name = normalize_edge_onboard_profile_name(&self.name);
         self.trigger = self.trigger.normalized();
         self.lightbar = self.lightbar.normalized();
         self.sticks = self.sticks.normalized();
@@ -6715,7 +7012,7 @@ impl EdgeProfilesResponse {
         Self {
             controller_id: detail.id.clone(),
             support_state: EdgeProfileSupportState::Unknown,
-            warning: "Edge onboard slot editing is available as DSCC staged configuration. DSCC reads slots over USB or Bluetooth; controller-memory sync requires USB HID feature-report access.".to_string(),
+            warning: "Edge onboard slot editing is available as DSCC staged configuration. Connect the DualSense Edge over USB or Bluetooth to read slots and sync controller memory when HID writes are available.".to_string(),
             slots: edge_profile_slots(store),
         }
     }
@@ -6733,7 +7030,7 @@ impl EdgeProfilesResponse {
 
         let Some(hardware_profiles) = hardware_profiles else {
             let warning = hardware_warning.unwrap_or_else(|| {
-                "Edge onboard slots can be staged locally. Connect the DualSense Edge over USB or Bluetooth and refresh to read slots; connect over USB to sync controller memory.".to_string()
+                "Edge onboard slots can be staged locally. Connect the DualSense Edge over USB or Bluetooth and refresh to read slots and sync controller memory when HID writes are available.".to_string()
             });
             return Self {
                 controller_id: detail.id.clone(),
@@ -6743,15 +7040,17 @@ impl EdgeProfilesResponse {
             };
         };
 
-        let (support_state, warning) = if detail.transport == "bluetooth" {
-            (
-                EdgeProfileSupportState::ReadOnly,
-                "DualSense Edge onboard slots were read over bluetooth. DSCC can stage slot changes over Bluetooth; connect over USB to sync controller memory.".to_string(),
-            )
-        } else if hardware_writes_enabled {
+        let transport_kind = match detail.transport.as_str() {
+            "usb" => DeviceTransportKind::Usb,
+            "bluetooth" => DeviceTransportKind::Bluetooth,
+            _ => DeviceTransportKind::Unknown,
+        };
+        let write_supported =
+            hardware_writes_enabled && edge_onboard_write_transport_supported(transport_kind);
+        let (support_state, warning) = if write_supported {
             (
                 EdgeProfileSupportState::ReadWrite,
-                format!("DualSense Edge onboard slots were read over {}. DSCC can write static onboard trigger, stick, and button settings; live telemetry effects still require DSCC to be running.", detail.transport),
+                format!("DualSense Edge onboard slots were read over {}. DSCC can write static onboard trigger, stick, and button settings, then verifies the slot with acknowledgement and readback; live telemetry effects still require DSCC to be running.", detail.transport),
             )
         } else {
             (
@@ -7112,11 +7411,7 @@ fn normalize_existing_profile_assignments(
 
 fn edge_profile_config_from_request(request: UpdateEdgeProfileRequest) -> EdgeProfileSlotConfig {
     EdgeProfileSlotConfig {
-        name: if request.name.trim().is_empty() {
-            "Untitled Edge Profile".to_string()
-        } else {
-            request.name.trim().chars().take(64).collect()
-        },
+        name: normalize_edge_onboard_profile_name(&request.name),
         trigger: request.trigger.normalized(),
         lightbar: request.lightbar.normalized(),
         sticks: request.sticks.normalized(),
@@ -7147,11 +7442,7 @@ fn edge_profile_config_from_hardware(profile: &EdgeOnboardProfile) -> EdgeProfil
     trigger.vibration = edge_vibration_label(profile.vibration_intensity).to_string();
 
     EdgeProfileSlotConfig {
-        name: if profile.name.trim().is_empty() {
-            profile.slot.shortcut().to_string()
-        } else {
-            profile.name.trim().chars().take(64).collect()
-        },
+        name: normalize_edge_onboard_profile_name_or(&profile.name, profile.slot.shortcut()),
         trigger: trigger.normalized(),
         lightbar: LightbarConfig::default(),
         sticks: StickConfig {
@@ -7194,6 +7485,25 @@ fn edge_profile_from_slot_config(
     profile.button_mappings = edge_button_mappings_from_config(&config.buttons);
     profile.updated_at_ms = current_timestamp_millis();
     profile
+}
+
+fn normalize_edge_onboard_profile_name(name: &str) -> String {
+    normalize_edge_onboard_profile_name_or(name, "Untitled Edge Profile")
+}
+
+fn normalize_edge_onboard_profile_name_or(name: &str, fallback: &str) -> String {
+    let name = name.trim();
+    if name.is_empty() {
+        fallback
+            .trim()
+            .chars()
+            .take(EDGE_ONBOARD_PROFILE_NAME_MAX_CHARS)
+            .collect()
+    } else {
+        name.chars()
+            .take(EDGE_ONBOARD_PROFILE_NAME_MAX_CHARS)
+            .collect()
+    }
 }
 
 fn edge_button_assignments_from_hardware(
@@ -10910,6 +11220,10 @@ pub fn app(state: AgentState) -> Router {
             "/api/steam-input/bindings",
             post(update_steam_input_binding),
         )
+        .route(
+            "/api/steam-input/paddle-preset",
+            post(apply_steam_input_paddle_preset),
+        )
         .route("/api/modules", get(list_modules))
         .route("/api/games/detected", get(get_detected_game))
         .route("/api/games/art/:game_id/:kind", get(get_game_art))
@@ -11919,7 +12233,7 @@ async fn write_edge_profile_to_hardware(
     };
     if !edge_onboard_write_transport_supported(target.transport) {
         return EdgeHardwareProfileWriteResult::StagedOnly(
-            "DualSense Edge onboard profile writes require USB HID feature report access; Bluetooth slot changes are staged locally"
+            "DualSense Edge onboard profile writes require USB or Bluetooth HID feature report access"
                 .to_string(),
         );
     }
@@ -12785,6 +13099,36 @@ async fn update_steam_input_binding(
         .map_err(|error| (error.status, error.message))?;
 
     if !dry_run {
+        state.spawn_steam_input_refresh();
+    }
+
+    Ok(Json(response))
+}
+
+async fn apply_steam_input_paddle_preset(
+    State(state): State<AgentState>,
+    Json(request): Json<SteamInputPaddlePresetRequest>,
+) -> Result<Json<SteamInputPaddlePresetResponse>, (StatusCode, String)> {
+    let dry_run = request.dry_run;
+    let mut response =
+        tokio::task::spawn_blocking(move || write_steam_input_paddle_preset(request))
+            .await
+            .map_err(|error| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Steam Input paddle preset task failed: {error}"),
+                )
+            })?
+            .map_err(|error| (error.status, error.message))?;
+
+    if !dry_run {
+        let steam_input = state.cached_steam_input_status_or_refresh().await;
+        if !steam_input.running {
+            response.warnings.push(
+                "Steam is not currently running; restart Steam or reopen the game if the layout is not picked up immediately."
+                    .to_string(),
+            );
+        }
         state.spawn_steam_input_refresh();
     }
 
@@ -14754,6 +15098,295 @@ mod tests {
         assert!(updated.contains(r#""binding" "xinput_button DPAD_UP, , ""#));
         assert!(updated.contains(r#""binding" "key_press TAB, , ""#));
         assert!(!updated.contains(r#""binding" "key_press EQUALS, , ""#));
+    }
+
+    #[test]
+    fn steam_input_paddle_preset_writes_only_edge_back_paddles_and_creates_backup() {
+        let _env = TestEnv::new(&["DSCC_STEAM_ROOT"]);
+        let root = temp_test_dir("dscc-steam-paddle-preset");
+        let layout_dir = root
+            .join("steamapps")
+            .join("common")
+            .join("Steam Controller Configs")
+            .join("123456")
+            .join("config")
+            .join("2483190");
+        fs::create_dir_all(&layout_dir).expect("layout fixture directory");
+        let layout_file = layout_dir.join("controller_ps5.vdf");
+        let original = r##""controller_mappings"
+{
+    "title" "Forza Layout"
+    "revision" "5"
+    "controller_type" "controller_ps5_edge"
+    "group"
+    {
+        "id" "7"
+        "mode" "switches"
+        "inputs"
+        {
+            "button_menu"
+            {
+                "activators"
+                {
+                    "Full_Press"
+                    {
+                        "bindings"
+                        {
+                            "binding" "xinput_button select, , "
+                        }
+                    }
+                }
+            }
+            "button_back_left"
+            {
+                "activators"
+                {
+                    "Full_Press"
+                    {
+                        "bindings"
+                        {
+                            "binding" "xinput_button joystick_left, , "
+                        }
+                    }
+                }
+            }
+            "button_back_right"
+            {
+                "activators"
+                {
+                    "Full_Press"
+                    {
+                        "bindings"
+                        {
+                            "binding" "xinput_button joystick_right, , "
+                        }
+                    }
+                }
+            }
+            "button_back_left_upper"
+            {
+                "activators"
+                {
+                    "Full_Press"
+                    {
+                        "bindings"
+                        {
+                            "binding" "key_press M, , "
+                        }
+                    }
+                }
+            }
+        }
+    }
+}"##;
+        fs::write(&layout_file, original).expect("layout fixture");
+        let source = sanitized_steam_path(&root, &layout_file).expect("sanitized source");
+        std::env::set_var("DSCC_STEAM_ROOT", &root);
+
+        let response = write_steam_input_paddle_preset(SteamInputPaddlePresetRequest {
+            layout_source: source,
+            app_id: Some("2483190".to_string()),
+            left_key: None,
+            right_key: None,
+            profile_name: Some("Forza Paddle Shift".to_string()),
+            dry_run: false,
+        })
+        .expect("paddle preset writes");
+
+        assert!(response.accepted);
+        assert!(!response.dry_run);
+        assert_eq!(response.paddles.len(), 2);
+        assert_eq!(response.paddles[0].input_id, "button_back_left");
+        assert_eq!(response.paddles[0].key, "Q");
+        assert_eq!(response.paddles[0].binding.binding, "Q Key");
+        assert_eq!(response.paddles[1].input_id, "button_back_right");
+        assert_eq!(response.paddles[1].key, "E");
+        assert_eq!(response.paddles[1].binding.binding, "E Key");
+
+        let backup_path = response
+            .backup_path
+            .as_deref()
+            .map(PathBuf::from)
+            .expect("backup path is reported");
+        assert_eq!(
+            fs::read_to_string(&backup_path).expect("backup layout is readable"),
+            original
+        );
+        let updated = fs::read_to_string(&layout_file).expect("updated layout is readable");
+        assert!(updated.contains(r#""binding" "key_press Q, , ""#));
+        assert!(updated.contains(r#""binding" "key_press E, , ""#));
+        assert!(updated.contains(r#""binding" "xinput_button select, , ""#));
+        assert!(updated.contains(r#""binding" "key_press M, , ""#));
+        assert!(updated.contains(r#""title" "DSCC / Forza Paddle Shift""#));
+        assert!(updated.contains(r#""revision" "6""#));
+        assert!(!updated.contains(r#""binding" "xinput_button joystick_left, , ""#));
+        assert!(!updated.contains(r#""binding" "xinput_button joystick_right, , ""#));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn steam_input_paddle_preset_uses_configurable_keys_in_dry_run() {
+        let _env = TestEnv::new(&["DSCC_STEAM_ROOT"]);
+        let root = temp_test_dir("dscc-steam-paddle-preset-dry");
+        let layout_dir = root
+            .join("steamapps")
+            .join("common")
+            .join("Steam Controller Configs")
+            .join("123456")
+            .join("config")
+            .join("2483190");
+        fs::create_dir_all(&layout_dir).expect("layout fixture directory");
+        let layout_file = layout_dir.join("controller_ps5.vdf");
+        let original = r##""controller_mappings"
+{
+    "title" "Forza Layout"
+    "controller_type" "controller_ps5_edge"
+    "group"
+    {
+        "id" "7"
+        "mode" "switches"
+        "inputs"
+        {
+            "button_back_left"
+            {
+                "activators"
+                {
+                    "Full_Press"
+                    {
+                        "bindings"
+                        {
+                            "binding" "key_press Q, , "
+                        }
+                    }
+                }
+            }
+            "button_back_right"
+            {
+                "activators"
+                {
+                    "Full_Press"
+                    {
+                        "bindings"
+                        {
+                            "binding" "key_press E, , "
+                        }
+                    }
+                }
+            }
+        }
+    }
+}"##;
+        fs::write(&layout_file, original).expect("layout fixture");
+        let source = sanitized_steam_path(&root, &layout_file).expect("sanitized source");
+        std::env::set_var("DSCC_STEAM_ROOT", &root);
+
+        let response = write_steam_input_paddle_preset(SteamInputPaddlePresetRequest {
+            layout_source: source,
+            app_id: Some("2483190".to_string()),
+            left_key: Some("page up".to_string()),
+            right_key: Some("page_down".to_string()),
+            profile_name: Some("Forza Paddle Shift".to_string()),
+            dry_run: true,
+        })
+        .expect("paddle preset dry run validates");
+
+        assert!(response.dry_run);
+        assert_eq!(response.backup_path, None);
+        assert_eq!(response.paddles[0].key, "PAGE_UP");
+        assert_eq!(response.paddles[0].binding.binding, "Page Up Key");
+        assert_eq!(response.paddles[1].key, "PAGE_DOWN");
+        assert_eq!(response.paddles[1].binding.binding, "Page Down Key");
+        assert_eq!(
+            fs::read_to_string(&layout_file).expect("layout still readable"),
+            original
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn steam_input_paddle_preset_rejects_missing_or_non_edge_bindings_cleanly() {
+        let non_edge = SteamInputLayout {
+            app_id: Some("2483190".to_string()),
+            title: "Forza Layout".to_string(),
+            controller_type: Some("controller_ps5".to_string()),
+            controller_label: Some("DualSense".to_string()),
+            source: "controller_ps5.vdf".to_string(),
+            binding_count: 0,
+            bindings: Vec::new(),
+        };
+        let error = ensure_dualsense_edge_steam_layout(&non_edge)
+            .expect_err("non-Edge layout should be rejected");
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+        assert!(
+            error.message.contains("DualSense Edge"),
+            "unexpected message: {}",
+            error.message
+        );
+
+        let inferred_edge = SteamInputLayout {
+            app_id: Some("2483190".to_string()),
+            title: "Forza Layout".to_string(),
+            controller_type: None,
+            controller_label: Some("DualSense Edge".to_string()),
+            source: "controller_ps5.vdf".to_string(),
+            binding_count: 2,
+            bindings: vec![
+                SteamInputBinding {
+                    input: "Back Left".to_string(),
+                    input_id: "button_back_left".to_string(),
+                    binding: "L3".to_string(),
+                    raw_binding: "xinput_button joystick_left, , ".to_string(),
+                    kind: "Gamepad".to_string(),
+                    source: Some("Switches".to_string()),
+                    source_mode: Some("Switches".to_string()),
+                    activator: Some("Full Press".to_string()),
+                    group_id: Some("7".to_string()),
+                },
+                SteamInputBinding {
+                    input: "Back Right".to_string(),
+                    input_id: "button_back_right".to_string(),
+                    binding: "R3".to_string(),
+                    raw_binding: "xinput_button joystick_right, , ".to_string(),
+                    kind: "Gamepad".to_string(),
+                    source: Some("Switches".to_string()),
+                    source_mode: Some("Switches".to_string()),
+                    activator: Some("Full Press".to_string()),
+                    group_id: Some("7".to_string()),
+                },
+            ],
+        };
+        ensure_dualsense_edge_steam_layout(&inferred_edge)
+            .expect("layouts with both Edge back paddles are accepted");
+
+        let edge_missing_right = SteamInputLayout {
+            app_id: Some("2483190".to_string()),
+            title: "Forza Layout".to_string(),
+            controller_type: Some("controller_ps5_edge".to_string()),
+            controller_label: Some("DualSense Edge".to_string()),
+            source: "controller_ps5.vdf".to_string(),
+            binding_count: 1,
+            bindings: vec![SteamInputBinding {
+                input: "Back Left".to_string(),
+                input_id: "button_back_left".to_string(),
+                binding: "Q Key".to_string(),
+                raw_binding: "key_press Q, , ".to_string(),
+                kind: "Key".to_string(),
+                source: Some("Switches".to_string()),
+                source_mode: Some("Switches".to_string()),
+                activator: Some("Full Press".to_string()),
+                group_id: Some("7".to_string()),
+            }],
+        };
+        let error = steam_edge_paddle_binding(&edge_missing_right, STEAM_EDGE_BACK_RIGHT_INPUT_ID)
+            .expect_err("missing right paddle should be rejected");
+        assert_eq!(error.status, StatusCode::NOT_FOUND);
+        assert!(
+            error.message.contains("Back Right"),
+            "unexpected message: {}",
+            error.message
+        );
     }
 
     #[test]

@@ -1,5 +1,5 @@
-﻿param(
-    [string]$Version = "0.2.8",
+param(
+    [string]$Version = "0.2.9",
     [string]$TargetTriple,
     [switch]$SkipWebBuild,
     [switch]$AllowDebugAgent,

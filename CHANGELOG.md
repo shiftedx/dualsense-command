@@ -1,3 +1,87 @@
+# DualSense Command Center 0.2.9
+
+Latest release notes are listed first. For install steps, start with the
+[README](README.md).
+
+Release date: 2026-05-25
+
+This release is a DualSense Edge portability and safety update. The big win is
+real onboard Fn-slot profile sync over Bluetooth, backed by controller
+acknowledgement and readback verification instead of "write and hope." It also
+adds a practical Steam Input paddle-shift helper for Forza-style keyboard-backed
+layouts and refreshes the user-facing docs around what DSCC can and cannot store
+on the controller itself.
+
+## DualSense Edge Onboard Profiles
+
+- **Bluetooth onboard profile writes are now supported on Windows.** DSCC can
+  read and write supported DualSense Edge Fn-slot settings over USB or
+  Bluetooth when Windows exposes HID feature-report access.
+- **Writes are verified before DSCC calls them synced.** Every onboard write now
+  requires the controller control/ack report and a fresh typed slot readback
+  that matches the requested profile.
+- **The default Fn + Triangle profile remains protected.** DSCC only writes the
+  assignable Fn + Square, Fn + Cross, and Fn + Circle slots.
+- **Bluetooth uses the correct Edge control reports.** Clean-room hardware
+  probing found that Bluetooth rejects the USB write IDs but accepts the
+  selectorless `0x63..0x65` control reports for assignable slots.
+- **Profile names are normalized to controller storage limits.** Edge onboard
+  names are capped to the controller's 40 UTF-16 character storage shape so
+  readback verification stays exact.
+- **Runtime haptics are still runtime haptics.** Telemetry effects, custom
+  Forza/Assetto trigger curves, lightbar/RPM behavior, and body thumps still
+  require DSCC to be running; they are not stored in Edge onboard memory.
+
+## Edge Paddle Shift Helper
+
+- **Added a real Steam Input paddle preset API.** DSCC can write an Edge paddle
+  shift preset into a detected Steam Input layout for supported game profiles.
+- **Defaults target keyboard-backed shifting.** Back Left defaults to `Q` and
+  Back Right defaults to `E`, with user-editable keys for layouts that need a
+  different pair.
+- **The preset only writes real Edge paddle bindings.** DSCC refuses synthetic
+  placeholders and requires a real DualSense Edge Steam Input layout containing
+  Back Left and Back Right entries.
+- **Steam files stay guarded.** Writes remain limited to canonical
+  `controller_*.vdf` files under Steam's trusted userdata tree, with backups and
+  size/path checks intact.
+
+## Docs And Support Clarity
+
+- **README and troubleshooting now reflect the current app.** Setup and feature
+  descriptions were tightened for less technical users, including clearer notes
+  about unsigned Windows installs, local-only defaults, LAN opt-in, and update
+  checks.
+- **The Windows hardware matrix now calls out Edge onboard Bluetooth writes.**
+  It distinguishes implemented support from full release-candidate matrix
+  coverage so support claims stay honest.
+- **Edge onboard limits are clearer.** DSCC can store controller button remaps,
+  trigger deadzones, stick response presets, vibration intensity, trigger
+  intensity, and profile names onboard; keyboard keys and telemetry haptics stay
+  PC/runtime features.
+
+## Validation Gate
+
+This release was cut after a clean run of:
+
+```powershell
+npm.cmd --prefix web run check
+cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
+cargo +stable-x86_64-pc-windows-gnu test --workspace
+cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warnings
+cargo +stable-x86_64-pc-windows-gnu build -p dscc-agent -p dscc-tray -p dscc-cli --release --target x86_64-pc-windows-gnu
+```
+
+A bounded hardware validation was also run against a Bluetooth DualSense Edge:
+DSCC read the user-approved Fn + Square slot, wrote the same typed profile back
+over Bluetooth, received the control report, and re-read an exact typed match.
+
+## Install
+
+Download `DualSenseCommandCenter-v0.2.9-windows-x86_64-unsigned.msi` from the
+Releases page and run it. The MSI is unsigned, so Windows SmartScreen may show a
+publisher warning. Verify downloads with the included SHA256 checksum file.
+
 # DualSense Command Center 0.2.8
 
 Latest release notes are listed first. For install steps, start with the

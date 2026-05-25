@@ -16,15 +16,15 @@ notes, issues, and README claims stay honest.
   still needs a release-candidate hardware run.
 - **Edge onboard profiles** means DualSense Edge Fn-slot settings stored on the
   controller. DSCC reads slots over USB or Bluetooth when the host exposes HID
-  feature-report access. Controller-memory sync is USB-only right now;
-  Bluetooth changes are staged locally.
+  feature-report access. Controller-memory sync is supported over USB and
+  Bluetooth, with default-slot protection and readback verification.
 
 ## Current Windows Matrix
 
 | Controller | USB | Bluetooth | Public claim |
 | --- | --- | --- | --- |
 | DualSense | Supported; pending physical pass | Supported; pending physical pass | Supported on Windows, with final release-candidate validation still needed |
-| DualSense Edge | Supported; pending physical pass for current release candidate | Supported for runtime profiles and onboard-slot reads/staging; verified historically, current release-candidate re-test recommended | Fully supported on Windows for DSCC runtime profiles, adaptive triggers, haptics, lightbar, diagnostics, and supported-game telemetry. Edge onboard controller-memory sync is USB-only; Bluetooth can read slots and stage settings locally. |
+| DualSense Edge | Supported; pending physical pass for current release candidate | Supported for runtime profiles and onboard-slot read/write; verified with a bounded Bluetooth onboard no-op write on 2026-05-25, current release-candidate full-matrix re-test recommended | Fully supported on Windows for DSCC runtime profiles, adaptive triggers, haptics, lightbar, diagnostics, supported-game telemetry, and typed Edge onboard profile sync over USB or Bluetooth. |
 
 ## Helping With Matrix Validation
 
@@ -45,9 +45,8 @@ Steam account paths.
 - DualSense Edge Bluetooth has sanitized Windows validation covering
   enumeration, open permission, battery/config reporting, onboard slot reads,
   profile resolution, adaptive trigger output, lightbar output, rumble output,
-  and manual effect tests. Bluetooth onboard slot writes are currently staged
-  locally because Windows HID feature-report writes returned
-  `ERROR_INVALID_PARAMETER` during the current release-candidate run.
+  manual effect tests, and a bounded Fn + Square no-op onboard write with typed
+  readback match.
 - DualSense Edge onboard profile support is implemented through typed, guarded
   profile paths. The default Fn profile is protected from overwrite, assignable
   slots use USB/Bluetooth HID feature reports when available, and encode/decode
@@ -93,18 +92,18 @@ Run these additional checks for DualSense Edge over USB and Bluetooth:
 4. Write a simple assignable-slot test profile with a safe name and identity
    button mapping.
 5. Re-read the slot and confirm the supported static settings match.
-6. Confirm Bluetooth gives a clear staged-local warning; connect over USB to
-   verify controller-memory sync.
+6. Confirm the UI reports hardware-synced only after acknowledgement and
+   readback match.
 
 ## Production-Ready Gate
 
 DualSense Edge can be described as fully hardware-verified on Windows when:
 
 - Edge USB passes the current release-candidate checklist.
-- Edge Bluetooth passes a current release-candidate runtime and onboard-read
-  re-test.
-- Release notes clearly state that Edge onboard profile sync is USB-only for
-  controller memory, while Bluetooth can read slots and stage changes locally.
+- Edge Bluetooth passes a current release-candidate runtime, onboard-read, and
+  non-default onboard-write re-test.
+- Release notes clearly state that Edge onboard profile sync is guarded over
+  USB and Bluetooth and that default Fn + Triangle cannot be overwritten.
 - Any failed checklist item has either a fix, a known limitation, or a linked
   issue before publishing.
 

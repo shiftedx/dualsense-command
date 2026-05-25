@@ -156,8 +156,9 @@ Keep these promises:
 - Manual tests are time-limited.
 - Stale/no-telemetry game state keeps triggers and rumble neutral.
 - Supported-game detection may emit lightbar-only output.
-- DualSense Edge onboard writes use guarded USB HID feature-report paths.
-  Bluetooth reads and unavailable hardware paths stage locally.
+- DualSense Edge onboard writes use guarded USB or Bluetooth HID feature-report
+  paths and only report synced after acknowledgement plus typed readback.
+  Unavailable hardware paths stage locally.
 
 ## Steam Input Changes
 

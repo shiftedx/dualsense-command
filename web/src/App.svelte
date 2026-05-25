@@ -45,7 +45,8 @@
     saveProfileConfig,
     setProfileOverride,
     updateControllerName,
-    writeSteamInputBinding
+    writeSteamInputBinding,
+    writeSteamInputPaddlePreset
   } from './lib/api';
   import {
     controllerBatteryReadable,
@@ -700,6 +701,8 @@
   let activeSteamMappingContextKey = '';
   let steamBindingBusy = false;
   let steamBindingMessage = '';
+  let paddlePresetLeftKey = 'Q';
+  let paddlePresetRightKey = 'E';
   let hoveredSteamSlotKey = '';
   let activeSteamSlotKey = '';
 
@@ -1046,6 +1049,8 @@
   $: steamInputLayout = buttonMappingActive
     ? selectSteamInputLayout(steamInputStatus?.layouts ?? [], steamContextGame, controller?.family)
     : null;
+  $: steamPaddlePresetVisible =
+    buttonMappingActive && controller?.family === 'DualSense Edge' && selectedTuningScope === 'game';
   $: rawSteamInputBindings = buttonMappingActive
     ? steamInputLayout?.bindings ?? EMPTY_STEAM_INPUT_BINDINGS
     : EMPTY_STEAM_INPUT_BINDINGS;
@@ -1067,6 +1072,27 @@
   $: realSteamBindingBySlotKey = buttonMappingActive
     ? buildSteamBindingBySlotKey(realSteamInputBindings, steamBindingSlots)
     : EMPTY_STEAM_BINDING_MAP;
+  $: steamPaddlePresetLeftBinding = steamPaddlePresetVisible
+    ? realSteamBindingBySlotKey.get('edgeBackLeft') ?? null
+    : null;
+  $: steamPaddlePresetRightBinding = steamPaddlePresetVisible
+    ? realSteamBindingBySlotKey.get('edgeBackRight') ?? null
+    : null;
+  $: steamPaddlePresetAvailable = Boolean(
+    steamPaddlePresetVisible &&
+    steamInputLayout &&
+    steamPaddlePresetLeftBinding &&
+    steamPaddlePresetRightBinding &&
+    !steamPaddlePresetLeftBinding.synthetic &&
+    !steamPaddlePresetRightBinding.synthetic
+  );
+  $: steamPaddlePresetStatus = !steamPaddlePresetVisible
+    ? 'DualSense Edge controller required.'
+    : !steamInputLayout
+      ? 'Select a Steam game with a loaded Steam Input layout.'
+      : !steamPaddlePresetAvailable
+        ? 'Steam Input must expose both Edge back paddles before DSCC can write them.'
+        : 'Writes Back Left and Back Right as Steam Input keyboard bindings for this game. This is PC-local and does not change onboard Edge memory.';
   $: defaultSteamBindingBySlotKey = buttonMappingActive
     ? defaultSteamBindingsForFamily(controller?.family)
     : EMPTY_STEAM_BINDING_MAP;
@@ -1597,6 +1623,74 @@
       }
     } catch (caught) {
       setSteamBindingMessage(caught instanceof Error ? caught.message : 'Unable to write Steam Input binding.', 'error');
+    } finally {
+      steamBindingBusy = false;
+    }
+  };
+
+  const normalizePaddlePresetKey = (value: string) =>
+    value
+      .trim()
+      .replaceAll(' ', '_')
+      .replaceAll('-', '_')
+      .toUpperCase()
+      .replace(/[^A-Z0-9_]/g, '')
+      .slice(0, 32);
+
+  const setPaddlePresetLeftKey = (value: string) => {
+    paddlePresetLeftKey = normalizePaddlePresetKey(value);
+  };
+
+  const setPaddlePresetRightKey = (value: string) => {
+    paddlePresetRightKey = normalizePaddlePresetKey(value);
+  };
+
+  const applySteamPaddlePreset = async (dryRun = false) => {
+    if (!steamInputLayout) {
+      setSteamBindingMessage('Load a Steam Input layout before applying the paddle preset.', 'error');
+      return;
+    }
+    if (controller?.family !== 'DualSense Edge') {
+      setSteamBindingMessage('Steam Input paddle presets require a DualSense Edge layout.', 'error');
+      return;
+    }
+    if (!steamPaddlePresetAvailable) {
+      setSteamBindingMessage(steamPaddlePresetStatus, 'error');
+      return;
+    }
+    steamBindingBusy = true;
+    setSteamBindingMessage(dryRun ? 'Validating Edge paddle preset...' : 'Saving Edge paddle preset...', 'info');
+    try {
+      const response = await writeSteamInputPaddlePreset({
+        layoutSource: steamInputLayout.source,
+        appId: steamInputLayout.appId ?? steamContextGame?.appId ?? null,
+        leftKey: paddlePresetLeftKey || 'Q',
+        rightKey: paddlePresetRightKey || 'E',
+        profileName: activeProfileName || profileContextGame?.name || steamContextGame?.name || null,
+        dryRun
+      });
+      const warningText = response.warnings.length ? ` ${response.warnings.join(' ')}` : '';
+      setSteamBindingMessage(
+        response.backupPath ? `${response.message} Backup: ${response.backupPath}${warningText}` : `${response.message}${warningText}`,
+        'success'
+      );
+      if (!dryRun) {
+        for (const paddle of response.paddles) {
+          applyOptimisticSteamBinding(paddle.binding);
+        }
+        const selectedPaddle = response.paddles[0]?.binding;
+        if (selectedPaddle) {
+          selectedSteamBindingKey = steamBindingKey(selectedPaddle);
+          lastSteamBindingDraftKey = selectedSteamBindingKey;
+          steamBindingDraft = selectedPaddle.rawBinding;
+          steamBindingLabelDraft = parseSteamBindingTriple(selectedPaddle.rawBinding).label;
+        }
+        void refresh().finally(() => {
+          optimisticSteamInputBindings = null;
+        });
+      }
+    } catch (caught) {
+      setSteamBindingMessage(caught instanceof Error ? caught.message : 'Unable to save Edge paddle preset.', 'error');
     } finally {
       steamBindingBusy = false;
     }
@@ -5128,11 +5222,19 @@
       {focusedSlotSelectedBinding}
       {steamBindingBusy}
       steamInputLayoutAvailable={Boolean(steamInputLayout)}
+      paddlePresetVisible={steamPaddlePresetVisible}
+      paddlePresetAvailable={steamPaddlePresetAvailable}
+      paddlePresetStatus={steamPaddlePresetStatus}
+      {paddlePresetLeftKey}
+      {paddlePresetRightKey}
       {steamBindingDraft}
       {steamBindingLabelDraft}
       targetGroups={preparedSteamBindingTargetGroups}
       onSelectSlot={selectSteamSlot}
       onHoverSlot={hoverSteamSlot}
+      onPaddlePresetLeftKeyChange={setPaddlePresetLeftKey}
+      onPaddlePresetRightKeyChange={setPaddlePresetRightKey}
+      onApplyPaddlePreset={() => void applySteamPaddlePreset(false)}
       onTargetChange={applySteamBindingTargetChange}
       onLabelChange={applySteamBindingLabelChange}
       onRawDraftChange={applySteamBindingRawChange}
