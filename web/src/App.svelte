@@ -2713,7 +2713,7 @@
   const edgeSlotWriteTooltip = (slot: EdgeProfileSlot) =>
     edgeProfiles?.supportState === 'read_write'
       ? `Writes the current trigger ranges, lightbar color, stick presets, and supported button remaps to ${slot.shortcut}. Live telemetry effects still require DSCC to be running.`
-      : `Stages the current trigger ranges, lightbar color, stick presets, and supported button remaps for ${slot.shortcut}. Hardware sync will be available when DSCC has read/write access to controller memory.`;
+      : `Stages the current trigger ranges, lightbar color, stick presets, and supported button remaps for ${slot.shortcut}. Connect the DualSense Edge over USB to sync controller memory.`;
   const edgeSlotWriteLabel = () => (edgeProfiles?.supportState === 'read_write' ? 'Write' : 'Stage');
 
   const edgeProfileNameForSlot = (slot: EdgeProfileSlot) => {

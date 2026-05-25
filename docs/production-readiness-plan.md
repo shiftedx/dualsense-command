@@ -51,9 +51,9 @@ templates:
 - Profile Save As, import, export, rename, delete, and activation exist.
 - Point-based trigger curves and Forza brake/throttle tuning are implemented.
 - Forza Data Out and Assetto Corsa Rally telemetry paths are live.
-- DualSense Edge onboard slots can be read/written over guarded USB or
-  Bluetooth HID feature-report paths when supported; otherwise changes are
-  staged locally.
+- DualSense Edge onboard slots can be read over guarded USB or Bluetooth HID
+  feature-report paths. Controller-memory writes are USB-only right now;
+  Bluetooth changes are staged locally.
 - Public Windows hardware matrix and release-candidate validation checklist are
   tracked in [Windows Hardware Matrix](hardware-matrix.md).
 - A sanitized support bundle is available from the app Support panel and
@@ -63,7 +63,7 @@ templates:
 
 - Complete the public Windows hardware matrix physical runs:
   - DualSense Edge USB current-release pass.
-  - DualSense Edge Bluetooth current-release write pass.
+  - DualSense Edge Bluetooth current-release runtime/read/stage pass.
   - DualSense USB current-release pass.
   - DualSense Bluetooth current-release pass.
 - Keep Linux marked beta until HID permissions and hardware smoke tests are

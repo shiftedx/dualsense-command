@@ -44,9 +44,9 @@ Bluetooth. DualSense Edge is fully supported for the normal DSCC runtime
 experience: profiles, adaptive triggers, telemetry haptics, lightbar controls,
 diagnostics, and safe game-gated output.
 
-DualSense Edge onboard Fn-slot profile sync uses guarded HID feature reports
-over USB or Bluetooth when Windows exposes that access. If a host/controller
-blocks the hardware sync path, DSCC stages the slot locally and tells you why.
+DualSense Edge onboard Fn-slot profile sync uses guarded USB HID feature
+reports. Bluetooth can read onboard slots and stage changes locally; connect
+over USB when you want DSCC to sync staged settings into controller memory.
 See the [Windows Hardware Matrix](docs/hardware-matrix.md) for the current
 validation checklist.
 
@@ -122,9 +122,8 @@ taking over game-specific haptics.
   you.
 - Some controller/connection combinations are still pending public hardware
   matrix validation.
-- DualSense Edge onboard profile sync depends on Windows exposing HID
-  feature-report access. If that path is blocked, DSCC stages the profile
-  locally and explains why.
+- DualSense Edge onboard profile sync requires USB HID feature-report access.
+  Bluetooth can read slots and stage changes locally.
 
 ## Need Help?
 
@@ -139,9 +138,10 @@ taking over game-specific haptics.
 
 DualSense Edge is supported for DSCC runtime tuning on Windows over USB and
 Bluetooth. On-controller Fn-slot profile sync uses the same typed profile model
-over USB or Bluetooth when the host exposes HID feature-report access, and only
-covers supported static settings such as trigger deadzones, stick presets,
-vibration intensity, trigger intensity, and button mappings.
+over guarded USB HID feature reports, and only covers supported static settings
+such as trigger deadzones, stick presets, vibration intensity, trigger
+intensity, and button mappings. Bluetooth can read onboard slots and stage
+changes, but USB is required to sync controller memory.
 
 Live telemetry haptics are not stored on the controller. They require DSCC to be
 running.
