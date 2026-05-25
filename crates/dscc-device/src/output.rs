@@ -51,7 +51,7 @@ const INPUT_USB_COMMON_OFFSET: usize = 1;
 const INPUT_BT_COMMON_OFFSET: usize = 2;
 const INPUT_COMMON_L2: usize = 4;
 const INPUT_COMMON_R2: usize = 5;
-const INPUT_READ_ATTEMPTS: usize = 4;
+const INPUT_READ_ATTEMPTS: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ControllerInputState {
@@ -175,17 +175,22 @@ impl<T: DeviceTransport> ControllerOutputManager<T> {
             let mut input = None;
             let mut fault = None;
             for _ in 0..INPUT_READ_ATTEMPTS {
-                match session
-                    .handle
-                    .read_timeout_into(&mut buffer, Duration::from_millis(3))
-                {
+                let timeout = if input.is_some() {
+                    Duration::ZERO
+                } else {
+                    Duration::from_millis(3)
+                };
+                match session.handle.read_timeout_into(&mut buffer, timeout) {
                     Ok(Some(size)) => {
                         if let Some(parsed) = parse_dualsense_input_state(&buffer[..size]) {
                             input = Some(parsed);
+                        }
+                    }
+                    Ok(None) => {
+                        if input.is_some() {
                             break;
                         }
                     }
-                    Ok(None) => {}
                     Err(error) => {
                         fault = Some(error);
                         break;

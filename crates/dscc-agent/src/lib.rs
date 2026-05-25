@@ -1,3 +1,5 @@
+#[cfg(any(test, not(target_os = "windows")))]
+use std::collections::BTreeSet;
 use std::{
     collections::BTreeMap,
     fs, io,
@@ -161,6 +163,10 @@ const TRIGGER_CURVE_MAX: u16 = 350;
 const TRIGGER_CURVE_POINT_MIN: usize = 4;
 const TRIGGER_CURVE_POINT_MAX: usize = 8;
 const FORZA_REV_LIMIT_RATIO: f64 = 0.93;
+const FORZA_REV_LIMITER_PULSE_AMPLITUDE: f64 = 18.0 / 63.0;
+const FORZA_REV_LIMITER_FREQUENCY_HZ: f64 = 42.0;
+const FORZA_REV_LIMITER_WALL_FORM_THROTTLE_AT: f64 = 0.60;
+const FORZA_REV_LIMITER_WALL_ZONES: f64 = 4.0;
 const FORZA_SHIFT_WALL_FORM_AT: f64 = 0.15;
 const FORZA_SHIFT_FREQUENCY_HZ: f64 = 34.0;
 const FORZA_SHIFT_WALL_ZONES: f64 = 4.0;
@@ -218,7 +224,7 @@ fn forza_horizon_preset() -> ForzaTelemetryConfig {
         ("throttle_resistance", true, 100, "r2"),
         ("abs_slip_pulse", true, 100, "l2"),
         ("handbrake_wall", true, 100, "l2"),
-        ("rev_limiter_buzz", true, 55, "r2"),
+        ("rev_limiter_buzz", true, 85, "r2"),
         (
             "gear_shift_thump",
             true,
@@ -269,7 +275,7 @@ fn forza_horizon_immersive_preset() -> ForzaTelemetryConfig {
         ("throttle_resistance", true, 100, "r2"),
         ("abs_slip_pulse", true, 100, "l2"),
         ("handbrake_wall", true, 100, "l2"),
-        ("rev_limiter_buzz", true, 62, "r2"),
+        ("rev_limiter_buzz", true, 95, "r2"),
         (
             "gear_shift_thump",
             true,
@@ -309,7 +315,7 @@ fn assetto_corsa_rally_preset() -> ForzaTelemetryConfig {
         ("throttle_resistance", true, 92, "r2"),
         ("abs_slip_pulse", true, 95, "l2"),
         ("handbrake_wall", true, 115, "l2"),
-        ("rev_limiter_buzz", true, 58, "r2"),
+        ("rev_limiter_buzz", true, 90, "r2"),
         (
             "gear_shift_thump",
             true,
@@ -3400,6 +3406,85 @@ fn append_user_games_to_detection(
     }
 }
 
+fn telemetry_game_detection(
+    inner: &AgentStateInner,
+    catalog: &SteamGameCatalog,
+) -> Option<GameDetectionResponse> {
+    let adapter_id = inner
+        .telemetry
+        .text("source.id")
+        .or(inner.active_adapter_id.as_deref())?;
+    let runtime = inner.adapter_runtime(adapter_id)?;
+    if !runtime.has_recent_packet(Instant::now()) {
+        return None;
+    }
+
+    let game = telemetry_game_module_for_adapter(inner, catalog, adapter_id)?;
+    let candidate = GameDetectionCandidate {
+        game_id: game.id.to_string(),
+        name: game.display_name.to_string(),
+        process_name: format!("{adapter_id}:telemetry"),
+        module_id: game.id.to_string(),
+        adapter_id: game.adapter_id.to_string(),
+        profile_id: game.default_profile_id.to_string(),
+        confidence: 70,
+    };
+
+    Some(GameDetectionResponse {
+        active_game_id: Some(candidate.game_id.clone()),
+        active_game_name: Some(candidate.name.clone()),
+        source: "telemetry_source".to_string(),
+        confidence: candidate.confidence,
+        process_name: None,
+        module_id: Some(candidate.module_id.clone()),
+        adapter_id: Some(candidate.adapter_id.clone()),
+        profile_id: Some(candidate.profile_id.clone()),
+        candidates: vec![candidate],
+        supported_games: Vec::new(),
+        selected_game: None,
+    })
+}
+
+fn telemetry_game_module_for_adapter(
+    inner: &AgentStateInner,
+    catalog: &SteamGameCatalog,
+    adapter_id: &str,
+) -> Option<GameModule> {
+    let modules: Vec<GameModule> = built_in_game_modules()
+        .iter()
+        .copied()
+        .filter(|game| game.adapter_id == adapter_id)
+        .collect();
+    if modules.is_empty() {
+        return None;
+    }
+
+    if let Some(game_id) = inner.telemetry.text("game.id") {
+        if let Some(game) = modules.iter().find(|game| game.id == game_id) {
+            return Some(*game);
+        }
+    }
+
+    let installed: Vec<&SupportedGameSummary> = catalog
+        .supported_games
+        .iter()
+        .filter(|summary| {
+            summary.installed
+                && modules
+                    .iter()
+                    .any(|game| game.id == summary.game_id.as_str())
+        })
+        .collect();
+    if installed.len() == 1 {
+        let game_id = installed[0].game_id.as_str();
+        if let Some(game) = modules.iter().find(|game| game.id == game_id) {
+            return Some(*game);
+        }
+    }
+
+    modules.first().copied()
+}
+
 const USER_GAME_PROCESS_CANDIDATE_LIMIT: usize = 8;
 const USER_GAME_PROCESS_SCAN_LIMIT: usize = 256;
 
@@ -5817,6 +5902,18 @@ impl AgentState {
             steam_root.as_deref(),
             &steam_stats,
         );
+        if detection.active_game_id.is_none() {
+            let inner = self.inner.read().await;
+            if let Some(telemetry_detection) = telemetry_game_detection(&inner, &catalog) {
+                detection = enrich_game_detection(telemetry_detection, &catalog);
+                append_user_games_to_detection(
+                    &mut detection,
+                    &user_games,
+                    steam_root.as_deref(),
+                    &steam_stats,
+                );
+            }
+        }
         {
             let mut inner = self.inner.write().await;
             sync_auto_loaded_profile_for_detection(&mut inner, &detection);
@@ -6321,8 +6418,11 @@ fn support_telemetry_summary(
 ) -> SupportTelemetrySummary {
     let telemetry = materialized_telemetry_response(inner, game_detection);
     let source_id = inner.telemetry.text("source.id").map(str::to_string);
-    let live = game_detection
+    let adapter_id = game_detection
         .and_then(|detection| detection.adapter_id.as_deref())
+        .or(source_id.as_deref())
+        .or(inner.active_adapter_id.as_deref());
+    let live = adapter_id
         .and_then(|adapter_id| inner.adapter_runtime(adapter_id))
         .is_some_and(|runtime| runtime.has_recent_packet(Instant::now()));
     SupportTelemetrySummary {
@@ -8941,19 +9041,82 @@ async fn current_process_names() -> io::Result<Vec<String>> {
     #[cfg(not(target_os = "windows"))]
     {
         let output = tokio::process::Command::new("ps")
-            .args(["-eo", "comm="])
+            .args(["-eo", "comm=", "-eo", "args="])
             .output()
             .await?;
         if !output.status.success() {
             return Err(io::Error::other("ps did not complete successfully"));
         }
         let text = String::from_utf8_lossy(&output.stdout);
-        Ok(text
-            .lines()
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-            .map(str::to_string)
-            .collect())
+        Ok(parse_unix_process_names(&text))
+    }
+}
+
+#[cfg(any(test, not(target_os = "windows")))]
+fn parse_unix_process_names(text: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut seen = BTreeSet::new();
+    for line in text.lines() {
+        for token in line.split_whitespace() {
+            push_process_name_candidates(&mut names, &mut seen, token);
+        }
+    }
+    names
+}
+
+#[cfg(any(test, not(target_os = "windows")))]
+fn push_process_name_candidates(names: &mut Vec<String>, seen: &mut BTreeSet<String>, raw: &str) {
+    for candidate in process_name_candidates(raw) {
+        let key = candidate.to_ascii_lowercase();
+        if seen.insert(key) {
+            names.push(candidate);
+        }
+    }
+}
+
+#[cfg(any(test, not(target_os = "windows")))]
+fn process_name_candidates(raw: &str) -> Vec<String> {
+    let trimmed = raw.trim_matches(|ch: char| {
+        ch.is_whitespace()
+            || matches!(
+                ch,
+                '"' | '\'' | '`' | '[' | ']' | '(' | ')' | '{' | '}' | ',' | ';'
+            )
+    });
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    push_process_name_candidate(&mut candidates, trimmed);
+
+    let normalized = trimmed.replace('\\', "/");
+    if let Some(base) = normalized.rsplit('/').next() {
+        push_process_name_candidate(&mut candidates, base);
+    }
+
+    let lower = normalized.to_ascii_lowercase();
+    if let Some(exe_end) = lower.find(".exe").map(|index| index + 4) {
+        let exe_path = &normalized[..exe_end];
+        if let Some(base) = exe_path.rsplit('/').next() {
+            push_process_name_candidate(&mut candidates, base);
+        }
+    }
+
+    candidates
+}
+
+#[cfg(any(test, not(target_os = "windows")))]
+fn push_process_name_candidate(candidates: &mut Vec<String>, value: &str) {
+    let candidate = value.trim();
+    if candidate.is_empty() {
+        return;
+    }
+    if !candidates
+        .iter()
+        .any(|existing| existing.eq_ignore_ascii_case(candidate))
+    {
+        candidates.push(candidate.to_string());
     }
 }
 
@@ -8986,8 +9149,18 @@ fn profile_resolution(
         .profile_overrides
         .get(&override_key)
         .or_else(|| inner.profile_overrides.get(&fallback_override_key))
-        .or_else(|| inner.profile_overrides.get(&controller_global_override_key))
-        .or_else(|| inner.profile_overrides.get(&global_override_key));
+        .or_else(|| {
+            detected_game_id
+                .is_none()
+                .then(|| inner.profile_overrides.get(&controller_global_override_key))
+                .flatten()
+        })
+        .or_else(|| {
+            detected_game_id
+                .is_none()
+                .then(|| inner.profile_overrides.get(&global_override_key))
+                .flatten()
+        });
 
     let assigned_profile_id = controller_id.as_deref().and_then(|id| {
         if let Some(config) = inner.controller_configs.get(id) {
@@ -10151,7 +10324,10 @@ fn forza_runtime_profile(
         throttle.scalar() * trigger_scalar * FORZA_THROTTLE_ENDSTOP_FORCE_BOOST;
     let throttle_endstop_force = scaled_unit(FORZA_THROTTLE_ENDSTOP_FORCE, throttle_endstop_scalar);
     let abs_amplitude = scaled_unit(FORZA_ABS_PULSE_AMPLITUDE, abs.scalar());
-    let rev_amplitude = scaled_unit(10.0 / 63.0, rev.scalar() * trigger_scalar);
+    let rev_amplitude = scaled_unit(
+        FORZA_REV_LIMITER_PULSE_AMPLITUDE,
+        rev.scalar() * trigger_scalar,
+    );
     let shift_amplitude = scaled_unit(1.0, shift.scalar());
 
     let baseline_condition = forza_baseline_trigger_condition();
@@ -10285,7 +10461,7 @@ fn forza_runtime_profile(
         });
     }
 
-    push_routed_pulse_rule(
+    push_rev_limiter_rules(
         &mut rules,
         &rev,
         "forza-rev-limiter-buzz",
@@ -10296,7 +10472,7 @@ fn forza_runtime_profile(
             FORZA_REV_LIMIT_RATIO,
         ),
         ValueSource::constant(rev_amplitude),
-        ValueSource::constant(30.0),
+        ValueSource::constant(FORZA_REV_LIMITER_FREQUENCY_HZ),
     );
     push_shift_thump_rules(&mut rules, &shift, shift_amplitude);
 
@@ -10381,7 +10557,7 @@ fn forza_baseline_trigger_condition() -> RuleCondition {
     text_condition("game.state", ComparisonOp::Eq, "driving")
 }
 
-fn push_routed_pulse_rule(
+fn push_rev_limiter_rules(
     rules: &mut Vec<EffectRule>,
     tuning: &ForzaEffectConfig,
     id: &str,
@@ -10395,14 +10571,47 @@ fn push_routed_pulse_rule(
     }
 
     for target in routed_trigger_targets(&tuning.route) {
+        let target_label = trigger_target_label(target);
         rules.push(EffectRule {
-            id: format!("{id}-{}", trigger_target_label(target)),
+            id: format!("{id}-{target_label}-wall-form"),
             smoothing: None,
             hysteresis: None,
             timeout: None,
             target,
             priority,
-            condition: condition.clone(),
+            condition: RuleCondition::All {
+                conditions: vec![
+                    condition.clone(),
+                    number_condition(
+                        "input.throttle",
+                        ComparisonOp::GreaterOrEqual,
+                        FORZA_REV_LIMITER_WALL_FORM_THROTTLE_AT,
+                    ),
+                ],
+            },
+            effect: EffectTemplate::PulseAb {
+                strength: amplitude.clone(),
+                frequency_hz: frequency_hz.clone(),
+                wall_zones: ValueSource::constant(FORZA_REV_LIMITER_WALL_ZONES),
+            },
+        });
+        rules.push(EffectRule {
+            id: format!("{id}-{target_label}-pulse"),
+            smoothing: None,
+            hysteresis: None,
+            timeout: None,
+            target,
+            priority,
+            condition: RuleCondition::All {
+                conditions: vec![
+                    condition.clone(),
+                    number_condition(
+                        "input.throttle",
+                        ComparisonOp::LessThan,
+                        FORZA_REV_LIMITER_WALL_FORM_THROTTLE_AT,
+                    ),
+                ],
+            },
             effect: EffectTemplate::Pulse {
                 amplitude: amplitude.clone(),
                 frequency_hz: frequency_hz.clone(),
@@ -16227,6 +16436,100 @@ mod tests {
         assert_eq!(detection.profile_id.as_deref(), Some(IMMERSIVE_PROFILE_ID));
     }
 
+    #[test]
+    fn unix_process_scan_extracts_proton_windows_executable_names() {
+        let names = parse_unix_process_names(
+            "ForzaHorizon6.e /home/user/.steam/steamapps/common/ForzaHorizon6/ForzaHorizon6.exe -windowed\n\
+             pressure-vessel pressure-vessel-wrap C:\\\\SteamLibrary\\\\ForzaHorizon5\\\\ForzaHorizon5.exe",
+        );
+
+        assert!(names.iter().any(|name| name == "ForzaHorizon6.exe"));
+        assert!(names.iter().any(|name| name == "ForzaHorizon5.exe"));
+
+        let detection = detect_running_game_from_processes(names.iter().map(String::as_str));
+        assert_eq!(detection.active_game_id.as_deref(), Some("forza-horizon-6"));
+    }
+
+    #[test]
+    fn telemetry_source_detection_recovers_forza_when_process_scan_misses_proton() {
+        let state = AgentState::from_controller_events([attach_event(
+            "linux-dualsense",
+            ControllerFamily::DualSense,
+            ControllerTransportKind::Usb,
+            Some(25),
+        )]);
+        {
+            let mut inner = state.inner.blocking_write();
+            inner
+                .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+                .mark_packet(324, 1);
+            inner.active_adapter_id = Some(FORZA_DATA_OUT_ADAPTER_ID.to_string());
+            inner.telemetry = SignalSnapshot::from_updates([
+                signal_update("source.id", FORZA_DATA_OUT_ADAPTER_ID),
+                signal_update("game.state", "driving"),
+                signal_update("input.brake", 0.20),
+                signal_update("input.throttle", 0.45),
+                signal_update("vehicle.speed_kmh", 80.0),
+                signal_update("drivetrain.shift_event", "none"),
+            ]);
+        }
+
+        let inner = state.inner.blocking_read();
+        let detection = telemetry_game_detection(&inner, &SteamGameCatalog::default())
+            .expect("live Forza Data Out packets should recover game detection");
+
+        assert_eq!(detection.source, "telemetry_source");
+        assert_eq!(detection.active_game_id.as_deref(), Some("forza-horizon-6"));
+        assert_eq!(
+            detection.adapter_id.as_deref(),
+            Some(FORZA_DATA_OUT_ADAPTER_ID)
+        );
+        assert_eq!(detection.profile_id.as_deref(), Some(IMMERSIVE_PROFILE_ID));
+
+        let resolution = profile_resolution(&inner, Some(&detection));
+        assert_eq!(
+            resolution.selected_profile_id.as_deref(),
+            Some(IMMERSIVE_PROFILE_ID)
+        );
+        assert!(hardware_output_runtime_allowed_for_resolution(
+            &inner,
+            Some(&detection),
+            &resolution
+        ));
+        assert!(support_telemetry_summary(&inner, None).live);
+    }
+
+    #[test]
+    fn global_profile_override_does_not_block_detected_supported_game() {
+        let state = AgentState::from_controller_events([attach_event(
+            "edge-forza",
+            ControllerFamily::DualSenseEdge,
+            ControllerTransportKind::Bluetooth,
+            Some(84),
+        )]);
+        let detection = detect_running_game_from_processes(["ForzaHorizon6.exe"]);
+        {
+            let mut inner = state.inner.blocking_write();
+            inner.profile_overrides.insert(
+                profile_override_key(None, None),
+                ProfileOverride {
+                    controller_id: None,
+                    game_id: None,
+                    profile_id: DEFAULT_PROFILE_ID.to_string(),
+                },
+            );
+        }
+
+        let inner = state.inner.blocking_read();
+        let resolution = profile_resolution(&inner, Some(&detection));
+        assert_eq!(resolution.reason, "foreground_game");
+        assert_eq!(resolution.override_profile_id, None);
+        assert_eq!(
+            resolution.selected_profile_id.as_deref(),
+            Some(IMMERSIVE_PROFILE_ID)
+        );
+    }
+
     #[tokio::test]
     async fn cached_game_detection_keeps_standard_five_second_cache() {
         let state = AgentState::mock();
@@ -17641,7 +17944,7 @@ mod tests {
     }
 
     #[test]
-    fn forza_rev_limiter_buzz_is_slightly_stronger() {
+    fn forza_rev_limiter_buzz_uses_wall_form_at_high_throttle() {
         let config = ControllerConfig::default_for("edge-forza", "DualSense Edge");
         let snapshot = SignalSnapshot::from_updates([
             signal_update("game.state", "driving"),
@@ -17658,17 +17961,51 @@ mod tests {
         let frame = EffectEngine::new().evaluate(&profile, &snapshot);
 
         match frame.r2 {
+            TriggerOutput::PulseAb {
+                strength,
+                frequency_hz,
+                wall_zones,
+            } => {
+                assert!((frequency_hz - FORZA_REV_LIMITER_FREQUENCY_HZ).abs() < f64::EPSILON);
+                assert_eq!(wall_zones, FORZA_REV_LIMITER_WALL_ZONES as u8);
+                assert!(
+                    (0.28..0.30).contains(&strength),
+                    "high-throttle rev limiter should use a stronger wall-form buzz, got {strength}"
+                );
+            }
+            other => panic!("expected rev limiter wall-form buzz, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn forza_rev_limiter_buzz_stays_plain_near_idle() {
+        let config = ControllerConfig::default_for("edge-forza", "DualSense Edge");
+        let snapshot = SignalSnapshot::from_updates([
+            signal_update("game.state", "driving"),
+            signal_update("input.throttle", 0.25),
+            signal_update("input.brake", 0.0),
+            signal_update("input.handbrake", 0.0),
+            signal_update("vehicle.rpm_ratio", 0.95),
+            signal_update("vehicle.speed_kmh", 0.0),
+            signal_update("tire.slip_ratio.max", 0.0),
+            signal_update("wheel.slip.max", 0.0),
+            signal_update("drivetrain.shift_event", "none"),
+        ]);
+        let profile = forza_runtime_profile("forza-horizon", "Forza", Some(&config));
+        let frame = EffectEngine::new().evaluate(&profile, &snapshot);
+
+        match frame.r2 {
             TriggerOutput::Pulse {
                 amplitude,
                 frequency_hz,
             } => {
-                assert!((frequency_hz - 30.0).abs() < f64::EPSILON);
+                assert!((frequency_hz - FORZA_REV_LIMITER_FREQUENCY_HZ).abs() < f64::EPSILON);
                 assert!(
-                    (0.15..0.18).contains(&amplitude),
-                    "rev limiter buzz should be slightly stronger, got {amplitude}"
+                    (0.28..0.30).contains(&amplitude),
+                    "low-throttle limiter blip should stay a stronger plain buzz, got {amplitude}"
                 );
             }
-            other => panic!("expected rev limiter buzz, got {other:?}"),
+            other => panic!("expected plain rev limiter buzz near idle, got {other:?}"),
         }
     }
 
