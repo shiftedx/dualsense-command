@@ -88,9 +88,8 @@ taking over game-specific haptics.
 ## Need Help?
 
 - Start with [Troubleshooting](docs/troubleshooting.md).
-- Report bugs or feedback in [GitHub Issues](https://github.com/shiftedx/dualsense-command/issues).
-- For feature ideas, include your controller model, connection type, game, and
-  what you expected to feel or see.
+- Ask questions or share tuning ideas in [GitHub Discussions](https://github.com/shiftedx/dualsense-command/discussions).
+- Report bugs in [GitHub Issues](https://github.com/shiftedx/dualsense-command/issues).
 
 ## DualSense Edge Notes
 
