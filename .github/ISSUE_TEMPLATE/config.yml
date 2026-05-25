@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Troubleshooting
+    url: https://github.com/shiftedx/dualsense-command/blob/main/docs/troubleshooting.md
+    about: Common install, controller, telemetry, LAN, and Steam Input fixes.
+  - name: Latest Release
+    url: https://github.com/shiftedx/dualsense-command/releases/latest
+    about: Download the newest unsigned Windows installer and checksum files.

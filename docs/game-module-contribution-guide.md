@@ -1,38 +1,54 @@
-# Game Module Contribution Guide
+# Game Module Guide
 
-DSCC has two module layers:
+Use this guide when adding support for a game or profile pack.
 
-- **Game modules** identify one supported game: names, process hints, Steam ids, install directories, default profile, profile templates, and detection lightbar color.
-- **Adapter modules** describe telemetry integrations. Some are live runtimes; today the parser-backed/runtime-backed adapters are `forza-data-out` and `assetto-shared-memory`. Other first-wave catalog entries are setup-ready metadata until a Rust runtime/parser is added.
+## The Two Pieces
 
-Community modules are data-only until DSCC has a parser sandbox/signing model. If a game needs packet parsing, shared-memory reads, filesystem access, or runtime hooks, contribute it as a built-in Rust adapter plus a built-in Rust game module.
+- **Game module**: names the game, detects it, assigns profiles, and tells the
+  UI what to show.
+- **Adapter module**: reads telemetry and publishes normalized signals.
 
-The current Add Game UI creates local `custom-*` Steam entries with profile auto-load only. Those entries are not community module manifests and do not add telemetry adapters.
+Current live adapters:
 
-## Choose The Contribution Path
+- `forza-data-out`
+- `assetto-shared-memory`
 
-1. **Profile pack only**
-   Use this when the game already works through an existing adapter and the PR only adds metadata, profiles, labels, or licensed assets.
+Other adapter entries are catalog metadata until a Rust runtime/parser is added.
+
+## Pick The Right Path
+
+1. **Profile pack**
+   Use this when the game already works through a built-in adapter and you only
+   want to add profiles, labels, metadata, or licensed assets.
 
 2. **Built-in game module**
-   Use this when DSCC should detect the game, show it as supported, assign a default profile, or light the controller when the process is detected.
+   Use this when DSCC should detect the game, show it as supported, assign a
+   default profile, or set the lightbar when the process is detected.
 
 3. **Built-in adapter module**
-   Use this when DSCC must parse telemetry, read shared memory, bind UDP, or use a game SDK. Native parser code must stay in the Rust workspace.
+   Use this when DSCC must parse new UDP packets, read shared memory, call an
+   SDK, or run new telemetry logic.
 
-## Built-In Game Checklist
+The current **Add Game** UI only creates local custom Steam entries for profile
+auto-load. It does not add telemetry support.
 
-1. Record public sources in `PROVENANCE.md` before using process names, app ids, packet layouts, shared-memory page names, or telemetry fields.
-2. If the game needs a new telemetry source, add adapter metadata to `crates/dscc-adapters/src/lib.rs` and add the live runtime registration too: `built_in_udp_adapters()` for UDP parsers, or an agent-side/shared-memory loop like the Assetto reader. Catalog metadata alone does not parse packets or start a listener.
-3. Add game metadata to `crates/dscc-agent/src/game_modules.rs`.
-4. Set `steam_catalog: true` only when the Steam app id and install directory are provenance-backed and should appear in the Games view. Process-detection-only modules can remain out of the Steam catalog.
-5. Add a built-in profile or map the game to an existing profile in `crates/dscc-agent/src/lib.rs`.
-6. Normalize telemetry into existing signal names whenever possible.
-7. Add tests for process detection, module metadata, adapter status, profile resolution, waiting-for-telemetry behavior, and parser normalization.
-8. Keep hardware output gated: detection may write a lightbar-only frame, but trigger tension and rumble require fresh telemetry.
-9. Run Rust and web validation before opening the PR.
+## Checklist
 
-Do not inspect or derive packet layouts, profile defaults, schemas, tuning values, comments, or structure from incompatible implementations such as `Forza-Horizon-DualSense-Python`. Record public sources or original experiments in `PROVENANCE.md` before depending on them.
+1. Record public sources or original experiments in the PR before using process
+   names, app ids, packet layouts, shared-memory names, or telemetry fields.
+2. Add adapter metadata and runtime registration if a new telemetry source is
+   needed. Metadata alone does not parse packets.
+3. Add game metadata in `crates/dscc-agent/src/game_modules.rs`.
+4. Add or map a built-in profile in the agent.
+5. Normalize telemetry into existing signals whenever possible.
+6. Add tests for detection, metadata, adapter status, profile resolution, stale
+   telemetry, and parser behavior.
+7. Keep output gated: detection may set the lightbar, but triggers and rumble
+   require fresh telemetry.
+8. Run Rust and web validation before opening a PR.
+
+Do not inspect or derive packet layouts, tuning values, comments, or code from
+incompatible implementations.
 
 ## Assetto Corsa Rally Example
 
@@ -43,24 +59,23 @@ Assetto Corsa Rally is the built-in shared-memory reference module:
 - Process hint: `acr.exe`
 - Adapter id: `assetto-shared-memory`
 - Default profile id: `assetto-corsa-rally`
-- Telemetry transport: read-only Windows shared memory
-- Detection behavior: red lightbar as soon as the supported process is detected; triggers remain neutral until fresh physics telemetry is live
+- Telemetry: read-only Windows shared memory
 
-The adapter reads public Assetto-compatible shared-memory pages (`acpmf_*`, with `acevo_pmf_*` compatibility), uses the physics prefix plus optional graphics/static data, and publishes normalized racing signals so the existing haptic engine can reuse brake, throttle, RPM, slip, shift, and surface cues.
+The adapter reads public Assetto-compatible shared-memory pages and publishes
+signals the existing haptic engine can use: brake, throttle, RPM, slip, shift,
+and surface cues.
 
-## Required Validation
-
-Use the local GNU toolchain on Windows:
+## Validation
 
 ```powershell
 cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
-cargo +stable-x86_64-pc-windows-gnu test --workspace --target x86_64-pc-windows-gnu
-cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings
+cargo +stable-x86_64-pc-windows-gnu test --workspace
+cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warnings
 npm.cmd --prefix web run typecheck
 npm.cmd --prefix web run build
 ```
 
-For UI or mapping changes, also run:
+For UI or button-mapping changes:
 
 ```powershell
 npm.cmd --prefix web run test:button-map

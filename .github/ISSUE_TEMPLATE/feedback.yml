@@ -1,0 +1,52 @@
+name: Feedback or tuning idea
+description: Share setup feedback, haptic feel notes, game requests, or UI ideas.
+title: "[Feedback]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for feel notes, profile tuning ideas, game requests, and
+        "this was confusing" feedback. Bug reports should use the bug form.
+  - type: input
+    id: version
+    attributes:
+      label: DSCC version
+      description: Example: 0.2.8
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Adaptive triggers / haptics
+        - Button mapping
+        - Profiles
+        - DualSense Edge onboard profiles
+        - Installer / updates
+        - Supported game request
+        - UI / usability
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: controller
+    attributes:
+      label: Controller and connection
+      description: Example: DualSense Edge over USB
+  - type: input
+    id: game
+    attributes:
+      label: Game or profile
+      description: Example: Forza Horizon 6 Immersive profile
+  - type: textarea
+    id: feedback
+    attributes:
+      label: Feedback
+      description: What should feel better, be clearer, or be added?
+    validations:
+      required: true
+  - type: textarea
+    id: comparison
+    attributes:
+      label: What would "good" feel or look like?
+      description: Helpful for haptic tuning and UI polish.

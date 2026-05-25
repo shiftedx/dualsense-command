@@ -1,5 +1,8 @@
 # DualSense Command Center 0.2.8
 
+Latest release notes are listed first. For install steps, start with the
+[README](README.md).
+
 Release date: 2026-05-23
 
 This is a narrow LAN-access hotfix for 0.2.7. The previous release kept the agent's all-interface bind behind the `DSCC_ENABLE_LAN_API` safety gate, but the installed tray launcher did not pass that capability through when it started `dscc-agent.exe`. As a result, selecting **LAN Access** in the app failed with a 403 before the user could save the setting.

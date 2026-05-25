@@ -1,0 +1,80 @@
+name: Bug report
+description: Report something broken in DSCC.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve DSCC. Please do not paste raw HID paths,
+        serial numbers, Bluetooth addresses, or private Steam account paths.
+  - type: input
+    id: version
+    attributes:
+      label: DSCC version
+      description: Example: 0.2.8
+    validations:
+      required: true
+  - type: dropdown
+    id: controller
+    attributes:
+      label: Controller
+      options:
+        - DualSense
+        - DualSense Edge
+        - Other / not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection
+      options:
+        - USB
+        - Bluetooth
+        - Both
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: Example: Windows 11 24H2
+  - type: input
+    id: game
+    attributes:
+      label: Game
+      description: Example: Forza Horizon 6, Assetto Corsa Rally, Global Profile
+  - type: dropdown
+    id: telemetry
+    attributes:
+      label: Telemetry status
+      options:
+        - Connected
+        - Waiting / no packets
+        - Stale
+        - Not using telemetry
+        - Not sure
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Tell us what you clicked, launched, connected, or changed.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Extra notes or screenshots
+      description: Add screenshots, release asset name, or sanitized logs if useful.
