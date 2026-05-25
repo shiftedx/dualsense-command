@@ -1,5 +1,8 @@
 blank_issues_enabled: true
 contact_links:
+  - name: Questions and feedback
+    url: https://github.com/shiftedx/dualsense-command/discussions
+    about: Use Discussions for setup questions, tuning ideas, and game requests.
   - name: Troubleshooting
     url: https://github.com/shiftedx/dualsense-command/blob/main/docs/troubleshooting.md
     about: Common install, controller, telemetry, LAN, and Steam Input fixes.

@@ -20,9 +20,8 @@ Please include:
 
 ## Ideas And Feedback
 
-Use Issues for now. GitHub Discussions is the best long-term place for general
-feedback, tuning ideas, and setup questions, but it must be enabled in the repo
-settings by a maintainer first.
+Use [GitHub Discussions](https://github.com/shiftedx/dualsense-command/discussions)
+for setup questions, tuning ideas, game requests, and general feedback.
 
 ## Before Posting
 
