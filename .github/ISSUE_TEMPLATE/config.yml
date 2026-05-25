@@ -2,10 +2,19 @@ blank_issues_enabled: true
 contact_links:
   - name: Questions and feedback
     url: https://github.com/shiftedx/dualsense-command/discussions
-    about: Use Discussions for setup questions, tuning ideas, and game requests.
+    about: Use Discussions for setup questions, tuning ideas, game requests, and beta-limit questions.
   - name: Troubleshooting
     url: https://github.com/shiftedx/dualsense-command/blob/main/docs/troubleshooting.md
     about: Common install, controller, telemetry, LAN, and Steam Input fixes.
+  - name: Support Bundle Help
+    url: https://github.com/shiftedx/dualsense-command/blob/main/docs/troubleshooting.md#create-a-support-bundle
+    about: How to copy or export the sanitized bundle for bug reports.
+  - name: Known Beta Limits
+    url: https://github.com/shiftedx/dualsense-command#known-beta-limits
+    about: Unsigned installer, no auto-update, hardware matrix, and Edge sync limits.
+  - name: Windows Hardware Matrix
+    url: https://github.com/shiftedx/dualsense-command/blob/main/docs/hardware-matrix.md
+    about: Controller support status and validation checklist.
   - name: Latest Release
     url: https://github.com/shiftedx/dualsense-command/releases/latest
     about: Download the newest unsigned Windows installer and checksum files.

@@ -95,6 +95,24 @@ impl DeviceHandle for HidApiDeviceHandle {
         }
     }
 
+    fn read_timeout_into(
+        &mut self,
+        buffer: &mut [u8],
+        timeout: Duration,
+    ) -> Result<Option<usize>, DeviceError> {
+        let timeout_ms = timeout.as_millis().min(i32::MAX as u128) as i32;
+        let size = self
+            .device
+            .read_timeout(buffer, timeout_ms)
+            .map_err(|error| DeviceError::TransportFault(format!("hidapi read failed: {error}")))?;
+
+        if size == 0 {
+            Ok(None)
+        } else {
+            Ok(Some(size))
+        }
+    }
+
     fn write(&mut self, report: &[u8]) -> Result<usize, DeviceError> {
         if !self.hardware_writes_enabled {
             return Ok(report.len());

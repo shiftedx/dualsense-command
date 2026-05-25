@@ -36,10 +36,63 @@ export function createAppRuntime(options: AppRuntimeOptions): AppRuntime {
   let fallbackPollTimer: number | undefined;
   let stopSnapshotSocket: (() => void) | undefined;
   let pendingVisibilityRefresh = false;
+  let refreshInFlight = false;
+  let refreshQueued = false;
+  let pendingSnapshot: AppSnapshot | undefined;
+  let snapshotFrame: number | undefined;
 
   const isHidden = () => typeof document !== 'undefined' && document.hidden;
   const runRefresh = () => {
-    void options.refresh();
+    if (refreshInFlight) {
+      refreshQueued = true;
+      return;
+    }
+
+    refreshInFlight = true;
+    void Promise.resolve()
+      .then(() => options.refresh())
+      .catch(() => {
+        // The app-level refresh handler owns visible error state.
+      })
+      .finally(() => {
+        refreshInFlight = false;
+        if (!refreshQueued) return;
+
+        refreshQueued = false;
+        if (isHidden()) {
+          pendingVisibilityRefresh = true;
+          return;
+        }
+        runRefresh();
+      });
+  };
+
+  const flushPendingSnapshot = () => {
+    const next = pendingSnapshot;
+    pendingSnapshot = undefined;
+    if (next) options.applySnapshot(next);
+  };
+
+  const cancelSnapshotFrame = () => {
+    if (snapshotFrame === undefined || typeof window === 'undefined' || typeof window.cancelAnimationFrame !== 'function') return;
+    window.cancelAnimationFrame(snapshotFrame);
+    snapshotFrame = undefined;
+  };
+
+  const applySnapshotSoon = (snapshot: AppSnapshot) => {
+    if (isHidden() || typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+      cancelSnapshotFrame();
+      pendingSnapshot = undefined;
+      options.applySnapshot(snapshot);
+      return;
+    }
+
+    pendingSnapshot = snapshot;
+    if (snapshotFrame !== undefined) return;
+    snapshotFrame = window.requestAnimationFrame(() => {
+      snapshotFrame = undefined;
+      flushPendingSnapshot();
+    });
   };
 
   const scheduleRefresh = () => {
@@ -69,6 +122,8 @@ export function createAppRuntime(options: AppRuntimeOptions): AppRuntime {
 
   const handleVisibilityChange = () => {
     if (isHidden()) {
+      cancelSnapshotFrame();
+      flushPendingSnapshot();
       options.onHidden?.();
       return;
     }
@@ -89,7 +144,7 @@ export function createAppRuntime(options: AppRuntimeOptions): AppRuntime {
     options.onStart?.();
     runRefresh();
     stopSnapshotSocket = options.connectSnapshotSocket({
-      onSnapshot: options.applySnapshot,
+      onSnapshot: applySnapshotSoon,
       onInvalidate: scheduleRefresh,
       onUnavailable: startFallbackPolling,
       onClosed: startFallbackPolling
@@ -109,6 +164,9 @@ export function createAppRuntime(options: AppRuntimeOptions): AppRuntime {
     fallbackPollTimer = undefined;
     if (refreshDebounceTimer !== undefined) window.clearTimeout(refreshDebounceTimer);
     refreshDebounceTimer = undefined;
+    cancelSnapshotFrame();
+    pendingSnapshot = undefined;
+    refreshQueued = false;
     pendingVisibilityRefresh = false;
     document.removeEventListener('visibilitychange', handleVisibilityChange);
     window.removeEventListener('hashchange', handleHashChange);

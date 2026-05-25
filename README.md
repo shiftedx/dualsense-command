@@ -13,10 +13,12 @@ Get the latest Windows installer from [GitHub Releases](https://github.com/shift
 
 - Current release: `0.2.8`
 - Recommended download: Windows x86_64 MSI
-- Linux builds: experimental raw binaries
+- Linux builds: beta archive with bundled web UI
 
 The MSI is unsigned right now, so Windows SmartScreen may warn you. Profiles and
 settings are stored in your user folder and are preserved during upgrades.
+Only continue past SmartScreen if you downloaded the MSI from the official
+release page and, when needed, checked it against the published checksum.
 
 ## Quick Start
 
@@ -35,6 +37,32 @@ For Forza games, enable the in-game **Data Out** / **UDP Race Telemetry** option
 That is the main setup. DSCC runs locally from the tray and opens a local web UI
 at `http://127.0.0.1:43473/`.
 
+## Supported Controllers
+
+DSCC supports DualSense and DualSense Edge controllers on Windows over USB and
+Bluetooth. DualSense Edge is fully supported for the normal DSCC runtime
+experience: profiles, adaptive triggers, telemetry haptics, lightbar controls,
+diagnostics, and safe game-gated output.
+
+DualSense Edge onboard Fn-slot profile sync uses guarded HID feature reports
+over USB or Bluetooth when Windows exposes that access. If a host/controller
+blocks the hardware sync path, DSCC stages the slot locally and tells you why.
+See the [Windows Hardware Matrix](docs/hardware-matrix.md) for the current
+validation checklist.
+
+### Linux Beta
+
+Download the Linux archive, extract it into a fresh folder, then run:
+
+```bash
+./dscc-cli serve --addr 127.0.0.1:43473
+```
+
+Open `http://127.0.0.1:43473/`. Release archives include the production web UI,
+so you do not need to run Vite. Linux controller access may still require local
+USB/HID permissions; see the [Linux Beta Guide](docs/linux-beta.md) for udev
+setup and validation commands.
+
 ## Main Features
 
 - Tunes L2/R2 adaptive trigger feel.
@@ -45,7 +73,8 @@ at `http://127.0.0.1:43473/`.
 - Controls lightbar color, brightness, RPM colors, and player LEDs.
 - Shows controller health, battery, connection, and basic diagnostics.
 - Helps with Steam Input button mappings for supported game layouts.
-- Supports experimental DualSense Edge onboard profile reads/writes over USB.
+- Reads and writes supported DualSense Edge onboard Fn-slot settings over USB
+  or Bluetooth when HID feature-report access is available.
 - Checks GitHub Releases for updates and links you there. It does not install
   updates automatically.
 
@@ -85,17 +114,34 @@ DSCC is local-first by default:
 When no supported game is active, DSCC defaults to the Global Profile instead of
 taking over game-specific haptics.
 
+## Known Beta Limits
+
+- The Windows installer is unsigned, so SmartScreen may show a publisher
+  warning.
+- DSCC checks GitHub Releases for updates, but it does not install updates for
+  you.
+- Some controller/connection combinations are still pending public hardware
+  matrix validation.
+- DualSense Edge onboard profile sync depends on Windows exposing HID
+  feature-report access. If that path is blocked, DSCC stages the profile
+  locally and explains why.
+
 ## Need Help?
 
 - Start with [Troubleshooting](docs/troubleshooting.md).
-- Ask questions or share tuning ideas in [GitHub Discussions](https://github.com/shiftedx/dualsense-command/discussions).
-- Report bugs in [GitHub Issues](https://github.com/shiftedx/dualsense-command/issues).
+- For bug reports, copy or export a sanitized support bundle from the DSCC
+  Support panel. It is designed to leave out raw hardware IDs and private paths.
+- Ask setup questions, "is this expected?" beta-limit questions, or tuning ideas
+  in [GitHub Discussions](https://github.com/shiftedx/dualsense-command/discussions).
+- Report reproducible bugs in [GitHub Issues](https://github.com/shiftedx/dualsense-command/issues).
 
 ## DualSense Edge Notes
 
-DualSense Edge onboard profile support is experimental. DSCC can read/write
-supported static settings for Fn profile slots over USB when the controller and
-platform allow it.
+DualSense Edge is supported for DSCC runtime tuning on Windows over USB and
+Bluetooth. On-controller Fn-slot profile sync uses the same typed profile model
+over USB or Bluetooth when the host exposes HID feature-report access, and only
+covers supported static settings such as trigger deadzones, stick presets,
+vibration intensity, trigger intensity, and button mappings.
 
 Live telemetry haptics are not stored on the controller. They require DSCC to be
 running.
@@ -113,7 +159,7 @@ npm.cmd --prefix web ci
 Run the app locally:
 
 ```powershell
-npm.cmd run dev
+npm.cmd --prefix web run dev
 ```
 
 Run the usual validation set:
@@ -125,11 +171,13 @@ cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warni
 npm.cmd --prefix web run typecheck
 npm.cmd --prefix web run build
 npm.cmd --prefix web run test:button-map
+npm.cmd --prefix web run test:release-size
 ```
 
 Contributor docs:
 
 - [Docs index](docs/README.md)
+- [Linux Beta Guide](docs/linux-beta.md)
 - [Architecture](docs/architecture.md)
 - [Contributing](docs/contributing.md)
 - [Game module guide](docs/game-module-contribution-guide.md)

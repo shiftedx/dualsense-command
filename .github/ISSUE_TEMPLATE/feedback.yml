@@ -7,7 +7,9 @@ body:
     attributes:
       value: |
         Use this for feel notes, profile tuning ideas, game requests, and
-        "this was confusing" feedback. Bug reports should use the bug form.
+        "this was confusing" feedback. Setup questions and "is this expected?"
+        beta-limit questions are also welcome in [GitHub Discussions](https://github.com/shiftedx/dualsense-command/discussions).
+        Bug reports should use the bug form.
   - type: input
     id: version
     attributes:

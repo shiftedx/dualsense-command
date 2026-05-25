@@ -49,3 +49,4 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:button-map
       - run: npm run build
+      - run: npm run test:release-size

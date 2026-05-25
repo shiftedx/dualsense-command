@@ -1,0 +1,4 @@
+# DualSense Command Center Linux beta hidraw access.
+# Grants the active local desktop user access to Sony Interactive Entertainment
+# hidraw devices through systemd-logind.
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="054c", TAG+="uaccess"

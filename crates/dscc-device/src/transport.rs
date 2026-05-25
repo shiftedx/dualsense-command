@@ -17,6 +17,24 @@ pub trait DeviceTransport: Send + Sync + 'static {
 
 pub trait DeviceHandle: Send {
     fn read_timeout(&mut self, timeout: Duration) -> Result<Option<Vec<u8>>, DeviceError>;
+    fn read_timeout_into(
+        &mut self,
+        buffer: &mut [u8],
+        timeout: Duration,
+    ) -> Result<Option<usize>, DeviceError> {
+        let Some(report) = self.read_timeout(timeout)? else {
+            return Ok(None);
+        };
+        if report.len() > buffer.len() {
+            return Err(DeviceError::TransportFault(format!(
+                "input report exceeded caller buffer: {} bytes > {} bytes",
+                report.len(),
+                buffer.len()
+            )));
+        }
+        buffer[..report.len()].copy_from_slice(&report);
+        Ok(Some(report.len()))
+    }
     fn write(&mut self, report: &[u8]) -> Result<usize, DeviceError>;
     fn receive_feature_report(
         &mut self,
@@ -199,6 +217,30 @@ impl DeviceHandle for MockDeviceHandle {
             .read_reports
             .get_mut(&self.id)
             .and_then(VecDeque::pop_front))
+    }
+
+    fn read_timeout_into(
+        &mut self,
+        buffer: &mut [u8],
+        _timeout: Duration,
+    ) -> Result<Option<usize>, DeviceError> {
+        let Some(report) = self
+            .lock()
+            .read_reports
+            .get_mut(&self.id)
+            .and_then(VecDeque::pop_front)
+        else {
+            return Ok(None);
+        };
+        if report.len() > buffer.len() {
+            return Err(DeviceError::TransportFault(format!(
+                "mock input report exceeded caller buffer: {} bytes > {} bytes",
+                report.len(),
+                buffer.len()
+            )));
+        }
+        buffer[..report.len()].copy_from_slice(&report);
+        Ok(Some(report.len()))
     }
 
     fn write(&mut self, report: &[u8]) -> Result<usize, DeviceError> {

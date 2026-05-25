@@ -6,8 +6,10 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve DSCC. Please do not paste raw HID paths,
-        serial numbers, Bluetooth addresses, or private Steam account paths.
+        Thanks for helping improve DSCC. If DSCC opens, copy or export a
+        sanitized support bundle from the Support panel and attach it below.
+        Please do not paste raw HID paths, serial numbers, Bluetooth
+        addresses, or private Steam account paths.
   - type: input
     id: version
     attributes:
@@ -37,10 +39,22 @@ body:
     validations:
       required: true
   - type: input
-    id: windows
+    id: os_version
     attributes:
-      label: Windows version
-      description: Example: Windows 11 24H2
+      label: Operating system
+      description: Example: Windows 11 24H2, Ubuntu 24.04, or Fedora 42
+  - type: textarea
+    id: support_bundle
+    attributes:
+      label: Support bundle
+      description: Attach or paste the sanitized support bundle if you can create one.
+      placeholder: I attached the exported support bundle, or DSCC would not open.
+  - type: input
+    id: hardware_matrix_step
+    attributes:
+      label: Hardware matrix step
+      description: For controller support issues, tell us which Windows hardware matrix checklist step failed.
+      placeholder: Example: Step 5, L2/R2 manual trigger preview
   - type: input
     id: game
     attributes:
@@ -77,4 +91,4 @@ body:
     id: notes
     attributes:
       label: Extra notes or screenshots
-      description: Add screenshots, release asset name, or sanitized logs if useful.
+      description: Add screenshots, release asset name, unsigned-installer warning details, or sanitized logs if useful.
