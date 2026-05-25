@@ -8,9 +8,8 @@ should not be called broadly production-ready yet.
 ## Current Status
 
 - Windows x86_64 MSI is the main release path.
-- The MSI and binaries are intentionally unsigned. Paid code signing is out of
-  scope for this passion project, so release notes and setup docs must keep the
-  SmartScreen warning visible.
+- The MSI and binaries are unsigned. README and troubleshooting docs explain the
+  SmartScreen warning.
 - Linux artifacts are beta archives with bundled web UI assets.
 - Updates are check-and-link only. DSCC does not auto-install updates.
 - Profiles/settings are stored in the user config folder and are backed up
@@ -18,8 +17,8 @@ should not be called broadly production-ready yet.
 
 ## Public Beta Messaging
 
-Keep these points visible in README, troubleshooting, release notes, and issue
-templates:
+Keep these points visible in README, troubleshooting, issue templates, and
+support replies:
 
 - The Windows installer is unsigned and may trigger SmartScreen.
 - DSCC does not auto-install updates.
@@ -98,7 +97,7 @@ Also confirm:
   intentional.
 - Version metadata matches the tag, crates, web package, root package, MSI, and
   changelog.
-- Release notes mention that the MSI is unsigned.
+- README and troubleshooting docs mention that the MSI is unsigned.
 - MSI, archives, and checksum files are uploaded.
 - The final MSI installs, launches, upgrades, and uninstalls cleanly.
   Use `packaging\windows-installer-smoke.ps1` for the repeatable Windows smoke.
@@ -129,4 +128,4 @@ Do not publish a beta if:
 - The tray opens duplicate dashboard tabs or blocks while opening the menu.
 - The MSI cannot install, upgrade, or uninstall cleanly.
 - CI or local release gates fail.
-- Release notes do not disclose the unsigned installer.
+- README or troubleshooting docs omit the unsigned-installer warning.

@@ -5,68 +5,40 @@ Latest release notes are listed first. For install steps, start with the
 
 Release date: 2026-05-25
 
-This release is a first-run polish and Linux beta reliability update. The app
-now gives new users a short skippable guide on first launch, keeps that guide
-available from the header, and tightens tooltip copy around Profiles, haptics,
-Steam Input, support bundles, and Edge onboard sync. It also ships the Linux
-telemetry and trigger-preview fixes that were validated after the 0.2.9 report.
+0.3.0 adds a skippable quick-start guide, updates help copy across the app, and
+ships the Linux telemetry/input fixes from the 0.2.9 issue report.
 
-## New User Onboarding
+## App UI
 
-- **Added a compact first-run guide.** New installs see a short guide covering
-  controller/profile scope, telemetry safety, trigger testing, and support
-  bundles without blocking the rest of the app.
-- **The guide is skippable and remembered locally.** Skipping or finishing it
-  stores only a local browser preference; profiles and controller settings are
-  untouched.
-- **The guide can be reopened.** A new **Guide** button in the app header brings
-  the same quick start back if a user forgets what a page or safety state means.
-- **Guide actions jump to useful pages.** The Profiles and Haptics steps can
-  pivot directly to the relevant view when those views are available.
-
-## Tooltip And UX Polish
-
-- **Added clear view-level tooltips.** Profiles, Adaptive Triggers & Haptics,
-  and Button Mapping now explain what each area controls before the user clicks.
-- **Profile action tooltips were tightened.** Import, Export, Save As, Rename,
-  Delete, Reset, and Save now explain the exact action and built-in profile
-  limits.
-- **Edge onboard wording now matches current support.** The app no longer
-  implies assignable Fn-slot sync is USB-only; supported Windows hosts can read
-  and write DualSense Edge onboard slots over USB or Bluetooth when HID
-  feature-report access is available.
-- **Empty Edge slot status is less misleading.** Slot refresh copy now says
-  "controller scan" instead of "usb scan."
+- Added a compact first-run guide covering Profiles, telemetry safety, trigger
+  testing, and support bundles.
+- Added a **Guide** button in the header so users can reopen the quick start
+  after dismissing it.
+- Added tooltips for Profiles, Adaptive Triggers & Haptics, and Button Mapping.
+- Added tooltips for Import, Export, Save As, Rename, Delete, Reset, and Save.
+- Updated Edge onboard slot copy to describe USB and Bluetooth sync support.
+- Changed empty Edge slot refresh text from "usb scan" to "controller scan."
 
 ## Linux Beta Reliability
 
-- **Improved Proton process detection.** Linux game detection now reads full
-  process arguments and extracts Windows `.exe` names from Proton command lines
-  instead of relying on truncated process names.
-- **Telemetry can recover supported-game detection.** If process detection
-  misses Forza but live supported telemetry is flowing, DSCC can select the game
-  profile from the telemetry adapter instead of staying on Global.
-- **Global profile overrides no longer block detected games.** Global remains
-  the default when no supported game is active, but a detected supported game can
-  still resolve to its game profile.
-- **Trigger input previews now drain stale HID reports.** The input reader
-  returns the newest queued trigger state, reducing lag in trigger tests on
-  Linux hidraw paths.
-- **Support bundles report live telemetry more accurately.** Linux reports with
-  live packets now show telemetry as live even when process detection needs the
-  telemetry-source fallback.
+- Linux process detection now reads full `ps` arguments and extracts Proton
+  Windows `.exe` names from command lines.
+- DSCC can select a supported game from live telemetry when process detection
+  misses the Proton game process.
+- Global profile overrides no longer block detected supported-game profiles.
+- Trigger input reads now drain queued HID reports and use the newest trigger
+  state, which reduces lag in Linux trigger tests.
+- Support bundles now mark telemetry live from adapter state when packets are
+  flowing.
 
 ## Release Artifacts
 
-- **0.3.0 is published as the latest normal release.** The update checker links
-  users to GitHub Releases; DSCC still does not auto-install updates.
-- **Release assets stay constrained to installers, archives, binaries, and
-  checksum files.** The release workflow removes unexpected assets when
-  republishing a tag, preventing web images or raw `web/dist` files from showing
-  up as standalone release downloads.
-- **Windows remains unsigned.** This project is proceeding without paid code
-  signing, so SmartScreen or managed endpoint policy may warn. Verify downloads
-  with the SHA256 checksum files on the release page.
+- Bumped Rust crate, web package, installer, README, docs, and issue-template
+  metadata to `0.3.0`.
+- The release workflow limits uploaded assets to the Windows MSI, Windows
+  binaries zip, Linux archive, and checksum files.
+- The update checker links to GitHub Releases. DSCC still does not install
+  updates automatically.
 
 ## Validation Gate
 
@@ -101,12 +73,10 @@ Latest release notes are listed first. For install steps, start with the
 
 Release date: 2026-05-25
 
-This release is a DualSense Edge portability and safety update. The big win is
-real onboard Fn-slot profile sync over Bluetooth, backed by controller
-acknowledgement and readback verification instead of "write and hope." It also
-adds a practical Steam Input paddle-shift helper for Forza-style keyboard-backed
-layouts and refreshes the user-facing docs around what DSCC can and cannot store
-on the controller itself.
+0.2.9 adds DualSense Edge onboard Fn-slot profile sync over Bluetooth with
+controller acknowledgement and readback verification. It also adds a Steam Input
+paddle-shift helper for Forza-style keyboard-backed layouts and documents what
+DSCC can store on the controller itself.
 
 ## DualSense Edge Onboard Profiles
 
@@ -246,7 +216,7 @@ This release is a focused feel-and-polish update for the 0.2.6 trigger editor. I
 ## Release Publishing
 
 - **0.2.7 is published as the latest normal release.** The tag workflow now creates a published GitHub Release instead of leaving the generated artifacts as a draft prerelease, so the update checker and Releases page can see the build as the current latest version.
-- **Windows remains unsigned by design for this release.** The MSI and raw Windows binaries are still produced by the release workflow and should be verified with the included SHA256 checksum file.
+- **Windows artifacts are unsigned.** The release workflow still produces the MSI and raw Windows binaries with SHA256 checksum files.
 
 ## Validation gate
 
@@ -368,10 +338,10 @@ Download `DualSenseCommandCenter-0.2.4.msi` from the Releases page and run it. T
 Release date: 2026-05-22
 
 A focused hardware-readiness release for DualSense Edge owners, Forza haptics,
-and production build hygiene. The headline is onboard Edge profile sync: DSCC
-can now read the controller's Fn slots over USB, stage profile data safely when
-hardware sync is unavailable, and write supported static profile settings back
-to the Edge without exposing raw HID-byte write APIs.
+and production build hygiene. DSCC can now read the controller's Fn slots over
+USB, stage profile data when hardware sync is unavailable, and write supported
+static profile settings back to the Edge without exposing raw HID-byte write
+APIs.
 
 ## Highlights
 

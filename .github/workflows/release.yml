@@ -278,7 +278,7 @@ jobs:
             cat > release-notes.md <<'EOF'
           # DualSense Command Center
 
-          Unsigned beta artifacts for DualSense Command Center.
+          DualSense Command Center release artifacts.
           EOF
           fi
 
@@ -286,9 +286,7 @@ jobs:
 
           ## Release Artifacts
 
-          Windows MSI and raw binary artifacts are unsigned. Windows SmartScreen
-          or managed endpoint policy may warn or block installation. Verify the
-          downloaded files against the published SHA256 checksum files.
+          Verify downloaded files against the published SHA256 checksum files.
 
           The Linux archive includes the bundled production web UI, so
           `./dscc-cli serve --addr 127.0.0.1:43473` can serve the app without
