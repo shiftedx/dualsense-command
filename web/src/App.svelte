@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { Cable, ClipboardCopy, CopyPlus, Download, ExternalLink, LifeBuoy, Minus, Plus, RefreshCw, RotateCcw, Save } from '@lucide/svelte';
+  import { Cable, CircleHelp, ClipboardCopy, CopyPlus, Download, ExternalLink, LifeBuoy, Minus, Plus, RefreshCw, RotateCcw, Save } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import Tooltip from './components/Tooltip.svelte';
   import InitialBadge from './components/InitialBadge.svelte';
   import AddGameDialog from './components/AddGameDialog.svelte';
   import ControllerCard from './components/ControllerCard.svelte';
+  import OnboardingTutorial from './components/OnboardingTutorial.svelte';
   import { createAppRuntime } from './lib/appRuntime';
   import {
     ButtonMappingView,
@@ -113,6 +114,11 @@
     { id: 'haptics', label: 'Adaptive Triggers & Haptics', hash: '#/adaptive-triggers-haptics' },
     { id: 'buttonMapping', label: 'Button Mapping', hash: '#/button-mapping' }
   ];
+  const viewTooltips: Record<AppView, string> = {
+    games: 'Choose the target controller, Global Profile, supported game scopes, and DualSense Edge onboard slots.',
+    haptics: 'Tune L2/R2 curves, manual trigger tests, body haptics, lightbar colors, and telemetry routes.',
+    buttonMapping: 'Mirror and edit Steam Input assignments for the selected game/controller layout.'
+  };
   const EMPTY_STEAM_INPUT_BINDINGS: SteamInputBinding[] = [];
   const EMPTY_STEAM_BINDING_MAP = new Map<string, SteamInputBinding>();
   const EMPTY_STEAM_MIRROR_GROUPS: SteamMirrorGroup[] = [];
@@ -616,6 +622,7 @@
   const LIVE_CONFIG_SYNC_DEBOUNCE_MS = 120;
   const UPDATE_RELEASE_PAGE_URL = 'https://github.com/shiftedx/dualsense-command/releases/latest';
   const UPDATE_DISMISSED_VERSION_KEY = 'dscc-update-dismissed-version';
+  const ONBOARDING_DISMISSED_KEY = 'dscc-onboarding-v1-dismissed';
 
   let snapshot: AppSnapshot | null = null;
   let loading = true;
@@ -665,6 +672,8 @@
   let checkedUpdateVersion = '';
   let updateDismissedVersion = '';
   let updateDismissalLoaded = false;
+  let onboardingOpen = false;
+  let onboardingLoaded = false;
   let newProfileName = '';
   let renameProfileId = '';
   let renameProfileName = '';
@@ -1309,6 +1318,30 @@
       window.localStorage.setItem(UPDATE_DISMISSED_VERSION_KEY, version);
     } catch {
       // Dismissal is convenience state; failing to persist it should not block use.
+    }
+  };
+
+  const loadOnboardingPreference = () => {
+    if (typeof window === 'undefined' || onboardingLoaded) return;
+    onboardingLoaded = true;
+    try {
+      onboardingOpen = window.localStorage.getItem(ONBOARDING_DISMISSED_KEY) !== '1';
+    } catch {
+      onboardingOpen = false;
+    }
+  };
+
+  const openOnboarding = () => {
+    onboardingOpen = true;
+  };
+
+  const dismissOnboarding = () => {
+    onboardingOpen = false;
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(ONBOARDING_DISMISSED_KEY, '1');
+    } catch {
+      // First-run help is optional convenience state.
     }
   };
 
@@ -2807,7 +2840,7 @@
   const edgeSlotWriteTooltip = (slot: EdgeProfileSlot) =>
     edgeProfiles?.supportState === 'read_write'
       ? `Writes the current trigger ranges, lightbar color, stick presets, and supported button remaps to ${slot.shortcut}. Live telemetry effects still require DSCC to be running.`
-      : `Stages the current trigger ranges, lightbar color, stick presets, and supported button remaps for ${slot.shortcut}. Connect the DualSense Edge over USB to sync controller memory.`;
+      : `Stages the current trigger ranges, lightbar color, stick presets, and supported button remaps for ${slot.shortcut}. Connect the DualSense Edge over USB or Bluetooth, then read slots again to sync controller memory.`;
   const edgeSlotWriteLabel = () => (edgeProfiles?.supportState === 'read_write' ? 'Write' : 'Stage');
 
   const edgeProfileNameForSlot = (slot: EdgeProfileSlot) => {
@@ -4053,6 +4086,7 @@
       connectSnapshotSocket: connectAppSnapshotSocket,
       onStart: () => {
         loadDismissedUpdateVersion();
+        loadOnboardingPreference();
         activeView = appViewFromHash();
         syncTriggerInputPolling();
       },
@@ -4140,15 +4174,17 @@
 
       <nav class="dm-view-nav" aria-label="Command center views">
         {#each appViews as view}
-          <button
-            class:active={activeView === view.id}
-            disabled={(view.id === 'haptics' && !tuningReady) || (view.id === 'buttonMapping' && !buttonMappingReady)}
-            type="button"
-            aria-current={activeView === view.id ? 'page' : undefined}
-            onclick={() => navigateToView(view.id)}
-          >
-            {view.label}
-          </button>
+          <Tooltip text={viewTooltips[view.id]} side="bottom" align="center">
+            <button
+              class:active={activeView === view.id}
+              disabled={(view.id === 'haptics' && !tuningReady) || (view.id === 'buttonMapping' && !buttonMappingReady)}
+              type="button"
+              aria-current={activeView === view.id ? 'page' : undefined}
+              onclick={() => navigateToView(view.id)}
+            >
+              {view.label}
+            </button>
+          </Tooltip>
         {/each}
       </nav>
 
@@ -4158,6 +4194,16 @@
           <strong>{systemReadoutValue}</strong>
           <small>{systemReadoutDetail}</small>
         </div>
+        <Tooltip text="Open the quick start guide again. It explains Profiles, trigger tests, telemetry safety, and support bundles." side="bottom" align="end">
+          <button
+            class="dm-support-trigger"
+            type="button"
+            aria-label="Open quick start guide"
+            onclick={openOnboarding}
+          >
+            <CircleHelp size={14} /> Guide
+          </button>
+        </Tooltip>
         <Tooltip text="Copy or export a sanitized support bundle for GitHub issues or Discord help. Raw hardware ids are excluded." side="bottom" align="end">
           <button
             class:active={supportPanelOpen}
@@ -4214,6 +4260,12 @@
         {/if}
       </aside>
     {/if}
+
+    <OnboardingTutorial
+      open={onboardingOpen}
+      onClose={dismissOnboarding}
+      onNavigate={navigateToView}
+    />
 
     {#if activeView === 'games' || !tuningReady}
       <section class="dm-games-page" aria-label="Supported games and target controller">
@@ -4303,7 +4355,7 @@
                     <div>
                       <span>Fn Slots</span>
                       <strong>{edgeProfilesLoading ? 'Reading slots' : 'No slot data'}</strong>
-                      <small>{edgeProfilesLoading ? 'usb scan' : 'unavailable'}</small>
+                      <small>{edgeProfilesLoading ? 'controller scan' : 'unavailable'}</small>
                     </div>
                   </div>
                 {/if}
@@ -5128,38 +5180,49 @@
               </select>
             </label>
             <div class="dm-action-row">
-              <button class="dm-mini-button" type="button" onclick={requestProfileImport}>Import</button>
+              <Tooltip text="Import a DSCC profile JSON file into the selected scope." side="top" align="center">
+                <button class="dm-mini-button" type="button" onclick={requestProfileImport}>Import</button>
+              </Tooltip>
               <input bind:this={profileImportInput} class="ops-hidden-file" type="file" accept="application/json,.json,.dscc-profile" onchange={(event) => void handleProfileImport(event)} />
-              <button class="dm-mini-button" type="button" disabled={!activeProfileId || profileFileBusy} onclick={() => void exportSelectedProfile()}>Export</button>
-              <button
-                class="dm-mini-button wide"
-                type="button"
-                disabled={!selectedActionProfile || profileSaveAsBusy}
-                title="Save the current tuning into a new profile"
-                onclick={beginSaveAsProfile}
-              ><CopyPlus size={14} /> Save As</button>
-              <button
-                class="dm-mini-button"
-                type="button"
-                disabled={!canRenameSelectedProfile || profileRenameBusy || !selectedActionProfile}
-                title={canRenameSelectedProfile ? 'Rename selected custom profile' : 'Stock profiles cannot be renamed'}
-                onclick={beginRenameSelectedProfile}
-              >Rename</button>
-              <button
-                class="dm-mini-button"
-                type="button"
-                disabled={!canDeleteSelectedProfile || profileFileBusy || !selectedActionProfile}
-                title={canDeleteSelectedProfile ? 'Delete selected custom profile' : 'Stock profiles cannot be deleted'}
-                onclick={() => selectedActionProfile && void deleteProfileById(selectedActionProfile.id, selectedActionProfile.name)}
-              >Delete</button>
-              <button class="dm-mini-button" type="button" onclick={restoreDefaults}><RotateCcw size={14} /> Reset</button>
-              <button
-                class:dirty={profileConfigDirty}
-                class="dm-apply-button"
-                type="button"
-                disabled={!selectedActionProfile || profileSaveBusy || !profileConfigDirty}
-                onclick={() => void saveActiveProfile()}
-              ><Save size={14} /> {profileSaveBusy ? 'Saving' : 'Save'}</button>
+              <Tooltip text="Export the selected profile as a DSCC profile JSON file." side="top" align="center">
+                <button class="dm-mini-button" type="button" disabled={!activeProfileId || profileFileBusy} onclick={() => void exportSelectedProfile()}>Export</button>
+              </Tooltip>
+              <Tooltip text="Save the current tuning into a new custom profile without changing the built-in template." side="top" align="center">
+                <button
+                  class="dm-mini-button wide"
+                  type="button"
+                  disabled={!selectedActionProfile || profileSaveAsBusy}
+                  onclick={beginSaveAsProfile}
+                ><CopyPlus size={14} /> Save As</button>
+              </Tooltip>
+              <Tooltip text={canRenameSelectedProfile ? 'Rename the selected custom profile.' : 'Built-in profiles cannot be renamed. Use Save As first.'} side="top" align="center">
+                <button
+                  class="dm-mini-button"
+                  type="button"
+                  disabled={!canRenameSelectedProfile || profileRenameBusy || !selectedActionProfile}
+                  onclick={beginRenameSelectedProfile}
+                >Rename</button>
+              </Tooltip>
+              <Tooltip text={canDeleteSelectedProfile ? 'Delete the selected custom profile from DSCC.' : 'Built-in profiles cannot be deleted.'} side="top" align="center">
+                <button
+                  class="dm-mini-button"
+                  type="button"
+                  disabled={!canDeleteSelectedProfile || profileFileBusy || !selectedActionProfile}
+                  onclick={() => selectedActionProfile && void deleteProfileById(selectedActionProfile.id, selectedActionProfile.name)}
+                >Delete</button>
+              </Tooltip>
+              <Tooltip text="Restore the selected profile's trigger, haptic, and lightbar values to defaults." side="top" align="center">
+                <button class="dm-mini-button" type="button" onclick={restoreDefaults}><RotateCcw size={14} /> Reset</button>
+              </Tooltip>
+              <Tooltip text={profileConfigDirty ? 'Save the current tuning to the selected profile.' : 'No unsaved tuning changes.'} side="top" align="end">
+                <button
+                  class:dirty={profileConfigDirty}
+                  class="dm-apply-button"
+                  type="button"
+                  disabled={!selectedActionProfile || profileSaveBusy || !profileConfigDirty}
+                  onclick={() => void saveActiveProfile()}
+                ><Save size={14} /> {profileSaveBusy ? 'Saving' : 'Save'}</button>
+              </Tooltip>
             </div>
           </div>
           {#if saveAsProfileOpen}

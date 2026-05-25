@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-25
 
-DSCC `0.2.9` is a public unsigned Windows beta. It is ready for testers, but it
+DSCC `0.3.0` is a public unsigned Windows beta. It is ready for testers, but it
 should not be called broadly production-ready yet.
 
 ## Current Status
@@ -58,6 +58,8 @@ templates:
   tracked in [Windows Hardware Matrix](hardware-matrix.md).
 - A sanitized support bundle is available from the app Support panel and
   `dscc-cli support-bundle`.
+- First-run onboarding is available in the app and can be reopened from the
+  header Guide button after dismissal.
 
 ## Still Needed Before Calling It Production-Ready
 

@@ -1,3 +1,99 @@
+# DualSense Command Center 0.3.0
+
+Latest release notes are listed first. For install steps, start with the
+[README](README.md).
+
+Release date: 2026-05-25
+
+This release is a first-run polish and Linux beta reliability update. The app
+now gives new users a short skippable guide on first launch, keeps that guide
+available from the header, and tightens tooltip copy around Profiles, haptics,
+Steam Input, support bundles, and Edge onboard sync. It also ships the Linux
+telemetry and trigger-preview fixes that were validated after the 0.2.9 report.
+
+## New User Onboarding
+
+- **Added a compact first-run guide.** New installs see a short guide covering
+  controller/profile scope, telemetry safety, trigger testing, and support
+  bundles without blocking the rest of the app.
+- **The guide is skippable and remembered locally.** Skipping or finishing it
+  stores only a local browser preference; profiles and controller settings are
+  untouched.
+- **The guide can be reopened.** A new **Guide** button in the app header brings
+  the same quick start back if a user forgets what a page or safety state means.
+- **Guide actions jump to useful pages.** The Profiles and Haptics steps can
+  pivot directly to the relevant view when those views are available.
+
+## Tooltip And UX Polish
+
+- **Added clear view-level tooltips.** Profiles, Adaptive Triggers & Haptics,
+  and Button Mapping now explain what each area controls before the user clicks.
+- **Profile action tooltips were tightened.** Import, Export, Save As, Rename,
+  Delete, Reset, and Save now explain the exact action and built-in profile
+  limits.
+- **Edge onboard wording now matches current support.** The app no longer
+  implies assignable Fn-slot sync is USB-only; supported Windows hosts can read
+  and write DualSense Edge onboard slots over USB or Bluetooth when HID
+  feature-report access is available.
+- **Empty Edge slot status is less misleading.** Slot refresh copy now says
+  "controller scan" instead of "usb scan."
+
+## Linux Beta Reliability
+
+- **Improved Proton process detection.** Linux game detection now reads full
+  process arguments and extracts Windows `.exe` names from Proton command lines
+  instead of relying on truncated process names.
+- **Telemetry can recover supported-game detection.** If process detection
+  misses Forza but live supported telemetry is flowing, DSCC can select the game
+  profile from the telemetry adapter instead of staying on Global.
+- **Global profile overrides no longer block detected games.** Global remains
+  the default when no supported game is active, but a detected supported game can
+  still resolve to its game profile.
+- **Trigger input previews now drain stale HID reports.** The input reader
+  returns the newest queued trigger state, reducing lag in trigger tests on
+  Linux hidraw paths.
+- **Support bundles report live telemetry more accurately.** Linux reports with
+  live packets now show telemetry as live even when process detection needs the
+  telemetry-source fallback.
+
+## Release Artifacts
+
+- **0.3.0 is published as the latest normal release.** The update checker links
+  users to GitHub Releases; DSCC still does not auto-install updates.
+- **Release assets stay constrained to installers, archives, binaries, and
+  checksum files.** The release workflow removes unexpected assets when
+  republishing a tag, preventing web images or raw `web/dist` files from showing
+  up as standalone release downloads.
+- **Windows remains unsigned.** This project is proceeding without paid code
+  signing, so SmartScreen or managed endpoint policy may warn. Verify downloads
+  with the SHA256 checksum files on the release page.
+
+## Validation Gate
+
+This release was cut after a clean run of:
+
+```powershell
+npm.cmd --prefix web run check
+cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
+cargo +stable-x86_64-pc-windows-gnu test --workspace
+cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warnings
+cargo +stable-x86_64-pc-windows-gnu build -p dscc-agent -p dscc-tray -p dscc-cli --release --target x86_64-pc-windows-gnu
+```
+
+WSL Ubuntu also passed:
+
+```bash
+cargo test -p dscc-device -p dscc-agent --lib
+cargo build -p dscc-agent -p dscc-cli --release
+```
+
+## Install
+
+Download `DualSenseCommandCenter-v0.3.0-windows-x86_64-unsigned.msi` from the
+Releases page and run it. Profiles and settings live in the user config folder
+and are preserved during upgrades. Verify downloads with the included SHA256
+checksum file.
+
 # DualSense Command Center 0.2.9
 
 Latest release notes are listed first. For install steps, start with the

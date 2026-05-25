@@ -219,6 +219,15 @@ code,
     inset 0 0 0 1px rgba(226, 232, 240, 0.06);
 }
 
+.dm-view-nav .dscc-tooltip {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.dm-view-nav .dscc-tooltip button {
+  width: 100%;
+}
+
 .dm-view-nav button {
   height: 34px;
   min-width: 0;
@@ -4554,6 +4563,10 @@ small.dm-scope-chip-detail {
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.dm-action-row > .dscc-tooltip {
+  flex: 0 0 auto;
 }
 
 .dm-action-row .dm-mini-button,
