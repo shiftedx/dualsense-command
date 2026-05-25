@@ -1,9 +1,8 @@
 # DualSense Command Center
 
-DualSense Command Center, or DSCC, is an easy Windows app for PlayStation
-DualSense and DualSense Edge controllers. It gives you adaptive triggers,
-haptics, profiles, lightbar controls, and racing telemetry without setting up
-Python or running scripts.
+DualSense Command Center (DSCC) is a Windows app for PlayStation DualSense and
+DualSense Edge controllers. It gives you adaptive triggers, haptics, profiles,
+lightbar controls, and racing telemetry without Python setup or scripts.
 
 <img width="2095" height="1422" alt="DualSense Command Center haptics screen" src="https://github.com/user-attachments/assets/76650865-d946-45e5-a723-88e978988822" />
 
@@ -15,10 +14,10 @@ Get the latest Windows installer from [GitHub Releases](https://github.com/shift
 - Recommended download: Windows x86_64 MSI
 - Linux builds: beta archive with bundled web UI
 
-The MSI is unsigned, so Windows SmartScreen may warn you. Profiles and settings
-are stored in your user folder and are preserved during upgrades.
-Only continue past SmartScreen if you downloaded the MSI from the official
-release page and, when needed, checked it against the published checksum.
+The MSI is unsigned, so Windows SmartScreen may warn you. DSCC stores profiles
+and settings in your user folder and preserves them during upgrades. Continue
+past SmartScreen only if you downloaded the MSI from the official release page
+and checked it against the published checksum when needed.
 
 ## Quick Start
 
@@ -29,23 +28,23 @@ release page and, when needed, checked it against the published checksum.
 5. Use **Global Profile** for normal controller tuning.
 6. Start a supported game to use telemetry-powered haptics.
 
-The first launch shows a short guide that can be skipped. You can open it again
-any time with the **Guide** button in the app header.
+On first launch, DSCC shows a short guide. You can skip it and reopen it from
+the **Guide** button in the app header.
 
 For Forza games, enable the in-game **Data Out** / **UDP Race Telemetry** option:
 
 - Target IP: `127.0.0.1`
 - Target port: `5300`
 
-That is the main setup. DSCC runs locally from the tray and opens a local web UI
-at `http://127.0.0.1:43473/`.
+DSCC runs from the tray and opens a local web UI at
+`http://127.0.0.1:43473/`.
 
 ## Supported Controllers
 
 DSCC supports DualSense and DualSense Edge controllers on Windows over USB and
-Bluetooth. DualSense Edge is fully supported for the normal DSCC runtime
-experience: profiles, adaptive triggers, telemetry haptics, lightbar controls,
-diagnostics, and safe game-gated output.
+Bluetooth. DualSense Edge supports the normal DSCC runtime experience:
+profiles, adaptive triggers, telemetry haptics, lightbar controls, diagnostics,
+and safe game-gated output.
 
 DualSense Edge onboard Fn-slot profile sync uses guarded HID feature reports on
 USB and Bluetooth. DSCC only marks a slot synced after the controller
@@ -62,7 +61,7 @@ Download the Linux archive, extract it into a fresh folder, then run:
 ```
 
 Open `http://127.0.0.1:43473/`. Release archives include the production web UI,
-so you do not need to run Vite. Linux controller access may still require local
+so you do not need to run Vite. Linux controller access may require local
 USB/HID permissions; see the [Linux Beta Guide](docs/linux-beta.md) for udev
 setup and validation commands.
 
@@ -110,7 +109,7 @@ DSCC is local-first by default:
 
 - The web UI and API run on `127.0.0.1:43473`.
 - The Forza telemetry listener runs on `127.0.0.1:5300`.
-- LAN access is off unless you explicitly enable it in the app.
+- LAN access is off unless you enable it in the app.
 - Game haptics require a supported detected game, an active profile, and fresh
   telemetry.
 - Manual test effects only run during the requested test.
@@ -126,8 +125,8 @@ taking over game-specific haptics.
   warning.
 - DSCC checks GitHub Releases for updates, but it does not install updates for
   you.
-- Some controller/connection combinations are still pending public hardware
-  matrix validation.
+- Some controller/connection combinations await public hardware matrix
+  validation.
 
 ## Need Help?
 
