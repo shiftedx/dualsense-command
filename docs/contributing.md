@@ -14,7 +14,9 @@ Before touching HID reports, Forza telemetry, Steam Input, Sony tooling, control
 
 ## Setup And One-Command Workflows
 
-Install Rust, the Windows GNU Rust target/toolchain used locally, and Node.js. Then install web dependencies:
+Install Rust, the Windows GNU Rust target/toolchain used locally, and Node.js 24
+to match CI. Linux builds also need `libudev-dev` for `hidapi`. Then install
+web dependencies:
 
 ```powershell
 npm.cmd --prefix web ci
@@ -105,7 +107,13 @@ $env:DSCC_AGENT_ADDR='127.0.0.1:43473'
 $env:DSCC_FORZA_BIND_ADDR='127.0.0.1:5300'
 ```
 
-Non-loopback API or UDP adapter binding requires explicit opt-in: `DSCC_ENABLE_LAN_API=1` for the API and `DSCC_ENABLE_LAN_FORZA=1` for the current Forza adapter.
+Non-loopback API or UDP adapter binding requires explicit opt-in. Installed tray
+builds pass `DSCC_ENABLE_LAN_API=1` so the in-app LAN Access setting can be
+saved, but the persisted `listenOnAllInterfaces` setting still controls whether
+the API binds to `0.0.0.0`. Direct `dscc-agent` non-loopback binding requires
+`DSCC_ENABLE_LAN_API=1`; direct `dscc-cli serve --addr ...` is a deliberate
+developer override. The current Forza adapter requires `DSCC_ENABLE_LAN_FORZA=1`
+for non-loopback binding.
 
 ## Add An API Route
 
@@ -144,7 +152,8 @@ Keep module ownership explicit:
 - Adapter modules own protocol/runtime plumbing. A runnable UDP adapter owns parser/runtime glue for one protocol, such as Forza Data Out.
 - Game modules are one supported game each, with their own game id, detection hints, profiles, labels, and adapter dependencies.
 - Game detection responses use `moduleId` for the game module and `adapterId` for the telemetry adapter. Do not overload one as the other.
-- Forza Horizon 5, Forza Horizon 6, and Forza Motorsport should remain separate game modules even when they share the `forza-data-out` adapter.
+- Forza Horizon 5, Forza Horizon 6, and Forza Motorsport are separate game modules even when they share the `forza-data-out` adapter.
+- Assetto Corsa Rally is a built-in game module that uses the `assetto-shared-memory` Windows runtime.
 - Community modules are currently data-only manifest packs. They may contribute metadata and profile templates, but not native parsers, executable code, process scanners, filesystem writers, or runtime hooks.
 
 See `docs/game-module-contribution-guide.md` for the contribution checklist and the built-in Assetto Corsa Rally reference module.
@@ -153,11 +162,11 @@ Choose the contribution path before editing:
 
 1. Use a data-only profile pack when the game can use an existing built-in adapter and the contribution is profiles, metadata, or licensed assets. The loader is not implemented yet, so validate by importing each included `dev.dscc.profile.v1` profile through the profile import API/UI.
 2. Propose a built-in Rust adapter when new telemetry parsing, shared-memory access, filesystem access, process logic, or runtime behavior is needed.
-3. Propose a built-in Rust game module when adding first-party game detection, bundled presets, glyph helpers, or an adapter binding before the community loader exists.
+3. Propose a built-in Rust game module when adding built-in game detection, bundled presets, glyph helpers, or an adapter binding before the community loader exists.
 
 Built-in game module metadata lives in `crates/dscc-agent/src/game_modules.rs`. Built-in adapter metadata, UDP parser registrations, and parser implementations live in `crates/dscc-adapters`. The agent starts registered runnable UDP adapters and routes normalized `SignalUpdate`s into snapshots. `/api/modules` exposes both adapter modules and built-in game modules.
 
-Native parser contributions must stay built into Rust until DSCC has a parser sandbox/signing model. See `docs/module-manifest-format.md` for the public manifest shape.
+Native parser contributions must stay built into Rust until DSCC has a parser sandbox/signing model. The agent starts registered UDP runtimes plus the Windows Assetto shared-memory runtime; adapter catalog metadata alone does not start a listener or parse packets. See `docs/module-manifest-format.md` for the public manifest shape.
 
 Because DSCC is still pre-1.0, prefer clean contracts over compatibility shims. If a route, DTO, or UI caller expects an old adapter-shaped field, update that caller to the current game-module/adapter-module model instead of translating around it.
 
@@ -179,6 +188,13 @@ When adding an output feature:
 5. Add USB/Bluetooth encoder tests and dry-run write tests with `MockTransport`.
 6. Use `DSCC_DISABLE_HARDWARE_OUTPUT=1` or `DSCC_ENABLE_HARDWARE_OUTPUT=0` for local diagnostics that must not write to hardware.
 7. Record hardware validation notes in `docs/hardware-validation.md` or `PROVENANCE.md` when behavior depends on a new observation.
+
+DualSense Edge onboard slot reads and writes stay behind the same typed hardware
+boundary. USB-connected Edge controllers can read onboard state, `Fn + Circle`,
+`Fn + Cross`, and `Fn + Square` are editable, and guarded static writes are
+allowed only when the controller and hardware-output mode permit them. Bluetooth
+or unavailable hardware paths must stage changes locally and say why controller
+memory was not written. Live telemetry effects are not stored onboard.
 
 ## Add A Steam Input Binding Feature
 
@@ -213,7 +229,7 @@ Forza effect work touches telemetry, profiles, controller output, and clean-room
 5. Add UI metadata in `web/src/App.svelte` only until that feature is extracted; keep UI-side route/type additions in `web/src/lib/types.ts`.
 6. Implement trigger rules in `forza_runtime_profile` when the output is rule-driven.
 7. Implement body rumble, lightbar, or player LED layers in `apply_forza_output_enhancements` and its helpers.
-8. Preserve stale/menu behavior: stale Forza streams keep safe baseline tension while the game is still detected, and neutralize after the game exits.
+8. Preserve stale/menu behavior: stale, menu, or no-telemetry Forza state keeps triggers and rumble neutral; supported-game detection may produce lightbar-only output; manual effect tests are time-limited; the watchdog neutralizes/releases output when the telemetry gate closes.
 9. Add tests for live telemetry, stale telemetry, disabled effect behavior, routing, and profile preset defaults.
 
 Timing assumptions to preserve unless the task explicitly changes them:

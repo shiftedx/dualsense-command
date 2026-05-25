@@ -49,9 +49,8 @@ pnpm-debug.log*
 /CODEX.md
 /codex.local.md
 /CODEX.local.md
-/agents.md
-/agents.local.md
-/AGENTS.local.md
+/[Aa][Gg][Ee][Nn][Tt][Ss].md
+/[Aa][Gg][Ee][Nn][Tt][Ss].local.md
 /.agents/
 /.mcp/
 /.mcp.json
