@@ -15,8 +15,8 @@ Get the latest Windows installer from [GitHub Releases](https://github.com/shift
 - Recommended download: Windows x86_64 MSI
 - Linux builds: beta archive with bundled web UI
 
-The MSI is unsigned right now, so Windows SmartScreen may warn you. Profiles and
-settings are stored in your user folder and are preserved during upgrades.
+The MSI is unsigned, so Windows SmartScreen may warn you. Profiles and settings
+are stored in your user folder and are preserved during upgrades.
 Only continue past SmartScreen if you downloaded the MSI from the official
 release page and, when needed, checked it against the published checksum.
 
