@@ -14,7 +14,7 @@ body:
     id: version
     attributes:
       label: DSCC version
-      description: Example: 0.2.8
+      description: Example: 0.2.9
   - type: dropdown
     id: area
     attributes:

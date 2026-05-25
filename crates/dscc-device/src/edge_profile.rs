@@ -418,13 +418,13 @@ pub fn write_edge_onboard_profile<T: DeviceTransport>(
 ) -> Result<(), DeviceError> {
     if !edge_onboard_write_transport_supported(transport_kind) {
         return Err(DeviceError::TransportFault(
-            "DualSense Edge onboard profile writes require USB HID feature report access; Bluetooth onboard writes are staged locally"
+            "DualSense Edge onboard profile writes require USB or Bluetooth HID feature report access"
                 .to_string(),
         ));
     }
 
     let mut handle = transport.open(target_id)?;
-    write_edge_onboard_profile_to_handle(handle.as_mut(), profile)
+    write_edge_onboard_profile_to_handle_for_transport(handle.as_mut(), transport_kind, profile)
 }
 
 pub fn edge_onboard_transport_supported(transport_kind: DeviceTransportKind) -> bool {
@@ -435,7 +435,10 @@ pub fn edge_onboard_transport_supported(transport_kind: DeviceTransportKind) -> 
 }
 
 pub fn edge_onboard_write_transport_supported(transport_kind: DeviceTransportKind) -> bool {
-    matches!(transport_kind, DeviceTransportKind::Usb)
+    matches!(
+        transport_kind,
+        DeviceTransportKind::Usb | DeviceTransportKind::Bluetooth
+    )
 }
 
 pub fn read_edge_onboard_profiles_from_handle(
@@ -471,21 +474,27 @@ pub fn write_edge_onboard_profile_to_handle(
     handle: &mut dyn DeviceHandle,
     profile: &EdgeOnboardProfile,
 ) -> Result<(), DeviceError> {
-    let report_id = profile.slot.write_report_id().ok_or_else(|| {
-        DeviceError::TransportFault(
-            "the default Fn + Triangle profile cannot be overwritten".to_string(),
-        )
-    })?;
+    write_edge_onboard_profile_to_handle_for_transport(handle, DeviceTransportKind::Usb, profile)
+}
+
+pub fn write_edge_onboard_profile_to_handle_for_transport(
+    handle: &mut dyn DeviceHandle,
+    transport_kind: DeviceTransportKind,
+    profile: &EdgeOnboardProfile,
+) -> Result<(), DeviceError> {
+    let write_plan = edge_onboard_write_plan(profile.slot, transport_kind)?;
     let reports = encode_edge_onboard_profile(profile)?;
     for report in reports {
-        let written = handle.send_feature_report(report_id, &report)?;
-        if written < EDGE_PROFILE_REPORT_LEN {
+        let payload = write_plan.payload(&report);
+        let written = handle.send_feature_report(write_plan.report_id, payload)?;
+        if written < payload.len() {
             return Err(DeviceError::TransportFault(format!(
-                "short DualSense Edge profile feature report write: expected {EDGE_PROFILE_REPORT_LEN} bytes, wrote {written}"
+                "short DualSense Edge profile feature report write: expected {} bytes, wrote {written}",
+                payload.len()
             )));
         }
     }
-    if let Some(ack_report_id) = profile.slot.write_ack_report_id() {
+    if let Some(ack_report_id) = write_plan.ack_report_id {
         let ack = handle
             .receive_feature_report(ack_report_id, EDGE_PROFILE_READ_PAYLOAD_LEN)
             .map_err(|error| {
@@ -499,7 +508,89 @@ pub fn write_edge_onboard_profile_to_handle(
             )));
         }
     }
+
+    let confirmed = read_edge_onboard_profile_slot_from_handle(handle, profile.slot)?;
+    if confirmed != *profile {
+        return Err(DeviceError::TransportFault(
+            "DualSense Edge profile write readback did not match the requested slot configuration"
+                .to_string(),
+        ));
+    }
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EdgeProfileWritePayloadShape {
+    Full,
+    Selectorless,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct EdgeProfileWritePlan {
+    report_id: u8,
+    ack_report_id: Option<u8>,
+    payload_shape: EdgeProfileWritePayloadShape,
+}
+
+impl EdgeProfileWritePlan {
+    fn payload(self, report: &[u8; EDGE_PROFILE_REPORT_LEN]) -> &[u8] {
+        match self.payload_shape {
+            EdgeProfileWritePayloadShape::Full => report,
+            EdgeProfileWritePayloadShape::Selectorless => &report[1..],
+        }
+    }
+}
+
+fn edge_onboard_write_plan(
+    slot: EdgeOnboardSlotId,
+    transport_kind: DeviceTransportKind,
+) -> Result<EdgeProfileWritePlan, DeviceError> {
+    let usb_report_id = slot.write_report_id().ok_or_else(|| {
+        DeviceError::TransportFault(
+            "the default Fn + Triangle profile cannot be overwritten".to_string(),
+        )
+    })?;
+    let ack_report_id = slot.write_ack_report_id();
+    match transport_kind {
+        DeviceTransportKind::Usb => Ok(EdgeProfileWritePlan {
+            report_id: usb_report_id,
+            ack_report_id,
+            payload_shape: EdgeProfileWritePayloadShape::Full,
+        }),
+        DeviceTransportKind::Bluetooth => Ok(EdgeProfileWritePlan {
+            report_id: ack_report_id.ok_or_else(|| {
+                DeviceError::TransportFault(
+                    "the default Fn + Triangle profile cannot be overwritten".to_string(),
+                )
+            })?,
+            ack_report_id,
+            payload_shape: EdgeProfileWritePayloadShape::Selectorless,
+        }),
+        _ => Err(DeviceError::TransportFault(
+            "DualSense Edge onboard profile writes require USB or Bluetooth HID feature report access"
+                .to_string(),
+        )),
+    }
+}
+
+fn read_edge_onboard_profile_slot_from_handle(
+    handle: &mut dyn DeviceHandle,
+    slot: EdgeOnboardSlotId,
+) -> Result<EdgeOnboardProfile, DeviceError> {
+    let reports = slot.read_report_ids();
+    let first = normalize_edge_profile_read_report(
+        reports[0],
+        handle.receive_feature_report(reports[0], EDGE_PROFILE_READ_PAYLOAD_LEN)?,
+    );
+    let second = normalize_edge_profile_read_report(
+        reports[1],
+        handle.receive_feature_report(reports[1], EDGE_PROFILE_READ_PAYLOAD_LEN)?,
+    );
+    let third = normalize_edge_profile_read_report(
+        reports[2],
+        handle.receive_feature_report(reports[2], EDGE_PROFILE_READ_PAYLOAD_LEN)?,
+    );
+    decode_edge_onboard_profile([&first, &second, &third])
 }
 
 fn normalize_edge_profile_read_report(report_id: u8, mut report: Vec<u8>) -> Vec<u8> {
@@ -837,6 +928,33 @@ mod tests {
         assert_eq!(decoded.slot, EdgeOnboardSlotId::Circle);
         assert_eq!(decoded.name, "Wireless Tune");
         assert_eq!(decoded.trigger_deadzone.left, [8, 92]);
+    }
+
+    #[test]
+    fn edge_profile_bluetooth_write_plan_uses_selectorless_ack_report() {
+        let plan =
+            edge_onboard_write_plan(EdgeOnboardSlotId::Square, DeviceTransportKind::Bluetooth)
+                .unwrap();
+        let profile = EdgeOnboardProfile::new(EdgeOnboardSlotId::Square, "Wireless Write");
+        let encoded = encode_edge_onboard_profile(&profile).unwrap();
+
+        assert_eq!(plan.report_id, 0x63);
+        assert_eq!(plan.ack_report_id, Some(0x63));
+        assert_eq!(plan.payload(&encoded[0]).len(), EDGE_PROFILE_REPORT_LEN - 1);
+        assert_eq!(plan.payload(&encoded[0])[0], encoded[0][1]);
+    }
+
+    #[test]
+    fn edge_profile_usb_write_plan_preserves_existing_report_shape() {
+        let plan =
+            edge_onboard_write_plan(EdgeOnboardSlotId::Cross, DeviceTransportKind::Usb).unwrap();
+        let profile = EdgeOnboardProfile::new(EdgeOnboardSlotId::Cross, "Wired Write");
+        let encoded = encode_edge_onboard_profile(&profile).unwrap();
+
+        assert_eq!(plan.report_id, 0x61);
+        assert_eq!(plan.ack_report_id, Some(0x64));
+        assert_eq!(plan.payload(&encoded[0]).len(), EDGE_PROFILE_REPORT_LEN);
+        assert_eq!(plan.payload(&encoded[0])[0], 0x61);
     }
 
     #[test]

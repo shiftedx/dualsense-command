@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-25
 
-DSCC `0.2.8` is a public unsigned Windows beta. It is ready for testers, but it
+DSCC `0.2.9` is a public unsigned Windows beta. It is ready for testers, but it
 should not be called broadly production-ready yet.
 
 ## Current Status
@@ -25,8 +25,8 @@ templates:
 - DSCC does not auto-install updates.
 - Hardware claims should point to the Windows hardware matrix and say whether a
   controller/transport cell is verified or pending.
-- DualSense Edge onboard sync can stage locally if Windows blocks HID
-  feature-report access.
+- DualSense Edge onboard sync only reports synced after HID acknowledgement and
+  typed readback verification.
 - Support requests should include a sanitized support bundle when possible.
 - Setup questions, tuning ideas, and "is this expected?" reports belong in
   GitHub Discussions before becoming tracked bugs.
@@ -51,9 +51,9 @@ templates:
 - Profile Save As, import, export, rename, delete, and activation exist.
 - Point-based trigger curves and Forza brake/throttle tuning are implemented.
 - Forza Data Out and Assetto Corsa Rally telemetry paths are live.
-- DualSense Edge onboard slots can be read over guarded USB or Bluetooth HID
-  feature-report paths. Controller-memory writes are USB-only right now;
-  Bluetooth changes are staged locally.
+- DualSense Edge onboard slots can be read and written over guarded USB or
+  Bluetooth HID feature-report paths, with default-slot protection and readback
+  verification.
 - Public Windows hardware matrix and release-candidate validation checklist are
   tracked in [Windows Hardware Matrix](hardware-matrix.md).
 - A sanitized support bundle is available from the app Support panel and

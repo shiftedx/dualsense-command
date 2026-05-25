@@ -11,7 +11,7 @@ Python or running scripts.
 
 Get the latest Windows installer from [GitHub Releases](https://github.com/shiftedx/dualsense-command/releases/latest).
 
-- Current release: `0.2.8`
+- Current release: `0.2.9`
 - Recommended download: Windows x86_64 MSI
 - Linux builds: beta archive with bundled web UI
 
@@ -44,9 +44,9 @@ Bluetooth. DualSense Edge is fully supported for the normal DSCC runtime
 experience: profiles, adaptive triggers, telemetry haptics, lightbar controls,
 diagnostics, and safe game-gated output.
 
-DualSense Edge onboard Fn-slot profile sync uses guarded USB HID feature
-reports. Bluetooth can read onboard slots and stage changes locally; connect
-over USB when you want DSCC to sync staged settings into controller memory.
+DualSense Edge onboard Fn-slot profile sync uses guarded HID feature reports on
+USB and Bluetooth. DSCC only marks a slot synced after the controller
+acknowledges the write and a fresh readback matches.
 See the [Windows Hardware Matrix](docs/hardware-matrix.md) for the current
 validation checklist.
 
@@ -72,9 +72,10 @@ setup and validation commands.
 - Adds body-rumble cues such as paddle-shift and landing thumps.
 - Controls lightbar color, brightness, RPM colors, and player LEDs.
 - Shows controller health, battery, connection, and basic diagnostics.
-- Helps with Steam Input button mappings for supported game layouts.
+- Helps with Steam Input button mappings for supported game layouts, including
+  a DualSense Edge paddle shift preset for keyboard-backed shifting.
 - Reads and writes supported DualSense Edge onboard Fn-slot settings over USB
-  or Bluetooth when HID feature-report access is available.
+  or Bluetooth, with default-slot protection and readback verification.
 - Checks GitHub Releases for updates and links you there. It does not install
   updates automatically.
 
@@ -122,8 +123,6 @@ taking over game-specific haptics.
   you.
 - Some controller/connection combinations are still pending public hardware
   matrix validation.
-- DualSense Edge onboard profile sync requires USB HID feature-report access.
-  Bluetooth can read slots and stage changes locally.
 
 ## Need Help?
 
@@ -138,10 +137,9 @@ taking over game-specific haptics.
 
 DualSense Edge is supported for DSCC runtime tuning on Windows over USB and
 Bluetooth. On-controller Fn-slot profile sync uses the same typed profile model
-over guarded USB HID feature reports, and only covers supported static settings
-such as trigger deadzones, stick presets, vibration intensity, trigger
-intensity, and button mappings. Bluetooth can read onboard slots and stage
-changes, but USB is required to sync controller memory.
+over guarded USB or Bluetooth HID feature reports, and only covers supported
+static settings such as trigger deadzones, stick presets, vibration intensity,
+trigger intensity, and button mappings.
 
 Live telemetry haptics are not stored on the controller. They require DSCC to be
 running.

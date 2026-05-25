@@ -25,10 +25,9 @@ from any other source.
 - Try USB first. It is the most reliable connection for testing.
 - Close other apps that may own the controller.
 - Reconnect the controller, then restart DSCC.
-- For DualSense Edge onboard profile features, USB is the most reliable first
-  test. Bluetooth can sync onboard slots when Windows exposes HID
-  feature-report access; otherwise DSCC stages changes locally and shows the
-  reason.
+- For DualSense Edge onboard profile features, USB and Bluetooth can both sync
+  assignable Fn-slot edits. DSCC only marks a slot synced after the controller
+  acknowledges the write and a fresh readback matches.
 - Check the [Windows Hardware Matrix](hardware-matrix.md) to see which
   controller/transport combinations have completed public validation.
 
@@ -105,6 +104,13 @@ every trigger movement.
 Open or create a real Steam Input layout for the selected game, then refresh
 DSCC. DSCC can show safe defaults, but it will not write generated placeholder
 mappings back to Steam.
+
+## Edge Paddle Preset Fails
+
+The paddle preset edits the selected Steam Input layout on this PC. It requires
+a DualSense Edge Steam Input layout that already contains Back Left and Back
+Right paddle bindings. Open Steam's controller configurator for the game once,
+save the layout, then apply the preset again.
 
 ## Create A Support Bundle
 

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { ChevronDown, Search } from '@lucide/svelte';
+  import { ChevronDown, Keyboard, Search, Wand2 } from '@lucide/svelte';
+  import Tooltip from '../../../components/Tooltip.svelte';
   import {
     chipDisplayLabel,
     parseSteamBindingTriple,
@@ -27,11 +28,19 @@
   export let focusedSlotSelectedBinding: SteamInputBinding | null = null;
   export let steamBindingBusy = false;
   export let steamInputLayoutAvailable = false;
+  export let paddlePresetVisible = false;
+  export let paddlePresetAvailable = false;
+  export let paddlePresetStatus = '';
+  export let paddlePresetLeftKey = 'Q';
+  export let paddlePresetRightKey = 'E';
   export let steamBindingDraft = '';
   export let steamBindingLabelDraft = '';
   export let targetGroups: PreparedSteamBindingTargetGroup[] = [];
   export let onSelectSlot: (slot: SteamBindingSlot) => void = () => {};
   export let onHoverSlot: (slot: SteamBindingSlot | null) => void = () => {};
+  export let onPaddlePresetLeftKeyChange: (nextKey: string) => void = () => {};
+  export let onPaddlePresetRightKeyChange: (nextKey: string) => void = () => {};
+  export let onApplyPaddlePreset: () => void | Promise<void> = () => {};
   export let onTargetChange: (rawOption: string) => void = () => {};
   export let onLabelChange: (nextLabel: string) => void = () => {};
   export let onRawDraftChange: (nextRaw: string) => void = () => {};
@@ -145,6 +154,54 @@
       <em class="dm-mapping-context-count">· {mappedVisibleChipCount}/{mirroredInputCount} inputs mapped</em>
     </p>
   </header>
+
+  {#if paddlePresetVisible}
+    <section class="dm-paddle-preset" aria-label="Steam Input paddle shift preset">
+      <div class="dm-paddle-preset-title">
+        <Keyboard size={15} aria-hidden="true" />
+        <div>
+          <span>Steam Input / PC only</span>
+          <strong>Paddle Shift</strong>
+          <em>Onboard Fn profiles are unchanged.</em>
+        </div>
+      </div>
+      <label class="dm-paddle-key-field">
+        <span>Back Left</span>
+        <input
+          value={paddlePresetLeftKey}
+          maxlength="32"
+          spellcheck="false"
+          autocomplete="off"
+          disabled={steamBindingBusy}
+          aria-label="Back Left paddle keyboard key"
+          oninput={(event) => onPaddlePresetLeftKeyChange((event.currentTarget as HTMLInputElement).value)}
+        />
+      </label>
+      <label class="dm-paddle-key-field">
+        <span>Back Right</span>
+        <input
+          value={paddlePresetRightKey}
+          maxlength="32"
+          spellcheck="false"
+          autocomplete="off"
+          disabled={steamBindingBusy}
+          aria-label="Back Right paddle keyboard key"
+          oninput={(event) => onPaddlePresetRightKeyChange((event.currentTarget as HTMLInputElement).value)}
+        />
+      </label>
+      <Tooltip text={paddlePresetStatus} side="bottom" align="end">
+        <button
+          class="dm-paddle-preset-action"
+          type="button"
+          disabled={steamBindingBusy || !paddlePresetAvailable || !paddlePresetLeftKey.trim() || !paddlePresetRightKey.trim()}
+          onclick={() => void onApplyPaddlePreset()}
+        >
+          <Wand2 size={14} aria-hidden="true" />
+          <span>{steamBindingBusy ? 'Saving' : 'Apply'}</span>
+        </button>
+      </Tooltip>
+    </section>
+  {/if}
 
   <div class="dm-steam-mirror" aria-label="Steam Input controller layout mirror">
     <div class="dm-steam-rail left">

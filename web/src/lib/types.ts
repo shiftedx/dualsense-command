@@ -486,6 +486,36 @@ export interface SteamInputBindingWriteResponse {
   warnings: string[];
 }
 
+export interface SteamInputPaddlePresetRequest {
+  layoutSource: string;
+  appId?: string | null;
+  leftKey?: string | null;
+  rightKey?: string | null;
+  profileName?: string | null;
+  dryRun?: boolean;
+}
+
+export interface SteamInputPaddlePresetResponse {
+  accepted: boolean;
+  message: string;
+  dryRun: boolean;
+  source: string;
+  targetPath: string;
+  backupPath?: string | null;
+  paddles: SteamInputPaddlePresetPaddleResult[];
+  warnings: string[];
+}
+
+export interface SteamInputPaddlePresetPaddleResult {
+  paddle: string;
+  inputId: string;
+  key: string;
+  rawBinding: string;
+  changed: boolean;
+  binding: SteamInputBinding;
+  message: string;
+}
+
 export interface CurrentEffectState {
   controllerId?: string | null;
   selectedProfileId?: string | null;

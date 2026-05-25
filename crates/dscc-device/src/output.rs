@@ -9,7 +9,7 @@ use dscc_core::{ControllerOutputFrame, PlayerLedsOutput, RumbleOutput, TriggerOu
 use crate::{
     edge_profile::{
         edge_onboard_transport_supported, edge_onboard_write_transport_supported,
-        read_edge_onboard_profiles_from_handle, write_edge_onboard_profile_to_handle,
+        read_edge_onboard_profiles_from_handle, write_edge_onboard_profile_to_handle_for_transport,
         EdgeOnboardProfile,
     },
     error::DeviceError,
@@ -231,7 +231,7 @@ impl<T: DeviceTransport> ControllerOutputManager<T> {
     ) -> Result<(), DeviceError> {
         if !edge_onboard_write_transport_supported(target.transport) {
             return Err(DeviceError::TransportFault(
-                "DualSense Edge onboard profile writes require USB HID feature report access; Bluetooth onboard writes are staged locally"
+                "DualSense Edge onboard profile writes require USB or Bluetooth HID feature report access"
                     .to_string(),
             ));
         }
@@ -239,7 +239,11 @@ impl<T: DeviceTransport> ControllerOutputManager<T> {
         let session = self.session_for(target)?;
         let write_result = {
             let mut session = lock_session(&session);
-            write_edge_onboard_profile_to_handle(session.handle.as_mut(), profile)
+            write_edge_onboard_profile_to_handle_for_transport(
+                session.handle.as_mut(),
+                target.transport,
+                profile,
+            )
         };
 
         if write_result.is_err() {
@@ -808,17 +812,18 @@ mod tests {
 
         let mut write_profile = EdgeOnboardProfile::new(EdgeOnboardSlotId::Square, "Road Tune");
         write_profile.trigger_deadzone.right = [3, 97];
-        if transport_kind == DeviceTransportKind::Bluetooth {
-            let error = manager
-                .write_edge_onboard_profile(&target, &write_profile)
-                .expect_err("Bluetooth onboard writes are staged locally until proven");
-            assert!(error.to_string().contains("USB HID"));
-        } else {
-            transport.push_feature_report(raw_id.clone(), 0x63, vec![0x63]);
-            manager
-                .write_edge_onboard_profile(&target, &write_profile)
-                .unwrap();
+        transport.push_feature_report(raw_id.clone(), 0x63, vec![0x63]);
+        queue_edge_profile_readback(&transport, &raw_id, &write_profile, transport_kind);
+        manager
+            .write_edge_onboard_profile(&target, &write_profile)
+            .unwrap();
 
+        if transport_kind == DeviceTransportKind::Bluetooth {
+            let writes = transport.feature_writes_for(&raw_id, 0x63);
+            assert_eq!(writes.len(), 3);
+            assert_eq!(writes[0].len(), 63);
+            assert!(transport.feature_writes_for(&raw_id, 0x60).is_empty());
+        } else {
             let writes = transport.feature_writes_for(&raw_id, 0x60);
             assert_eq!(writes.len(), 3);
             assert_eq!(writes[0].len(), 64);
@@ -845,6 +850,35 @@ mod tests {
             .expect_err("missing Edge write acknowledgement should fail");
 
         assert!(error.to_string().contains("acknowledgement"));
+    }
+
+    #[test]
+    fn output_manager_rejects_edge_onboard_write_readback_mismatch() {
+        let device = RawHidDevice::mock("mock://edge-profile-mismatch")
+            .with_family_hint(DeviceFamily::DualSenseEdge)
+            .with_transport_hint(DeviceTransportKind::Bluetooth);
+        let raw_id = device.id.clone();
+        let transport = MockTransport::with_devices(vec![device]);
+        let manager = ControllerOutputManager::new(transport.clone(), OutputMode::DryRunHid);
+        let target = ControllerOutputTarget {
+            raw_device_id: raw_id.clone(),
+            transport: DeviceTransportKind::Bluetooth,
+        };
+        let profile = EdgeOnboardProfile::new(EdgeOnboardSlotId::Square, "Road Tune");
+        let mismatch = EdgeOnboardProfile::new(EdgeOnboardSlotId::Square, "Different Tune");
+        transport.push_feature_report(raw_id.clone(), 0x63, vec![0x63]);
+        queue_edge_profile_readback(
+            &transport,
+            &raw_id,
+            &mismatch,
+            DeviceTransportKind::Bluetooth,
+        );
+
+        let error = manager
+            .write_edge_onboard_profile(&target, &profile)
+            .expect_err("readback mismatch should fail the sync");
+
+        assert!(error.to_string().contains("readback"));
     }
 
     #[test]
@@ -916,6 +950,26 @@ mod tests {
     ) {
         for (report_id, report) in report_ids.into_iter().zip(reports) {
             transport.push_feature_report(raw_id.clone(), report_id, report.to_vec());
+        }
+    }
+
+    fn queue_edge_profile_readback(
+        transport: &MockTransport,
+        raw_id: &RawDeviceId,
+        profile: &EdgeOnboardProfile,
+        transport_kind: DeviceTransportKind,
+    ) {
+        let read_report_ids = profile.slot.read_report_ids();
+        let mut reports = encode_edge_onboard_profile(profile).unwrap();
+        for (report, read_report_id) in reports.iter_mut().zip(read_report_ids) {
+            report[0] = read_report_id;
+        }
+        for (report_id, report) in read_report_ids.into_iter().zip(reports) {
+            if transport_kind == DeviceTransportKind::Bluetooth {
+                transport.push_feature_report(raw_id.clone(), report_id, report[1..].to_vec());
+            } else {
+                transport.push_feature_report(raw_id.clone(), report_id, report.to_vec());
+            }
         }
     }
 
