@@ -8,7 +8,9 @@ should not be called broadly production-ready yet.
 ## Current Status
 
 - Windows x86_64 MSI is the main release path.
-- The MSI and binaries are unsigned.
+- The MSI and binaries are intentionally unsigned. Paid code signing is out of
+  scope for this passion project, so release notes and setup docs must keep the
+  SmartScreen warning visible.
 - Linux artifacts are beta archives with bundled web UI assets.
 - Updates are check-and-link only. DSCC does not auto-install updates.
 - Profiles/settings are stored in the user config folder and are backed up
@@ -59,7 +61,6 @@ templates:
 
 ## Still Needed Before Calling It Production-Ready
 
-- Decide whether to keep shipping unsigned or pursue signing.
 - Complete the public Windows hardware matrix physical runs:
   - DualSense Edge USB current-release pass.
   - DualSense Edge Bluetooth current-release write pass.
