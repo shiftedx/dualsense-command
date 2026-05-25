@@ -3,7 +3,7 @@
 Start here:
 
 - [Troubleshooting](troubleshooting.md): install, controller, telemetry, LAN,
-  Steam Input, and support-bundle help.
+  Steam Input, in-app guide, and support-bundle help.
 - [Linux Beta Guide](linux-beta.md): release archive setup, udev permissions,
   WSL notes, and Linux validation commands.
 - [Windows Hardware Matrix](hardware-matrix.md): public controller support and

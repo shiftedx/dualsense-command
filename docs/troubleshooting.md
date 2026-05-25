@@ -20,6 +20,11 @@ from any other source.
 3. Open `http://127.0.0.1:43473/` in a browser.
 4. If it still fails, quit DSCC from the tray and start it again.
 
+## The First-Run Guide Is Gone
+
+The quick start guide is saved as a local preference after you skip or finish
+it. Open it again with the **Guide** button in the app header.
+
 ## Controller Is Not Detected
 
 - Try USB first. It is the most reliable connection for testing.

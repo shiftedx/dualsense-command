@@ -11,7 +11,7 @@ Python or running scripts.
 
 Get the latest Windows installer from [GitHub Releases](https://github.com/shiftedx/dualsense-command/releases/latest).
 
-- Current release: `0.2.9`
+- Current release: `0.3.0`
 - Recommended download: Windows x86_64 MSI
 - Linux builds: beta archive with bundled web UI
 
@@ -28,6 +28,9 @@ release page and, when needed, checked it against the published checksum.
 4. Open DSCC from the tray icon, or visit `http://127.0.0.1:43473/`.
 5. Use **Global Profile** for normal controller tuning.
 6. Start a supported game to use telemetry-powered haptics.
+
+The first launch shows a short guide that can be skipped. You can open it again
+any time with the **Guide** button in the app header.
 
 For Forza games, enable the in-game **Data Out** / **UDP Race Telemetry** option:
 
@@ -71,6 +74,8 @@ setup and validation commands.
 - Uses live game telemetry for racing haptics when available.
 - Adds body-rumble cues such as paddle-shift and landing thumps.
 - Controls lightbar color, brightness, RPM colors, and player LEDs.
+- Includes a quick in-app guide and focused tooltips for the main tuning
+  controls.
 - Shows controller health, battery, connection, and basic diagnostics.
 - Helps with Steam Input button mappings for supported game layouts, including
   a DualSense Edge paddle shift preset for keyboard-backed shifting.
