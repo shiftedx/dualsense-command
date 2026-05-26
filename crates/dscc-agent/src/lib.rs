@@ -121,6 +121,7 @@ const HARDWARE_OUTPUT_INTERVAL: Duration = Duration::from_millis(33);
 const INPUT_BRIDGE_PROCESS_INTERVAL: Duration = Duration::from_millis(8);
 const INPUT_BRIDGE_CONFIG_REFRESH_INTERVAL: Duration = Duration::from_millis(100);
 const INPUT_BRIDGE_STALE_AFTER: Duration = Duration::from_millis(250);
+const CONTROLLER_INPUT_UI_CACHE_TTL: Duration = Duration::from_millis(75);
 const HARDWARE_OUTPUT_KEEPALIVE_INTERVAL: Duration = Duration::from_millis(750);
 const MANUAL_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 const BASE_FEEL_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_millis(33);
@@ -399,6 +400,7 @@ pub struct AgentState {
     discovery_cache: Arc<DiscoveryCache>,
     realtime_runtime: Arc<Mutex<RealtimeRuntime>>,
     effect_runtime: Arc<Mutex<EffectRuntimeCache>>,
+    input_runtime: Arc<Mutex<InputRuntimeCache>>,
     input_bridge: InputBridgeService,
 }
 
@@ -531,6 +533,21 @@ impl EffectRuntimeCache {
             .or_default()
             .evaluate(profile, snapshot)
     }
+}
+
+#[derive(Debug, Default)]
+struct InputRuntimeCache {
+    latest: BTreeMap<String, LatestControllerInput>,
+    read_locks: BTreeMap<String, Arc<AsyncMutex<()>>>,
+    next_sequence: u64,
+}
+
+#[derive(Clone, Debug)]
+struct LatestControllerInput {
+    state: ControllerInputState,
+    sampled_at: Instant,
+    sampled_at_ms: u64,
+    sequence: u64,
 }
 
 #[derive(Debug)]
@@ -5545,6 +5562,7 @@ impl AgentState {
             discovery_cache: Arc::new(DiscoveryCache::default()),
             realtime_runtime: Arc::new(Mutex::new(RealtimeRuntime::default())),
             effect_runtime: Arc::new(Mutex::new(EffectRuntimeCache::default())),
+            input_runtime: Arc::new(Mutex::new(InputRuntimeCache::default())),
             input_bridge: input_bridge_service_for_device_backend(&device_backend),
             inner: Arc::new(RwLock::new(AgentStateInner {
                 controllers,
@@ -5585,6 +5603,14 @@ impl AgentState {
                 return;
             }
             inner.controllers.apply(event.clone());
+            if matches!(
+                &event,
+                ControllerDiscoveryEvent::Detached(_)
+                    | ControllerDiscoveryEvent::PermissionDenied(_)
+                    | ControllerDiscoveryEvent::Faulted { .. }
+            ) {
+                self.clear_cached_input_for_event(&event);
+            }
             if let Some(profile_id) = inner.auto_loaded_profile_id.clone() {
                 if matches!(event, ControllerDiscoveryEvent::Attached(_)) {
                     apply_profile_selection_config(&mut inner, &profile_id);
@@ -5594,6 +5620,27 @@ impl AgentState {
             inner.controllers.realtime_message_for(&event)
         };
         let _ = self.event_tx.send(realtime);
+    }
+
+    fn clear_cached_input_for_event(&self, event: &ControllerDiscoveryEvent) {
+        let clear_id = match event {
+            ControllerDiscoveryEvent::Detached(id) => Some(id.0.as_str()),
+            ControllerDiscoveryEvent::PermissionDenied(problem) => {
+                problem.id.as_ref().map(|id| id.0.as_str())
+            }
+            ControllerDiscoveryEvent::Faulted { id, .. } => id.as_ref().map(|id| id.0.as_str()),
+            ControllerDiscoveryEvent::Attached(_) | ControllerDiscoveryEvent::StatusChanged(_) => {
+                None
+            }
+        };
+        if let Some(id) = clear_id {
+            let mut runtime = self
+                .input_runtime
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            runtime.latest.remove(id);
+            runtime.read_locks.remove(id);
+        }
     }
 
     fn with_output_manager(
@@ -5842,18 +5889,39 @@ impl AgentState {
         &self,
         controller_id: &str,
     ) -> Result<Option<ControllerInputState>, String> {
-        self.read_input_state_for_controller_with_options(
-            controller_id,
-            ControllerInputReadOptions::default(),
-        )
-        .await
+        Ok(self
+            .read_cached_or_live_input_state_for_controller(
+                controller_id,
+                ControllerInputReadOptions::default(),
+                Duration::ZERO,
+            )
+            .await?
+            .map(|sample| sample.state))
     }
 
-    async fn read_input_state_for_controller_with_options(
+    async fn read_cached_or_live_input_state_for_controller(
         &self,
         controller_id: &str,
         options: ControllerInputReadOptions,
-    ) -> Result<Option<ControllerInputState>, String> {
+        cache_ttl: Duration,
+    ) -> Result<Option<LatestControllerInput>, String> {
+        if let Some(sample) = self.cached_input_state(controller_id, cache_ttl) {
+            return Ok(Some(sample));
+        }
+        let read_lock = self.input_read_lock(controller_id);
+        let _guard = read_lock.lock().await;
+        if let Some(sample) = self.cached_input_state(controller_id, cache_ttl) {
+            return Ok(Some(sample));
+        }
+        self.read_live_input_state_for_controller_with_options(controller_id, options)
+            .await
+    }
+
+    async fn read_live_input_state_for_controller_with_options(
+        &self,
+        controller_id: &str,
+        options: ControllerInputReadOptions,
+    ) -> Result<Option<LatestControllerInput>, String> {
         #[cfg(test)]
         {
             let input = self
@@ -5862,8 +5930,8 @@ impl AgentState {
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .get(controller_id)
                 .cloned();
-            if input.is_some() {
-                return Ok(input);
+            if let Some(input) = input {
+                return Ok(Some(self.record_cached_input(controller_id, input)));
             }
         }
 
@@ -5880,10 +5948,66 @@ impl AgentState {
             controller_output_target_or_reason(&inner, controller_id)?
         };
 
-        tokio::task::spawn_blocking(move || manager.read_input_state_with_options(&target, options))
-            .await
-            .map_err(|error| format!("HID input task failed: {error}"))?
-            .map_err(|error| error.to_string())
+        let input = tokio::task::spawn_blocking(move || {
+            manager.read_input_state_with_options(&target, options)
+        })
+        .await
+        .map_err(|error| format!("HID input task failed: {error}"))?
+        .map_err(|error| error.to_string())?;
+        Ok(input.map(|input| self.record_cached_input(controller_id, input)))
+    }
+
+    fn cached_input_state(
+        &self,
+        controller_id: &str,
+        max_age: Duration,
+    ) -> Option<LatestControllerInput> {
+        if max_age.is_zero() {
+            return None;
+        }
+        self.input_runtime
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .latest
+            .get(controller_id)
+            .filter(|sample| sample.sampled_at.elapsed() <= max_age)
+            .cloned()
+    }
+
+    fn input_read_lock(&self, controller_id: &str) -> Arc<AsyncMutex<()>> {
+        let mut runtime = self
+            .input_runtime
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        runtime
+            .read_locks
+            .entry(controller_id.to_string())
+            .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+            .clone()
+    }
+
+    fn record_cached_input(
+        &self,
+        controller_id: &str,
+        state: ControllerInputState,
+    ) -> LatestControllerInput {
+        let sampled_at = Instant::now();
+        let sampled_at_ms = current_timestamp_millis();
+        let mut runtime = self
+            .input_runtime
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        runtime.next_sequence = runtime.next_sequence.saturating_add(1).max(1);
+        let sample = LatestControllerInput {
+            state,
+            sampled_at,
+            sampled_at_ms,
+            sequence: runtime.next_sequence,
+        };
+        runtime
+            .latest
+            .insert(controller_id.to_string(), sample.clone());
+        sample
     }
 
     #[cfg(test)]
@@ -12988,10 +13112,22 @@ async fn read_controller_input_state(
         inner.controllers.detail(&id).ok_or(StatusCode::NOT_FOUND)?;
     }
 
+    if state.input_bridge.is_active(&id) {
+        return match state.cached_input_state(&id, INPUT_BRIDGE_STALE_AFTER) {
+            Some(sample) => Ok(controller_input_available(id, sample)),
+            None => Ok(controller_input_unavailable(
+                id,
+                "hid",
+                "Waiting for a fresh DSCC Input Bridge input sample".to_string(),
+            )),
+        };
+    }
+
     match state
-        .read_input_state_for_controller_with_options(
+        .read_cached_or_live_input_state_for_controller(
             &id,
             ControllerInputReadOptions::bridge_poll(),
+            CONTROLLER_INPUT_UI_CACHE_TTL,
         )
         .await
     {
@@ -13011,16 +13147,17 @@ async fn read_controller_input_state(
 
 fn controller_input_available(
     controller_id: String,
-    input: ControllerInputState,
+    sample: LatestControllerInput,
 ) -> ControllerInputResponse {
-    let sampled_at_ms = current_timestamp_millis();
+    let age_ms = input_sample_age_ms(&sample);
+    let input = sample.state;
     ControllerInputResponse {
         controller_id,
         available: true,
         source: "hid".to_string(),
         message: "Live DualSense input is available".to_string(),
-        sampled_at_ms: Some(sampled_at_ms),
-        age_ms: Some(0),
+        sampled_at_ms: Some(sample.sampled_at_ms),
+        age_ms: Some(age_ms),
         axes: ControllerInputAxesResponse {
             left_stick: ControllerInputStickResponse {
                 x: input.left_stick.x,
@@ -13048,6 +13185,14 @@ fn controller_input_available(
             })
             .collect(),
     }
+}
+
+fn input_sample_age_ms(sample: &LatestControllerInput) -> u64 {
+    sample
+        .sampled_at
+        .elapsed()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64
 }
 
 fn controller_input_unavailable(
@@ -14141,15 +14286,15 @@ async fn local_app_execution_verified_for_input_bridge(
 
 #[cfg(not(test))]
 fn registered_local_app_is_running(game: &UserGameConfig) -> bool {
-    let Ok(install_root) = PathBuf::from(&game.install_path).canonicalize() else {
-        return false;
-    };
     if game.process_names.is_empty() {
         return false;
     }
 
     #[cfg(target_os = "windows")]
     {
+        let Ok(install_root) = PathBuf::from(&game.install_path).canonicalize() else {
+            return false;
+        };
         windows_process_image_paths_matching(&game.process_names)
             .map(|paths| {
                 paths
@@ -14165,6 +14310,7 @@ fn registered_local_app_is_running(game: &UserGameConfig) -> bool {
     }
 }
 
+#[cfg(target_os = "windows")]
 fn local_app_process_path_allowed(
     game: &UserGameConfig,
     install_root: &FsPath,
@@ -14203,10 +14349,14 @@ async fn stop_input_bridge_session(
 
 async fn run_input_bridge_session_loop(state: AgentState, controller_id: String) {
     let mut last_input_at = Instant::now();
+    let mut last_submitted_sequence: Option<u64> = None;
     let mut last_game_check_at = Instant::now();
     let mut last_config_check_at: Option<Instant> = None;
     let mut active_config: Option<InputBridgeConfig> = None;
+    let mut process_interval = tokio::time::interval(INPUT_BRIDGE_PROCESS_INTERVAL);
+    process_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
+        process_interval.tick().await;
         if !state.input_bridge.is_active(&controller_id) {
             break;
         }
@@ -14248,7 +14398,6 @@ async fn run_input_bridge_session_loop(state: AgentState, controller_id: String)
             last_config_check_at = Some(Instant::now());
         }
         let Some(config) = active_config.as_ref() else {
-            tokio::time::sleep(INPUT_BRIDGE_PROCESS_INTERVAL).await;
             continue;
         };
 
@@ -14274,19 +14423,24 @@ async fn run_input_bridge_session_loop(state: AgentState, controller_id: String)
         }
 
         match state
-            .read_input_state_for_controller_with_options(
+            .read_cached_or_live_input_state_for_controller(
                 &controller_id,
                 ControllerInputReadOptions::bridge_poll(),
+                INPUT_BRIDGE_PROCESS_INTERVAL,
             )
             .await
         {
-            Ok(Some(input)) => {
-                last_input_at = Instant::now();
+            Ok(Some(sample)) => {
+                last_input_at = sample.sampled_at;
+                if last_submitted_sequence == Some(sample.sequence) {
+                    continue;
+                }
+                last_submitted_sequence = Some(sample.sequence);
                 if state
                     .input_bridge
                     .submit_controller_input(
                         &controller_id,
-                        &input,
+                        &sample.state,
                         config,
                         current_timestamp_millis(),
                     )
@@ -14327,8 +14481,6 @@ async fn run_input_bridge_session_loop(state: AgentState, controller_id: String)
                 break;
             }
         }
-
-        tokio::time::sleep(INPUT_BRIDGE_PROCESS_INTERVAL).await;
     }
 }
 
@@ -16204,6 +16356,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::CONFLICT);
     }
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn input_bridge_local_app_path_check_requires_registered_root() {
         let root = temp_test_dir("dscc-local-app-root");
@@ -21562,7 +21715,7 @@ mod tests {
         assert_eq!(input.controller_id, "edge-input");
         assert_eq!(input.source, "hid");
         assert!(input.sampled_at_ms.is_some());
-        assert_eq!(input.age_ms, Some(0));
+        assert!(input.age_ms.is_some_and(|age| age < 1_000));
         assert!((input.axes.left_stick.x - 0.25).abs() < f64::EPSILON);
         assert!((input.axes.right_stick.y + 0.75).abs() < f64::EPSILON);
         assert!((input.triggers.l2 - 0.4).abs() < f64::EPSILON);
@@ -21570,6 +21723,63 @@ mod tests {
             .buttons
             .iter()
             .any(|button| button.id == "cross" && button.pressed && button.value == 1.0));
+    }
+
+    #[tokio::test]
+    async fn controller_input_endpoint_reuses_active_bridge_sample() {
+        let state = AgentState::from_controller_events([attach_event(
+            "edge-bridge-input",
+            ControllerFamily::DualSenseEdge,
+            ControllerTransportKind::Usb,
+            Some(72),
+        )]);
+        let sample = state.record_cached_input("edge-bridge-input", sample_controller_input());
+        state
+            .input_bridge
+            .start_session(
+                "edge-bridge-input",
+                VirtualOutputKind::Xbox360,
+                current_timestamp_millis(),
+            )
+            .expect("mock bridge session should start");
+        let router = app(state);
+
+        let input: ControllerInputResponse = get_json(
+            router,
+            "/api/controllers/edge-bridge-input/input",
+            StatusCode::OK,
+        )
+        .await;
+
+        assert!(input.available);
+        assert_eq!(input.source, "hid");
+        assert_eq!(input.sampled_at_ms, Some(sample.sampled_at_ms));
+        assert!(input.age_ms.is_some_and(|age| age < 1_000));
+        assert!((input.triggers.r2 - 0.8).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn detached_controller_clears_latest_input_sample() {
+        let state = AgentState::from_controller_events([attach_event(
+            "edge-detach-input",
+            ControllerFamily::DualSenseEdge,
+            ControllerTransportKind::Usb,
+            Some(72),
+        )]);
+        state.record_cached_input("edge-detach-input", sample_controller_input());
+        assert!(state
+            .cached_input_state("edge-detach-input", CONTROLLER_INPUT_UI_CACHE_TTL)
+            .is_some());
+
+        state
+            .apply_controller_event(ControllerDiscoveryEvent::Detached(ControllerId(
+                "edge-detach-input".to_string(),
+            )))
+            .await;
+
+        assert!(state
+            .cached_input_state("edge-detach-input", CONTROLLER_INPUT_UI_CACHE_TTL)
+            .is_none());
     }
 
     #[tokio::test]

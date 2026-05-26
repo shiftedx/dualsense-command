@@ -7,6 +7,7 @@
     <AssemblyName>dscc-hidmaestro-broker</AssemblyName>
   </PropertyGroup>
 
+  <!-- Keep HIDMaestro.Core.dll external for both compressed single-file and framework-dependent publish outputs. -->
   <ItemGroup Condition="'$(HidMaestroCoreDll)' != ''">
     <Content Include="$(HidMaestroCoreDll)" Link="HIDMaestro.Core.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
   </ItemGroup>

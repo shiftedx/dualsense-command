@@ -1,3 +1,63 @@
+# DualSense Command Center 0.3.1
+
+Latest release notes are listed first. For install steps, start with the
+[README](README.md).
+
+Release date: 2026-05-26
+
+0.3.1 splits Windows installers into clear, named choices so the normal user
+path stays slim while non-Steam bridge testing remains available.
+
+## Windows Installers
+
+Pick one installer. Do not install Bridge unless you need non-Steam DSCC Input
+Bridge testing.
+
+| Installer | Intended user | Why it exists |
+| --- | --- | --- |
+| **DSCC Standard** | Most users | Smallest normal install. Includes profiles, haptics, telemetry, diagnostics, controller tuning, and Steam Input support. Does not bundle the HIDMaestro broker. |
+| **DSCC Bridge** | Non-Steam bridge testers | Bundles the self-contained HIDMaestro broker so DSCC Input Bridge can create a virtual Xbox 360 controller for local non-Steam app profiles. |
+| **DSCC Bridge Framework-Dependent** | Advanced bridge testers | Bundles the smaller framework-dependent broker and requires the matching x64 .NET runtime to already be installed. |
+
+## Packaging
+
+- Added explicit `Standard`, `Bridge`, and `BridgeFrameworkDependent` MSI
+  flavors to `packaging/package-msi.ps1`.
+- Standard packaging no longer requires or stages any `hidmaestro` broker
+  payload.
+- Bridge packaging still validates that the broker output shape matches the
+  selected flavor, so a framework-dependent build cannot accidentally package a
+  self-contained runtime shape.
+- The tag release workflow now builds and uploads all three Windows MSI
+  variants with flavor names in the artifact filenames.
+- Release notes now tell users to choose Standard first and use Bridge only for
+  compatibility beyond Steam.
+
+## UI
+
+- Moved the Controllers page tuning bar to the top of the page so Controllers,
+  Adaptive Triggers & Haptics, and Button Mapping use the same command layout.
+- Kept Profiles focused on game/profile scope selection, with controller
+  targeting in the expanded tuning ribbon.
+
+## Validation Gate
+
+This release was cut after a clean run of:
+
+```powershell
+npm.cmd --prefix web run typecheck
+npm.cmd --prefix web run build
+npm.cmd --prefix web run test:button-map
+npm.cmd --prefix web run test:release-size
+cargo +stable-x86_64-pc-windows-gnu build -p dscc-agent -p dscc-tray -p dscc-cli --release --target x86_64-pc-windows-gnu
+```
+
+## Install
+
+Download the `standard` Windows x86_64 MSI unless you specifically need
+non-Steam DSCC Input Bridge testing. Verify downloads with the included SHA256
+checksum file.
+
 # DualSense Command Center 0.3.0
 
 Latest release notes are listed first. For install steps, start with the

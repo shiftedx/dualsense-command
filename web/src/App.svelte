@@ -650,6 +650,7 @@
   let loading = true;
   let error = '';
   let selectedControllerId = '';
+  let profileTargetControllerIds: string[] = [];
   let controllerRenameId = '';
   let controllerRenameName = '';
   let controllerRenameBusy = false;
@@ -660,10 +661,13 @@
   let addGameBusyAppId = '';
   let scopePickerOpen = false;
   let profilePickerOpen = false;
+  let controllerPickerOpen = false;
   let scopeTriggerEl: HTMLButtonElement | null = null;
   let profileTriggerEl: HTMLButtonElement | null = null;
+  let controllerTriggerEl: HTMLButtonElement | null = null;
   let scopeMenuPos = { left: 0, top: 0, minWidth: 240 };
   let profileMenuPos = { left: 0, top: 0, minWidth: 240 };
+  let controllerMenuPos = { left: 0, top: 0, minWidth: 240 };
   let applyMessage = '';
   let appSettingsMessage = '';
   let appSettingsBusy = false;
@@ -936,6 +940,26 @@
     selectedControllerId = controllers[0].id;
   }
   $: controller = controllers.find((item) => item.id === selectedControllerId) ?? controllers[0];
+  $: connectedControllers = controllers.filter((item) => item.connected);
+  $: connectedControllerIds = connectedControllers.map((item) => item.id);
+  $: {
+    const validTargets = profileTargetControllerIds.filter((id) => connectedControllerIds.includes(id));
+    const fallbackTarget =
+      selectedControllerId && connectedControllerIds.includes(selectedControllerId)
+        ? selectedControllerId
+        : connectedControllerIds[0];
+    const nextTargets = validTargets.length ? validTargets : fallbackTarget ? [fallbackTarget] : [];
+    if (
+      nextTargets.length !== profileTargetControllerIds.length ||
+      nextTargets.some((id, index) => id !== profileTargetControllerIds[index])
+    ) {
+      profileTargetControllerIds = nextTargets;
+    }
+  }
+  $: profileTargetsAllConnected =
+    connectedControllerIds.length > 1 &&
+    profileTargetControllerIds.length === connectedControllerIds.length &&
+    connectedControllerIds.every((id) => profileTargetControllerIds.includes(id));
   $: status = snapshot?.status;
   $: profiles = snapshot?.profiles ?? [];
   $: activeProfileId = profiles.find((profile) => profile.active)?.id ?? snapshot?.profileResolution.selectedProfileId ?? '';
@@ -1228,7 +1252,7 @@
       : telemetryRateDetail;
   $: overrideScope =
     controller && snapshot
-      ? `${controller.name} / ${profileContextLabel}`
+      ? `${profileTargetSummary()} / ${profileContextLabel}`
       : profileContextLabel;
   // Sync the override dropdown when the ACTIVE profile changes (server-side
   // activation, override flip, snapshot refresh) — but never fight the user
@@ -1973,9 +1997,74 @@
       .filter(Boolean)
       .join(' / ');
 
+  const selectedProfileTargetIds = () => {
+    const validTargets = profileTargetControllerIds.filter((id) => connectedControllerIds.includes(id));
+    if (validTargets.length) return validTargets;
+    return controller?.id ? [controller.id] : [];
+  };
+
+  const targetsCoverAllConnectedControllers = (ids: string[] = selectedProfileTargetIds()) =>
+    connectedControllerIds.length > 1 &&
+    ids.length === connectedControllerIds.length &&
+    connectedControllerIds.every((id) => ids.includes(id));
+
+  const profileTargetName = (id: string) => {
+    const target = controllers.find((item) => item.id === id);
+    return target?.name || controllerModelText(target);
+  };
+
+  const profileTargetSummary = () => {
+    const ids = selectedProfileTargetIds();
+    if (targetsCoverAllConnectedControllers(ids)) return 'all connected controllers';
+    const names = ids.map(profileTargetName).filter(Boolean);
+    if (names.length <= 2) return names.join(', ') || 'selected controller';
+    return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
+  };
+
+  const setAllProfileTargets = () => {
+    if (!connectedControllerIds.length) return;
+    profileTargetControllerIds = [...connectedControllerIds];
+  };
+
+  const setSingleProfileTargetController = (controllerId: string) => {
+    if (!connectedControllerIds.includes(controllerId)) return;
+    profileTargetControllerIds = [controllerId];
+    selectedControllerId = controllerId;
+    configLoadedFor = '';
+    stopTriggerInputPolling();
+  };
+
+  const setProfileOverrideForTargets = async (profileId: string, gameId: string | null) => {
+    const targetIds = selectedProfileTargetIds();
+    let resolution = null;
+    for (const targetId of targetIds) {
+      resolution = await setProfileOverride({ controllerId: targetId, gameId, profileId });
+    }
+    return resolution ?? setProfileOverride({ controllerId: null, gameId, profileId });
+  };
+
+  const clearProfileOverrideForTargets = async (gameId: string | null) => {
+    const targetIds = selectedProfileTargetIds();
+    let resolution = null;
+    for (const targetId of targetIds) {
+      resolution = await clearProfileOverride({ controllerId: targetId, gameId });
+    }
+    return resolution ?? (gameId ? clearProfileOverride({ gameId }) : null);
+  };
+
+  const saveControllerConfigForProfileTargets = async (config: EditableControllerConfig) => {
+    let selectedUpdate: ControllerConfiguration | null = null;
+    for (const targetId of selectedProfileTargetIds()) {
+      const updated = await saveControllerConfig(targetId, config);
+      if (targetId === selectedControllerId) selectedUpdate = updated;
+    }
+    if (selectedUpdate) currentControllerConfig = selectedUpdate;
+  };
+
   const selectTargetController = (controllerId: string) => {
     if (!controllerId || controllerId === selectedControllerId) return;
     selectedControllerId = controllerId;
+    if (profileTargetControllerIds.length <= 1) profileTargetControllerIds = [controllerId];
     configLoadedFor = '';
     stopTriggerInputPolling();
   };
@@ -2045,38 +2134,62 @@
         minWidth: Math.max(260, rect.width)
       };
     }
+    if (controllerTriggerEl) {
+      const rect = controllerTriggerEl.getBoundingClientRect();
+      controllerMenuPos = {
+        left: rect.left,
+        top: rect.bottom + 6,
+        minWidth: Math.max(260, rect.width)
+      };
+    }
   };
 
   const toggleScopePicker = () => {
     if (!scopePickerOpen) updateRibbonMenuPositions();
     scopePickerOpen = !scopePickerOpen;
-    if (scopePickerOpen) profilePickerOpen = false;
+    if (scopePickerOpen) {
+      profilePickerOpen = false;
+      controllerPickerOpen = false;
+    }
   };
 
   const toggleProfilePicker = () => {
     if (!profilePickerOpen) updateRibbonMenuPositions();
     profilePickerOpen = !profilePickerOpen;
-    if (profilePickerOpen) scopePickerOpen = false;
+    if (profilePickerOpen) {
+      scopePickerOpen = false;
+      controllerPickerOpen = false;
+    }
+  };
+
+  const toggleControllerPicker = () => {
+    if (!controllerPickerOpen) updateRibbonMenuPositions();
+    controllerPickerOpen = !controllerPickerOpen;
+    if (controllerPickerOpen) {
+      scopePickerOpen = false;
+      profilePickerOpen = false;
+    }
   };
 
   const closeRibbonPickers = () => {
     scopePickerOpen = false;
     profilePickerOpen = false;
+    controllerPickerOpen = false;
   };
 
   const handleRibbonPickerWindowChange = () => {
-    if (scopePickerOpen || profilePickerOpen) updateRibbonMenuPositions();
+    if (scopePickerOpen || profilePickerOpen || controllerPickerOpen) updateRibbonMenuPositions();
   };
 
   const handleRibbonPickerKeydown = (event: KeyboardEvent) => {
-    if (event.key === 'Escape' && (scopePickerOpen || profilePickerOpen)) {
+    if (event.key === 'Escape' && (scopePickerOpen || profilePickerOpen || controllerPickerOpen)) {
       event.preventDefault();
       closeRibbonPickers();
     }
   };
 
   const handleRibbonPickerDocumentClick = (event: MouseEvent) => {
-    if (!scopePickerOpen && !profilePickerOpen) return;
+    if (!scopePickerOpen && !profilePickerOpen && !controllerPickerOpen) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
     if (target.closest('.dm-ribbon-picker-host')) return;
@@ -2098,6 +2211,16 @@
     closeRibbonPickers();
     if (!profileId || profileId === selectedOverrideProfileId) return;
     await selectProfileForScope(profileId);
+  };
+
+  const pickAllControllers = () => {
+    setAllProfileTargets();
+    closeRibbonPickers();
+  };
+
+  const pickControllerTarget = (controllerId: string) => {
+    setSingleProfileTargetController(controllerId);
+    closeRibbonPickers();
   };
 
   const beginControllerRename = (item: ControllerStatus) => {
@@ -2231,15 +2354,11 @@
     if (!snapshot || !profile) return;
     selectedOverrideProfileId = profileId;
     try {
-      const resolution = await setProfileOverride({
-        controllerId: controller?.id ?? null,
-        gameId,
-        profileId
-      });
-      snapshot = { ...snapshot, profileResolution: resolution };
+      const resolution = await setProfileOverrideForTargets(profileId, gameId);
+      if (resolution) snapshot = { ...snapshot, profileResolution: resolution };
       await loadProfileConfigForEditor(profile);
       await refresh();
-      setProfileOverrideMessage(`${profile.name} selected for ${scopeLabel}`, 'success');
+      setProfileOverrideMessage(`${profile.name} selected for ${scopeLabel} on ${profileTargetSummary()}`, 'success');
     } catch (caught) {
       setProfileOverrideMessage(caught instanceof Error ? caught.message : 'Unable to select profile.', 'error');
       await refresh();
@@ -3575,12 +3694,8 @@
   const applyProfileOverride = async () => {
     if (!snapshot || !selectedOverrideProfileId) return;
     try {
-      const resolution = await setProfileOverride({
-        controllerId: controller?.id ?? null,
-        gameId: profileContextGameId,
-        profileId: selectedOverrideProfileId
-      });
-      snapshot = { ...snapshot, profileResolution: resolution };
+      const resolution = await setProfileOverrideForTargets(selectedOverrideProfileId, profileContextGameId);
+      if (resolution) snapshot = { ...snapshot, profileResolution: resolution };
       setProfileOverrideMessage(`${selectedOverrideProfile?.name ?? selectedOverrideProfileId} is now used for ${overrideScope}`, 'success');
       await refresh();
     } catch (caught) {
@@ -3592,11 +3707,8 @@
     if (!snapshot) return;
     const previousScope = overrideScope;
     try {
-      const resolution = await clearProfileOverride({
-        controllerId: controller?.id ?? null,
-        gameId: profileContextGameId
-      });
-      snapshot = { ...snapshot, profileResolution: resolution };
+      const resolution = await clearProfileOverrideForTargets(profileContextGameId);
+      if (resolution) snapshot = { ...snapshot, profileResolution: resolution };
       setProfileOverrideMessage(`Automatic profile selection restored for ${previousScope}`, 'success');
       await refresh();
     } catch (caught) {
@@ -3742,15 +3854,9 @@
       const config = buildControllerConfig();
       const created = await createProfile(name, { gameId: selectedTuningScope === 'game' ? profileContextGameId : null });
       const response = await saveProfileConfig(created.id, config);
-      if (controller) {
-        currentControllerConfig = await saveControllerConfig(controller.id, config);
-      }
-      const resolution = await setProfileOverride({
-        controllerId: controller?.id ?? null,
-        gameId: profileContextGameId,
-        profileId: created.id
-      });
-      if (snapshot) snapshot = { ...snapshot, profileResolution: resolution };
+      await saveControllerConfigForProfileTargets(config);
+      const resolution = await setProfileOverrideForTargets(created.id, profileContextGameId);
+      if (snapshot && resolution) snapshot = { ...snapshot, profileResolution: resolution };
       profileSaveBaselineSignature = profileConfigSignature(config);
       selectedOverrideProfileId = created.id;
       cancelSaveAsProfile();
@@ -4241,17 +4347,11 @@
       if (!targetProfile) throw new Error('No profile selected');
 
       const config = buildControllerConfig();
-      if (controller) {
-        currentControllerConfig = await saveControllerConfig(controller.id, config);
-      }
+      await saveControllerConfigForProfileTargets(config);
       const response = await saveProfileConfig(targetProfile.id, config);
       profileSaveBaselineSignature = profileConfigSignature(config);
-      const resolution = await setProfileOverride({
-        controllerId: controller?.id ?? null,
-        gameId: profileContextGameId,
-        profileId: targetProfile.id
-      });
-      if (snapshot) snapshot = { ...snapshot, profileResolution: resolution };
+      const resolution = await setProfileOverrideForTargets(targetProfile.id, profileContextGameId);
+      if (snapshot && resolution) snapshot = { ...snapshot, profileResolution: resolution };
       selectedOverrideProfileId = targetProfile.id;
       await refresh();
       selectedOverrideProfileId = targetProfile.id;
@@ -4496,75 +4596,11 @@
       onNavigate={navigateToView}
     />
 
-    {#if activeView === 'controllers'}
-      <ControllersView
-        active={activeView === 'controllers'}
-        {controllers}
-        {controller}
-        {selectedControllerId}
-        renameActiveId={controllerRenameId}
-        bind:renameName={controllerRenameName}
-        renameBusy={controllerRenameBusy}
-        {currentControllerConfig}
-        {leftStickDeadzone}
-        {rightStickDeadzone}
-        inputBridge={snapshot?.inputBridge ?? null}
-        activeGameName={selectedGame?.name ?? null}
-        activeInputProvider={selectedGame?.inputProvider ?? currentControllerConfig?.inputMode ?? 'native_dualsense'}
-        {edgeProfiles}
-        {edgeProfilesLoading}
-        {edgeProfilesBusySlot}
-        {edgeProfilesError}
-        {edgeSlotsReadTooltip}
-        edgeSlotWriteLabel={edgeSlotWriteLabel()}
-        onSelect={selectTargetController}
-        onBeginRename={beginControllerRename}
-        onSubmitRename={submitControllerRename}
-        onCancelRename={cancelControllerRename}
-        onRenameKeydown={handleControllerRenameKeydown}
-        {inputBridgeBusy}
-        onSetInputMode={saveControllerInputMode}
-        onSetStickDeadzone={setStickDeadzone}
-        onStartInputBridge={startControllerInputBridge}
-        onStopInputBridge={stopControllerInputBridge}
-        onRefreshEdgeProfiles={() => controller && void loadEdgeProfiles(controller.id, true)}
-        onWriteEdgeSlot={writeCurrentConfigToEdgeSlot}
-        {edgeSlotName}
-        {edgeSlotStatus}
-        {edgeSlotInfoTooltip}
-        {edgeSlotWriteTooltip}
-      />
-    {/if}
-
     {#if activeView === 'games' || (!tuningReady && activeView !== 'controllers')}
-      <section class="dm-games-page" aria-label="Supported games and target controller">
-        <div class="dm-games-column">
-          <div class="dm-games-head">
-            <span>Target</span>
-            <h2>Controller</h2>
-          </div>
-          <section class="dm-profile-controller-summary" aria-label="Selected controller summary">
-            <span class="dm-controller-glyph controller-card" aria-hidden="true"></span>
-            <div class="dm-controller-copy">
-              <strong>{controllerModelText(controller)}</strong>
-              <small>{controllerConnectionText(controller)}</small>
-              {#if controller}
-                <span class="dm-controller-capabilities" aria-hidden="true">
-                  {#each controller.capabilities.slice(0, 3) as capability}
-                    <em>{capability}</em>
-                  {/each}
-                </span>
-              {/if}
-            </div>
-            <button class="dm-mini-button primary" type="button" onclick={() => navigateToView('controllers')}>
-              Controllers
-            </button>
-          </section>
-        </div>
-
+      <section class="dm-games-page" aria-label="Profiles and supported games">
         <div class="dm-games-column wide">
           <div class="dm-games-head">
-            <span>Tuning Scope</span>
+            <span>Profiles</span>
             <h2>Games</h2>
           </div>
           <div class="dm-scope-strip">
@@ -4672,6 +4708,70 @@
           {:else}
             <span class="dm-controller-glyph small" aria-hidden="true"></span>
           {/if}
+          <div class="dm-ribbon-picker-host">
+            <button
+              bind:this={controllerTriggerEl}
+              type="button"
+              class="dm-steam-identity-cell dm-ribbon-picker-trigger"
+              class:open={controllerPickerOpen}
+              aria-haspopup="listbox"
+              aria-expanded={controllerPickerOpen}
+              disabled={!connectedControllerIds.length}
+              onclick={toggleControllerPicker}
+            >
+              <span>Target Controller</span>
+              <strong>{profileTargetsAllConnected ? 'All Connected' : profileTargetSummary()}</strong>
+              <p>{profileTargetsAllConnected ? `${connectedControllerIds.length} controller${connectedControllerIds.length === 1 ? '' : 's'}` : controllerConnectionText(controller)}</p>
+              <span class="dm-ribbon-picker-caret" aria-hidden="true">▾</span>
+            </button>
+            {#if controllerPickerOpen}
+              <div
+                class="dm-ribbon-picker-menu"
+                role="listbox"
+                aria-label="Select target controller"
+                style:left="{controllerMenuPos.left}px"
+                style:top="{controllerMenuPos.top}px"
+                style:min-width="{controllerMenuPos.minWidth}px"
+              >
+                <button
+                  type="button"
+                  class="dm-ribbon-picker-item"
+                  class:active={profileTargetsAllConnected}
+                  disabled={connectedControllerIds.length <= 1}
+                  role="option"
+                  aria-selected={profileTargetsAllConnected}
+                  onclick={pickAllControllers}
+                >
+                  <span class="dm-ribbon-picker-thumb art" aria-hidden="true">
+                    <InitialBadge label="A" accent={SCOPE_ACCENT_GLOBAL} />
+                  </span>
+                  <span class="dm-ribbon-picker-copy">
+                    <strong>All Connected</strong>
+                    <small>{connectedControllerIds.length} controller{connectedControllerIds.length === 1 ? '' : 's'}</small>
+                  </span>
+                </button>
+                <div class="dm-ribbon-picker-divider" role="separator"></div>
+                {#each connectedControllers as item (item.id)}
+                  <button
+                    type="button"
+                    class="dm-ribbon-picker-item"
+                    class:active={!profileTargetsAllConnected && profileTargetControllerIds.includes(item.id)}
+                    role="option"
+                    aria-selected={!profileTargetsAllConnected && profileTargetControllerIds.includes(item.id)}
+                    onclick={() => pickControllerTarget(item.id)}
+                  >
+                    <span class="dm-ribbon-picker-thumb art" aria-hidden="true">
+                      <span class="dm-controller-glyph small" aria-hidden="true"></span>
+                    </span>
+                    <span class="dm-ribbon-picker-copy">
+                      <strong>{item.name || controllerModelText(item)}</strong>
+                      <small>{controllerConnectionText(item)}</small>
+                    </span>
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
           <div class="dm-ribbon-picker-host">
             <button
               bind:this={scopeTriggerEl}
@@ -4828,6 +4928,46 @@
           </Tooltip>
         </div>
       </section>
+
+      {#if activeView === 'controllers'}
+        <ControllersView
+          active={activeView === 'controllers'}
+          {controllers}
+          {controller}
+          {selectedControllerId}
+          renameActiveId={controllerRenameId}
+          bind:renameName={controllerRenameName}
+          renameBusy={controllerRenameBusy}
+          {currentControllerConfig}
+          {leftStickDeadzone}
+          {rightStickDeadzone}
+          inputBridge={snapshot?.inputBridge ?? null}
+          activeGameName={selectedGame?.name ?? null}
+          activeInputProvider={selectedGame?.inputProvider ?? currentControllerConfig?.inputMode ?? 'native_dualsense'}
+          {edgeProfiles}
+          {edgeProfilesLoading}
+          {edgeProfilesBusySlot}
+          {edgeProfilesError}
+          {edgeSlotsReadTooltip}
+          edgeSlotWriteLabel={edgeSlotWriteLabel()}
+          onSelect={selectTargetController}
+          onBeginRename={beginControllerRename}
+          onSubmitRename={submitControllerRename}
+          onCancelRename={cancelControllerRename}
+          onRenameKeydown={handleControllerRenameKeydown}
+          {inputBridgeBusy}
+          onSetInputMode={saveControllerInputMode}
+          onSetStickDeadzone={setStickDeadzone}
+          onStartInputBridge={startControllerInputBridge}
+          onStopInputBridge={stopControllerInputBridge}
+          onRefreshEdgeProfiles={() => controller && void loadEdgeProfiles(controller.id, true)}
+          onWriteEdgeSlot={writeCurrentConfigToEdgeSlot}
+          {edgeSlotName}
+          {edgeSlotStatus}
+          {edgeSlotInfoTooltip}
+          {edgeSlotWriteTooltip}
+        />
+      {/if}
 
       {#if activeView === 'haptics'}
       <HapticsView active>

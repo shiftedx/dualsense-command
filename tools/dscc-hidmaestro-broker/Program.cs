@@ -64,10 +64,25 @@ sealed class HidMaestroBroker
 
     public void Update(BrokerRequest request)
     {
-        if (request.SessionId is null || request.State is null) return;
+        if (string.IsNullOrWhiteSpace(request.SessionId)) return;
         if (_sessions.TryGetValue(request.SessionId, out var session))
         {
-            session.Submit(request.State);
+            try
+            {
+                if (request.Kind != "xbox360")
+                {
+                    session.Submit(VirtualGamepadFrame.Neutral);
+                    return;
+                }
+                session.Submit(VirtualGamepadFrame.TryFrom(request, out var frame)
+                    ? frame
+                    : VirtualGamepadFrame.Neutral);
+            }
+            catch (Exception error)
+            {
+                BrokerLog.Error(error.ToString());
+                try { session.Submit(VirtualGamepadFrame.Neutral); } catch { }
+            }
         }
     }
 
@@ -254,8 +269,37 @@ sealed class HidMaestroSession : IDisposable
     private readonly Type _stateType;
     private readonly Type _buttonType;
     private readonly Type _hatType;
-    private readonly Type _helpersType;
     private readonly MethodInfo _submitState;
+    private readonly MethodInfo? _standardAxes;
+    private readonly MemberInfo? _axesMember;
+    private readonly MemberInfo? _buttonsMember;
+    private readonly MemberInfo? _hatMember;
+    private readonly ulong _buttonA;
+    private readonly ulong _buttonB;
+    private readonly ulong _buttonX;
+    private readonly ulong _buttonY;
+    private readonly ulong _buttonDpadUp;
+    private readonly ulong _buttonDpadRight;
+    private readonly ulong _buttonDpadDown;
+    private readonly ulong _buttonDpadLeft;
+    private readonly ulong _buttonLeftShoulder;
+    private readonly ulong _buttonRightShoulder;
+    private readonly ulong _buttonLeftThumb;
+    private readonly ulong _buttonRightThumb;
+    private readonly ulong _buttonBack;
+    private readonly ulong _buttonStart;
+    private readonly ulong _buttonGuide;
+    private readonly ulong _buttonTouchpad;
+    private readonly ulong _buttonShare;
+    private readonly object _hatNone;
+    private readonly object _hatNorth;
+    private readonly object _hatNorthEast;
+    private readonly object _hatEast;
+    private readonly object _hatSouthEast;
+    private readonly object _hatSouth;
+    private readonly object _hatSouthWest;
+    private readonly object _hatWest;
+    private readonly object _hatNorthWest;
 
     public HidMaestroSession(object controller, object profile, Type stateType, Type buttonType, Type hatType, Type helpersType)
     {
@@ -264,19 +308,48 @@ sealed class HidMaestroSession : IDisposable
         _stateType = stateType;
         _buttonType = buttonType;
         _hatType = hatType;
-        _helpersType = helpersType;
         _submitState = controller.GetType().GetMethod("SubmitState")
             ?? throw new InvalidOperationException("HIDMaestro SubmitState method was not found.");
+        _standardAxes = helpersType.GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .FirstOrDefault(candidate => candidate.Name == "StandardAxes" && candidate.GetParameters().Length >= 7);
+        _axesMember = SettableMember(_stateType, "Axes");
+        _buttonsMember = SettableMember(_stateType, "Buttons");
+        _hatMember = SettableMember(_stateType, "Hat");
+        _buttonA = ButtonValue("A");
+        _buttonB = ButtonValue("B");
+        _buttonX = ButtonValue("X");
+        _buttonY = ButtonValue("Y");
+        _buttonDpadUp = ButtonValue("DpadUp", "DPadUp", "Up");
+        _buttonDpadRight = ButtonValue("DpadRight", "DPadRight", "Right");
+        _buttonDpadDown = ButtonValue("DpadDown", "DPadDown", "Down");
+        _buttonDpadLeft = ButtonValue("DpadLeft", "DPadLeft", "Left");
+        _buttonLeftShoulder = ButtonValue("LeftBumper", "LeftShoulder", "LB");
+        _buttonRightShoulder = ButtonValue("RightBumper", "RightShoulder", "RB");
+        _buttonLeftThumb = ButtonValue("LeftStick", "LeftThumb", "LS");
+        _buttonRightThumb = ButtonValue("RightStick", "RightThumb", "RS");
+        _buttonBack = ButtonValue("Back", "Select");
+        _buttonStart = ButtonValue("Start");
+        _buttonGuide = ButtonValue("Guide", "Home");
+        _buttonTouchpad = ButtonValue("Touchpad");
+        _buttonShare = ButtonValue("Share", "Back");
+        _hatNone = HatValue("None");
+        _hatNorth = HatValue("North");
+        _hatNorthEast = HatValue("NorthEast");
+        _hatEast = HatValue("East");
+        _hatSouthEast = HatValue("SouthEast");
+        _hatSouth = HatValue("South");
+        _hatSouthWest = HatValue("SouthWest");
+        _hatWest = HatValue("West");
+        _hatNorthWest = HatValue("NorthWest");
     }
 
-    public void Submit(VirtualGamepadStateDto state)
+    public void Submit(VirtualGamepadFrame frame)
     {
         var hmState = Activator.CreateInstance(_stateType)
             ?? throw new InvalidOperationException("HIDMaestro state creation failed.");
-        var buttons = state.Buttons?.Buttons;
-        SetMember(hmState, "Axes", StandardAxes(state));
-        SetMember(hmState, "Buttons", Buttons(buttons));
-        SetMember(hmState, "Hat", Hat(buttons));
+        SetMember(_axesMember, hmState, StandardAxes(frame));
+        SetMember(_buttonsMember, hmState, Buttons(frame.Buttons));
+        SetMember(_hatMember, hmState, Hat(frame.Buttons));
         _submitState.Invoke(_controller, [hmState]);
     }
 
@@ -286,47 +359,49 @@ sealed class HidMaestroSession : IDisposable
         if (_controller is IDisposable disposable) disposable.Dispose();
     }
 
-    private object? StandardAxes(VirtualGamepadStateDto state)
+    private object? StandardAxes(VirtualGamepadFrame frame)
     {
-        var method = _helpersType.GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .FirstOrDefault(candidate => candidate.Name == "StandardAxes" && candidate.GetParameters().Length >= 7);
-        if (method is null) return null;
-        return method.Invoke(null, [
+        if (_standardAxes is null) return null;
+        return _standardAxes.Invoke(null, [
             _profile,
-            SignedToUnit(state.LeftStick?.X),
-            SignedToUnit(state.LeftStick?.Y),
-            SignedToUnit(state.RightStick?.X),
-            SignedToUnit(state.RightStick?.Y),
-            Unit(state.Triggers?.L2),
-            Unit(state.Triggers?.R2)
+            SignedToUnit(frame.LeftX),
+            SignedToUnit(frame.LeftY),
+            SignedToUnit(frame.RightX),
+            SignedToUnit(frame.RightY),
+            Unit(frame.LeftTrigger),
+            Unit(frame.RightTrigger)
         ]);
     }
 
-    private object Buttons(Dictionary<string, bool>? buttons)
+    private object Buttons(uint buttons)
     {
         ulong value = 0;
-        foreach (var (key, pressed) in buttons ?? new Dictionary<string, bool>())
-        {
-            if (!pressed) continue;
-            foreach (var name in ButtonNames(key))
-            {
-                try
-                {
-                    value |= Convert.ToUInt64(Enum.Parse(_buttonType, name, ignoreCase: true));
-                    break;
-                }
-                catch { }
-            }
-        }
+        if ((buttons & VirtualButtonBits.A) != 0) value |= _buttonA;
+        if ((buttons & VirtualButtonBits.B) != 0) value |= _buttonB;
+        if ((buttons & VirtualButtonBits.X) != 0) value |= _buttonX;
+        if ((buttons & VirtualButtonBits.Y) != 0) value |= _buttonY;
+        if ((buttons & VirtualButtonBits.DpadUp) != 0) value |= _buttonDpadUp;
+        if ((buttons & VirtualButtonBits.DpadRight) != 0) value |= _buttonDpadRight;
+        if ((buttons & VirtualButtonBits.DpadDown) != 0) value |= _buttonDpadDown;
+        if ((buttons & VirtualButtonBits.DpadLeft) != 0) value |= _buttonDpadLeft;
+        if ((buttons & VirtualButtonBits.LeftShoulder) != 0) value |= _buttonLeftShoulder;
+        if ((buttons & VirtualButtonBits.RightShoulder) != 0) value |= _buttonRightShoulder;
+        if ((buttons & VirtualButtonBits.LeftThumb) != 0) value |= _buttonLeftThumb;
+        if ((buttons & VirtualButtonBits.RightThumb) != 0) value |= _buttonRightThumb;
+        if ((buttons & VirtualButtonBits.Back) != 0) value |= _buttonBack;
+        if ((buttons & VirtualButtonBits.Start) != 0) value |= _buttonStart;
+        if ((buttons & VirtualButtonBits.Guide) != 0) value |= _buttonGuide;
+        if ((buttons & VirtualButtonBits.Touchpad) != 0) value |= _buttonTouchpad;
+        if ((buttons & VirtualButtonBits.Share) != 0) value |= _buttonShare;
         return Enum.ToObject(_buttonType, value);
     }
 
-    private object Hat(Dictionary<string, bool>? buttons)
+    private object Hat(uint buttons)
     {
-        var up = ButtonPressed(buttons, "dpad_up");
-        var right = ButtonPressed(buttons, "dpad_right");
-        var down = ButtonPressed(buttons, "dpad_down");
-        var left = ButtonPressed(buttons, "dpad_left");
+        var up = (buttons & VirtualButtonBits.DpadUp) != 0;
+        var right = (buttons & VirtualButtonBits.DpadRight) != 0;
+        var down = (buttons & VirtualButtonBits.DpadDown) != 0;
+        var left = (buttons & VirtualButtonBits.DpadLeft) != 0;
 
         if (up == down)
         {
@@ -339,61 +414,55 @@ sealed class HidMaestroSession : IDisposable
             right = false;
         }
 
-        var name = (up, right, down, left) switch
+        return (up, right, down, left) switch
         {
-            (true, true, false, false) => "NorthEast",
-            (true, false, false, true) => "NorthWest",
-            (false, true, true, false) => "SouthEast",
-            (false, false, true, true) => "SouthWest",
-            (true, false, false, false) => "North",
-            (false, true, false, false) => "East",
-            (false, false, true, false) => "South",
-            (false, false, false, true) => "West",
-            _ => "None"
+            (true, true, false, false) => _hatNorthEast,
+            (true, false, false, true) => _hatNorthWest,
+            (false, true, true, false) => _hatSouthEast,
+            (false, false, true, true) => _hatSouthWest,
+            (true, false, false, false) => _hatNorth,
+            (false, true, false, false) => _hatEast,
+            (false, false, true, false) => _hatSouth,
+            (false, false, false, true) => _hatWest,
+            _ => _hatNone
         };
-        return Enum.Parse(_hatType, name, ignoreCase: true);
     }
 
-    private static IEnumerable<string> ButtonNames(string key) => key switch
+    private ulong ButtonValue(params string[] names)
     {
-        "a" => ["A"],
-        "b" => ["B"],
-        "x" => ["X"],
-        "y" => ["Y"],
-        "dpad_up" => ["DpadUp", "DPadUp", "Up"],
-        "dpad_down" => ["DpadDown", "DPadDown", "Down"],
-        "dpad_left" => ["DpadLeft", "DPadLeft", "Left"],
-        "dpad_right" => ["DpadRight", "DPadRight", "Right"],
-        "left_shoulder" => ["LeftBumper", "LeftShoulder", "LB"],
-        "right_shoulder" => ["RightBumper", "RightShoulder", "RB"],
-        "left_thumb" => ["LeftStick", "LeftThumb", "LS"],
-        "right_thumb" => ["RightStick", "RightThumb", "RS"],
-        "back" => ["Back", "Select"],
-        "start" => ["Start"],
-        "guide" => ["Guide", "Home"],
-        "touchpad" => ["Touchpad"],
-        "share" => ["Share", "Back"],
-        _ => []
-    };
+        foreach (var name in names)
+        {
+            try
+            {
+                return Convert.ToUInt64(Enum.Parse(_buttonType, name, ignoreCase: true));
+            }
+            catch { }
+        }
+        return 0;
+    }
 
-    private static void SetMember(object target, string name, object? value)
+    private object HatValue(string name) => Enum.Parse(_hatType, name, ignoreCase: true);
+
+    private static MemberInfo? SettableMember(Type type, string name)
     {
-        if (value is null) return;
-        var type = target.GetType();
         var property = type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
-        if (property is not null)
+        if (property is not null && property.CanWrite) return property;
+        return type.GetField(name, BindingFlags.Public | BindingFlags.Instance);
+    }
+
+    private static void SetMember(MemberInfo? member, object target, object? value)
+    {
+        if (member is null || value is null) return;
+        if (member is PropertyInfo property)
         {
             property.SetValue(target, value);
             return;
         }
-        type.GetField(name, BindingFlags.Public | BindingFlags.Instance)?.SetValue(target, value);
+        ((FieldInfo)member).SetValue(target, value);
     }
 
-    private static bool ButtonPressed(Dictionary<string, bool>? buttons, string key) =>
-        buttons is not null && buttons.TryGetValue(key, out var pressed) && pressed;
-
-    private static float Unit(double? value) => (float)Math.Clamp(value ?? 0.0, 0.0, 1.0);
-    private static float SignedToUnit(double? value) => (float)((Math.Clamp(value ?? 0.0, -1.0, 1.0) + 1.0) * 0.5);
+    private static float Unit(float value) => Math.Clamp(value, 0.0f, 1.0f);
+    private static float SignedToUnit(float value) => (Math.Clamp(value, -1.0f, 1.0f) + 1.0f) * 0.5f;
 }
 
 sealed record BrokerRequest(
@@ -403,7 +472,14 @@ sealed record BrokerRequest(
     string? ControllerId,
     string? SessionId,
     string? Kind,
-    VirtualGamepadStateDto? State);
+    VirtualGamepadStateDto? State,
+    int? Lx,
+    int? Ly,
+    int? Rx,
+    int? Ry,
+    int? Lt,
+    int? Rt,
+    uint? Buttons);
 
 sealed record BrokerResponse(
     ulong Id,
@@ -434,6 +510,156 @@ sealed record VirtualGamepadStateDto(
 sealed record VirtualStickDto(double X, double Y);
 sealed record VirtualTriggerDto(double L2, double R2);
 sealed record VirtualButtonDto(Dictionary<string, bool> Buttons);
+
+readonly record struct VirtualGamepadFrame(
+    float LeftX,
+    float LeftY,
+    float RightX,
+    float RightY,
+    float LeftTrigger,
+    float RightTrigger,
+    uint Buttons)
+{
+    private const float AxisWireMax = 32767.0f;
+    private const float TriggerWireMax = 65535.0f;
+
+    public static readonly VirtualGamepadFrame Neutral = new(0, 0, 0, 0, 0, 0, 0);
+
+    public static bool TryFrom(BrokerRequest request, out VirtualGamepadFrame frame)
+    {
+        if (HasCompactUpdateFields(request))
+        {
+            return TryFromCompact(request, out frame);
+        }
+        if (request.State is not null)
+        {
+            frame = FromLegacy(request.State);
+            return true;
+        }
+        frame = Neutral;
+        return false;
+    }
+
+    private static bool TryFromCompact(BrokerRequest request, out VirtualGamepadFrame frame)
+    {
+        frame = Neutral;
+        if (!TryAxis(request.Lx, out var lx)
+            || !TryAxis(request.Ly, out var ly)
+            || !TryAxis(request.Rx, out var rx)
+            || !TryAxis(request.Ry, out var ry)
+            || !TryTrigger(request.Lt, out var lt)
+            || !TryTrigger(request.Rt, out var rt)
+            || request.Buttons is not { } buttons
+            || (buttons & ~VirtualButtonBits.KnownMask) != 0)
+        {
+            return false;
+        }
+        frame = new(lx, ly, rx, ry, lt, rt, buttons);
+        return true;
+    }
+
+    private static VirtualGamepadFrame FromLegacy(VirtualGamepadStateDto state) => new(
+        Signed(state.LeftStick?.X),
+        Signed(state.LeftStick?.Y),
+        Signed(state.RightStick?.X),
+        Signed(state.RightStick?.Y),
+        Unit(state.Triggers?.L2),
+        Unit(state.Triggers?.R2),
+        ButtonMask(state.Buttons?.Buttons));
+
+    private static bool HasCompactUpdateFields(BrokerRequest request) =>
+        request.Lx.HasValue
+        || request.Ly.HasValue
+        || request.Rx.HasValue
+        || request.Ry.HasValue
+        || request.Lt.HasValue
+        || request.Rt.HasValue
+        || request.Buttons.HasValue;
+
+    private static bool TryAxis(int? value, out float axis)
+    {
+        axis = 0;
+        if (value is null || value < -32767 || value > 32767) return false;
+        axis = value.Value / AxisWireMax;
+        return true;
+    }
+
+    private static bool TryTrigger(int? value, out float trigger)
+    {
+        trigger = 0;
+        if (value is null || value < 0 || value > 65535) return false;
+        trigger = value.Value / TriggerWireMax;
+        return true;
+    }
+
+    private static float Signed(double? value)
+    {
+        if (value is not { } number || double.IsNaN(number) || double.IsInfinity(number)) return 0;
+        return (float)Math.Clamp(number, -1.0, 1.0);
+    }
+
+    private static float Unit(double? value)
+    {
+        if (value is not { } number || double.IsNaN(number) || double.IsInfinity(number)) return 0;
+        return (float)Math.Clamp(number, 0.0, 1.0);
+    }
+
+    private static uint ButtonMask(Dictionary<string, bool>? buttons)
+    {
+        uint mask = 0;
+        if (buttons is null) return mask;
+        foreach (var (button, pressed) in buttons)
+        {
+            if (pressed) mask |= VirtualButtonBits.FromId(button);
+        }
+        return mask;
+    }
+}
+
+static class VirtualButtonBits
+{
+    public const uint A = 1u << 0;
+    public const uint B = 1u << 1;
+    public const uint X = 1u << 2;
+    public const uint Y = 1u << 3;
+    public const uint DpadUp = 1u << 4;
+    public const uint DpadRight = 1u << 5;
+    public const uint DpadDown = 1u << 6;
+    public const uint DpadLeft = 1u << 7;
+    public const uint LeftShoulder = 1u << 8;
+    public const uint RightShoulder = 1u << 9;
+    public const uint LeftThumb = 1u << 10;
+    public const uint RightThumb = 1u << 11;
+    public const uint Back = 1u << 12;
+    public const uint Start = 1u << 13;
+    public const uint Guide = 1u << 14;
+    public const uint Touchpad = 1u << 15;
+    public const uint Share = 1u << 16;
+    public const uint KnownMask = A | B | X | Y | DpadUp | DpadRight | DpadDown | DpadLeft
+        | LeftShoulder | RightShoulder | LeftThumb | RightThumb | Back | Start | Guide | Touchpad | Share;
+
+    public static uint FromId(string button) => button switch
+    {
+        "a" => A,
+        "b" => B,
+        "x" => X,
+        "y" => Y,
+        "dpad_up" => DpadUp,
+        "dpad_right" => DpadRight,
+        "dpad_down" => DpadDown,
+        "dpad_left" => DpadLeft,
+        "left_shoulder" => LeftShoulder,
+        "right_shoulder" => RightShoulder,
+        "left_thumb" => LeftThumb,
+        "right_thumb" => RightThumb,
+        "back" => Back,
+        "start" => Start,
+        "guide" => Guide,
+        "touchpad" => Touchpad,
+        "share" => Share,
+        _ => 0
+    };
+}
 
 static class JsonOptions
 {

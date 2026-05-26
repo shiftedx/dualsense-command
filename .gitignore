@@ -80,6 +80,8 @@ pnpm-debug.log*
 /release/
 /releases/
 /artifacts/
+/tools/dscc-hidmaestro-broker/bin/
+/tools/dscc-hidmaestro-broker/obj/
 /*.zip
 *.msi
 *.exe
