@@ -120,8 +120,12 @@ export interface GameDetection {
 export interface SupportedGame {
   gameId: string;
   name: string;
+  source?: 'built_in' | 'steam' | 'local_app' | string;
+  inputProvider?: 'native_dualsense' | 'steam_input' | 'dscc_input_bridge' | string;
   appId?: string | null;
   installPath?: string | null;
+  processNames?: string[];
+  executableName?: string | null;
   installed: boolean;
   running: boolean;
   supportLevel: 'telemetry' | 'custom';
@@ -162,6 +166,26 @@ export interface AddCustomGameRequest {
 
 export interface AddCustomGameResponse {
   game: SupportedGame;
+}
+
+export interface ValidateLocalAppRequest {
+  name?: string | null;
+  executablePath: string;
+  processNames?: string[];
+}
+
+export interface ValidateLocalAppResponse {
+  valid: boolean;
+  name: string;
+  executableName: string;
+  processNames: string[];
+  warnings: string[];
+}
+
+export interface AddLocalAppRequest {
+  name: string;
+  executablePath: string;
+  processNames?: string[];
 }
 
 export interface SteamLibraryBrowseEntry {
@@ -206,6 +230,7 @@ interface ProfileConfigPayload {
   forza: ForzaTelemetryConfiguration;
   sticks: StickConfiguration;
   buttons: ButtonAssignmentConfiguration[];
+  inputBridge?: InputBridgeConfig;
 }
 
 interface GameDetectionCandidate {
@@ -262,6 +287,7 @@ export interface AppSnapshot {
   adapters: AdapterStatus[];
   modules: ModuleSummary[];
   steamInput: SteamInputStatus;
+  inputBridge: InputBridgeStatus;
   gameDetection: GameDetection;
   profileResolution: ProfileResolution;
   effectState: CurrentEffectState;
@@ -299,6 +325,7 @@ export interface ControllerConfiguration {
   forza: ForzaTelemetryConfiguration;
   sticks: StickConfiguration;
   buttons: ButtonAssignmentConfiguration[];
+  inputBridge: InputBridgeConfig;
   profileAssignments: ProfileAssignmentConfiguration[];
 }
 
@@ -346,15 +373,85 @@ export interface UpdateEdgeProfileRequest {
   buttons: ControllerConfiguration['buttons'];
 }
 
-type ControllerInputMode = 'native_dualsense' | 'steam_input_companion';
+export type ControllerInputMode = 'native_dualsense' | 'steam_input_companion' | 'dscc_input_bridge';
+
+export interface InputBridgeConfig {
+  enabled: boolean;
+  outputKind: 'xbox360' | string;
+  autoStart: boolean;
+  hidePhysical: boolean;
+  bindings: InputBridgeBindingConfig[];
+}
+
+export interface InputBridgeBindingConfig {
+  source: unknown;
+  target: unknown;
+}
+
+export interface InputBridgeStatus {
+  available: boolean;
+  backendId: string;
+  provider: string;
+  state: 'available' | 'unavailable' | 'faulted' | string;
+  message: string;
+  supportedKinds: string[];
+  sessions: InputBridgeSessionSummary[];
+  warnings: string[];
+}
+
+export interface InputBridgeSessionSummary {
+  controllerId: string;
+  state: 'disabled' | 'starting' | 'ready' | 'active' | 'stale' | 'stopping' | 'faulted';
+  sessionId?: string | null;
+  outputKind?: string | null;
+  message: string;
+  updatedAtMs: number;
+}
+
+export interface InputBridgeBindingWriteRequest {
+  controllerId?: string | null;
+  profileId?: string | null;
+  inputId: string;
+  target: string;
+  dryRun?: boolean;
+}
+
+export interface InputBridgeBindingWriteResponse {
+  accepted: boolean;
+  message: string;
+  dryRun: boolean;
+  warnings: string[];
+}
 
 export interface ControllerInputState {
   controllerId: string;
   available: boolean;
-  source: string;
+  source: 'hid' | 'mock' | string;
   message: string;
-  l2: number;
-  r2: number;
+  sampledAtMs: number | null;
+  ageMs: number | null;
+  axes: {
+    leftStick: ControllerInputStickState;
+    rightStick: ControllerInputStickState;
+  };
+  triggers: {
+    l2: number;
+    r2: number;
+  };
+  buttons: ControllerInputButtonState[];
+}
+
+export interface ControllerInputStickState {
+  x: number;
+  y: number;
+  magnitude: number;
+}
+
+export interface ControllerInputButtonState {
+  id: string;
+  label: string;
+  pressed: boolean;
+  value: number;
 }
 
 interface TriggerConfiguration {

@@ -14,6 +14,7 @@ dscc-adapters = { workspace = true }
 dscc-core = { path = "../dscc-core" }
 dscc-device = { workspace = true }
 dscc-telemetry = { path = "../dscc-telemetry" }
+dscc-virtual-output = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

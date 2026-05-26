@@ -240,8 +240,19 @@ pub(crate) fn supported_game_summary(
     SupportedGameSummary {
         game_id: game.id.to_string(),
         name: game.display_name.to_string(),
+        source: "built_in".to_string(),
+        input_provider: "native_dualsense".to_string(),
         app_id,
         install_path: install_path.map(|path| path.display().to_string()),
+        process_names: game
+            .process_names
+            .iter()
+            .map(|process| (*process).to_string())
+            .collect(),
+        executable_name: game
+            .process_names
+            .first()
+            .map(|process| (*process).to_string()),
         installed,
         running: false,
         support_level: "telemetry".to_string(),

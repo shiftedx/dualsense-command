@@ -12,14 +12,14 @@
 
   export let open = false;
   export let onClose: () => void = () => {};
-  export let onNavigate: (view: 'games' | 'haptics' | 'buttonMapping') => void = () => {};
+  export let onNavigate: (view: 'games' | 'controllers' | 'haptics' | 'buttonMapping') => void = () => {};
 
   type TutorialStep = {
     title: string;
     eyebrow: string;
     body: string;
     actionLabel: string;
-    targetView?: 'games' | 'haptics' | 'buttonMapping';
+    targetView?: 'games' | 'controllers' | 'haptics' | 'buttonMapping';
     icon: typeof Gamepad2;
   };
 
@@ -27,9 +27,9 @@
     {
       eyebrow: 'Start here',
       title: 'Pick the controller and scope',
-      body: 'Use Profiles to choose your target controller, then stay on Global for everyday tuning or pick a supported game profile for telemetry haptics.',
-      actionLabel: 'Open Profiles',
-      targetView: 'games',
+      body: 'Use Controllers for hardware state and live inputs, then use Profiles to choose Global or a supported game scope.',
+      actionLabel: 'Open Controllers',
+      targetView: 'controllers',
       icon: Gamepad2
     },
     {

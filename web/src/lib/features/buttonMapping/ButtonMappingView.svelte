@@ -17,6 +17,11 @@
 
   export let active = false;
   export let steamInputRunning = false;
+  export let providerLabel = 'Steam Input';
+  export let providerKind: 'steam' | 'bridge' = 'steam';
+  export let providerOnline = false;
+  export let mappingAvailabilityMessage = '';
+  export let mappingReadOnly = false;
   export let controllerHeaderName = '';
   export let controllerTransport: ControllerStatus['transport'] | undefined = undefined;
   export let gameName = 'No supported game selected';
@@ -35,6 +40,9 @@
   export let paddlePresetRightKey = 'E';
   export let steamBindingDraft = '';
   export let steamBindingLabelDraft = '';
+  export let bindingLabelFieldLabel = 'Label (Steam UI)';
+  export let rawFieldLabel = 'Raw VDF';
+  export let rawFieldPlaceholder = 'xinput_button ... / key_press ...';
   export let targetGroups: PreparedSteamBindingTargetGroup[] = [];
   export let onSelectSlot: (slot: SteamBindingSlot) => void = () => {};
   export let onHoverSlot: (slot: SteamBindingSlot | null) => void = () => {};
@@ -138,7 +146,7 @@
   <header class="dm-mapping-header">
     <div class="dm-mapping-titleblock">
       <span class="dm-mapping-eyebrow">
-        {steamInputRunning ? 'Steam Input · Online' : 'Steam Input · Offline'}
+        {providerOnline || steamInputRunning ? `${providerLabel} · Online` : `${providerLabel} · Offline`}
         <em>·</em>
         {controllerHeaderName.toUpperCase()}
         {#if controllerTransport && controllerTransport !== 'Unknown'}
@@ -153,6 +161,9 @@
       <em>· {steamLayoutTitle}</em>
       <em class="dm-mapping-context-count">· {mappedVisibleChipCount}/{mirroredInputCount} inputs mapped</em>
     </p>
+    {#if mappingAvailabilityMessage}
+      <p class="dm-mapping-provider-note">{mappingAvailabilityMessage}</p>
+    {/if}
   </header>
 
   {#if paddlePresetVisible}
@@ -243,7 +254,7 @@
       <strong class="dm-steam-layout-title">{noMirrorAvailable ? 'Controller Base Layout' : steamLayoutTitle}</strong>
       {#if noMirrorAvailable}
         <p class="dm-steam-empty-note">
-          No Steam Input layout in this scope. Select a game from the Games tab to remap inputs against its layout; the assignment will auto-load when the game launches via Steam.
+          No {providerLabel} layout in this scope. Select a game from Profiles to remap inputs against the active provider.
         </p>
       {/if}
       <div class="dm-steam-controller-art">
@@ -367,7 +378,7 @@
       {:else}
         <div class="dm-mapping-tray-labels">
           <span>Select an input</span>
-          <strong>Hover or click any chip to edit its Steam Input binding</strong>
+          <strong>Hover or click any chip to edit its {providerLabel} binding</strong>
         </div>
       {/if}
     </div>
@@ -381,7 +392,7 @@
               type="button"
               class="dm-target-combo-trigger"
               class:open={targetPickerOpen}
-              disabled={steamBindingBusy}
+              disabled={steamBindingBusy || mappingReadOnly}
               onclick={toggleTargetPicker}
               aria-haspopup="listbox"
               aria-expanded={targetPickerOpen}
@@ -428,23 +439,23 @@
           </div>
         </div>
         <label class="dm-mapping-tray-field">
-          <span>Label (Steam UI)</span>
+          <span>{bindingLabelFieldLabel}</span>
           <input
             value={steamBindingLabelDraft}
             oninput={(event) => onLabelChange((event.currentTarget as HTMLInputElement).value)}
-            disabled={steamBindingBusy}
+            disabled={steamBindingBusy || mappingReadOnly}
             spellcheck="false"
             placeholder="e.g. Next radio station"
           />
         </label>
         <label class="dm-mapping-tray-field grow">
-          <span>Raw VDF</span>
+          <span>{rawFieldLabel}</span>
           <input
             value={steamBindingDraft}
             oninput={(event) => onRawDraftChange((event.currentTarget as HTMLInputElement).value)}
-            disabled={steamBindingBusy}
+            disabled={steamBindingBusy || mappingReadOnly}
             spellcheck="false"
-            placeholder="xinput_button … / key_press …"
+            placeholder={rawFieldPlaceholder}
           />
         </label>
       </div>
@@ -454,13 +465,13 @@
       <button
         class="dm-mapping-action ghost"
         type="button"
-        disabled={!focusedSlotSelectedBinding || steamBindingBusy}
+        disabled={!focusedSlotSelectedBinding || steamBindingBusy || mappingReadOnly}
         onclick={onResetDraft}
       >Reset</button>
       <button
         class="dm-mapping-action primary"
         type="button"
-        disabled={steamBindingBusy || !steamInputLayoutAvailable || !focusedSlotSelectedBinding || focusedSlotSelectedBinding.synthetic}
+        disabled={steamBindingBusy || mappingReadOnly || !steamInputLayoutAvailable || !focusedSlotSelectedBinding || (providerKind !== 'bridge' && focusedSlotSelectedBinding.synthetic)}
         onclick={() => void onSaveBinding()}
       >Apply</button>
     </div>
