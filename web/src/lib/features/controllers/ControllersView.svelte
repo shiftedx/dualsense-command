@@ -51,6 +51,8 @@
   export let renameName = '';
   export let renameBusy = false;
   export let currentControllerConfig: ControllerConfiguration | null = null;
+  export let leftStickDeadzone = 0;
+  export let rightStickDeadzone = 0;
   export let edgeProfiles: EdgeProfilesResponse | null = null;
   export let edgeProfilesLoading = false;
   export let edgeProfilesBusySlot = '';
@@ -67,6 +69,7 @@
   export let onCancelRename: () => void = () => {};
   export let onRenameKeydown: (event: KeyboardEvent) => void = () => {};
   export let onSetInputMode: (mode: ControllerInputMode) => void | Promise<void> = () => {};
+  export let onSetStickDeadzone: (side: 'left' | 'right', value: number) => void | Promise<void> = () => {};
   export let onStartInputBridge: () => void | Promise<void> = () => {};
   export let onStopInputBridge: () => void | Promise<void> = () => {};
   export let onRefreshEdgeProfiles: () => void | Promise<void> = () => {};
@@ -155,9 +158,12 @@
 
   async function pollInput() {
     if (inputBusy || !shouldPollInput()) return;
+    const requestedControllerId = controller?.id;
+    if (!requestedControllerId) return;
     inputBusy = true;
     try {
-      const next = await getControllerInput(controller?.id);
+      const next = await getControllerInput(requestedControllerId);
+      if (next.controllerId !== requestedControllerId || controller?.id !== requestedControllerId) return;
       inputState = next;
       inputFresh = next.available;
       if (next.available) recordObservedInput(next);
@@ -422,7 +428,7 @@
         </div>
         <div>
           <dt>Duplicate Input</dt>
-          <dd>{currentControllerConfig?.inputBridge?.hidePhysical ? 'HidHide requested' : 'Physical controller visible'}</dd>
+          <dd>{currentControllerConfig?.inputBridge?.hidePhysical ? 'HidHide not configured' : 'Physical controller visible'}</dd>
         </div>
         <div class="wide">
           <dt>Bridge Session</dt>
@@ -501,6 +507,21 @@
               <dd>{suggestedDeadzone(leftStick)}</dd>
             </div>
           </dl>
+          <div class="dm-stick-tuning-row">
+            <span>Deadzone</span>
+            <input
+              class="dm-mini-range"
+              style="--value:{leftStickDeadzone * 2.5}%"
+              type="range"
+              min="0"
+              max="40"
+              value={leftStickDeadzone}
+              disabled={!controller || !currentControllerConfig}
+              aria-label="Left stick deadzone"
+              oninput={(event) => void onSetStickDeadzone('left', event.currentTarget.valueAsNumber)}
+            />
+            <code>{leftStickDeadzone}%</code>
+          </div>
         </article>
 
         <article class="dm-stick-module">
@@ -522,6 +543,21 @@
               <dd>{suggestedDeadzone(rightStick)}</dd>
             </div>
           </dl>
+          <div class="dm-stick-tuning-row">
+            <span>Deadzone</span>
+            <input
+              class="dm-mini-range"
+              style="--value:{rightStickDeadzone * 2.5}%"
+              type="range"
+              min="0"
+              max="40"
+              value={rightStickDeadzone}
+              disabled={!controller || !currentControllerConfig}
+              aria-label="Right stick deadzone"
+              oninput={(event) => void onSetStickDeadzone('right', event.currentTarget.valueAsNumber)}
+            />
+            <code>{rightStickDeadzone}%</code>
+          </div>
         </article>
       </div>
 

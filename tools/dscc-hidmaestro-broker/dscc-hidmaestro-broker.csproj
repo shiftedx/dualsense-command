@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>dscc-hidmaestro-broker</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(HidMaestroCoreDll)' != ''">
+    <Content Include="$(HidMaestroCoreDll)" Link="HIDMaestro.Core.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
