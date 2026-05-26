@@ -172,13 +172,12 @@ export const mockControllerConfig: ControllerConfiguration = {
     { key: 'Fn Left', label: 'Previous DSCC Profile' },
     { key: 'Fn Right', label: 'Next DSCC Profile' }
   ],
-  inputBridge: {
-    enabled: false,
-    outputKind: 'xbox360',
-    autoStart: false,
-    hidePhysical: false,
-    bindings: []
-  },
+    inputBridge: {
+      enabled: false,
+      outputKind: 'xbox360',
+      autoStart: false,
+      bindings: []
+    },
   profileAssignments: mockControllerProfileAssignments
 };
 

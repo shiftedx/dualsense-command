@@ -49,9 +49,11 @@ use dscc_device::{
     ControllerState as DeviceControllerState, DeviceConfig, DeviceEvent, DeviceFamily,
     DeviceManager, DevicePathHint, DeviceTransport, DeviceTransportKind, EdgeButton,
     EdgeButtonMapping, EdgeOnboardProfile, EdgeOnboardSlotId, EdgeProfileIntensity,
-    EdgeStickPreset, EdgeStickProfile, EdgeTriggerDeadzone, HidApiTransport, MockTransport,
-    OutputMode, RawDeviceId, RawHidDevice,
+    EdgeStickPreset, EdgeStickProfile, EdgeTriggerDeadzone, HidApiTransport, OutputMode,
+    RawDeviceId,
 };
+#[cfg(any(test, debug_assertions))]
+use dscc_device::{MockTransport, RawHidDevice};
 use dscc_telemetry::{AdapterDetection, SignalName, SignalSnapshot, SignalUpdate, SignalValue};
 use dscc_virtual_output::VirtualOutputKind;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -2297,6 +2299,7 @@ struct PersistedAgentState {
 }
 
 impl DeviceBackendSummary {
+    #[cfg(any(test, debug_assertions))]
     fn mock() -> Self {
         Self {
             status: "mock".to_string(),
@@ -2330,11 +2333,13 @@ impl DeviceBackendSummary {
 fn input_bridge_service_for_device_backend(
     device_backend: &DeviceBackendSummary,
 ) -> InputBridgeService {
+    #[cfg(any(test, debug_assertions))]
     if device_backend.status == "mock" {
-        InputBridgeService::mock()
-    } else {
-        InputBridgeService::production()
+        return InputBridgeService::mock();
     }
+
+    let _ = device_backend;
+    InputBridgeService::production()
 }
 
 impl PersistenceStore {
@@ -5403,13 +5408,8 @@ fn sanitized_steam_path(steam_root: &FsPath, path: &FsPath) -> Option<String> {
     Some(result.join("/"))
 }
 
-impl Default for AgentState {
-    fn default() -> Self {
-        Self::mock()
-    }
-}
-
 impl AgentState {
+    #[cfg(any(test, debug_assertions))]
     pub fn mock() -> Self {
         let mut manager = mock_device_manager();
         Self::from_device_manager_with_backend(&mut manager, DeviceBackendSummary::mock())
@@ -5426,6 +5426,7 @@ impl AgentState {
             })
     }
 
+    #[cfg(any(test, debug_assertions))]
     pub fn from_controller_events<I>(events: I) -> Self
     where
         I: IntoIterator<Item = ControllerDiscoveryEvent>,
@@ -5501,6 +5502,7 @@ impl AgentState {
         ))
     }
 
+    #[cfg(any(test, debug_assertions))]
     fn from_controller_registry_with_backend(
         controllers: ControllerRegistry,
         device_backend: DeviceBackendSummary,
@@ -8457,6 +8459,7 @@ fn battery_percent_for(state: &ControllerState) -> Option<u8> {
         })
 }
 
+#[cfg(any(test, debug_assertions))]
 fn mock_device_manager() -> DeviceManager<MockTransport> {
     let transport = MockTransport::with_devices(vec![
         RawHidDevice::mock("mock://dualsense-primary")
@@ -9322,16 +9325,6 @@ async fn detect_running_game(
 async fn detect_running_game(
     user_games: &BTreeMap<String, UserGameConfig>,
 ) -> GameDetectionResponse {
-    if let Ok(fixture) = std::env::var("DSCC_PROCESS_SCAN_FIXTURE") {
-        return detect_running_game_from_processes_with_user_games(
-            fixture
-                .split(';')
-                .map(str::trim)
-                .filter(|process| !process.is_empty()),
-            user_games,
-        );
-    }
-
     if std::env::var_os("DSCC_DISABLE_PROCESS_SCAN").is_some() {
         return no_game_detection("process_scan_disabled");
     }

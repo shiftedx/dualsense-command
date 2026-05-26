@@ -8,6 +8,6 @@
   </PropertyGroup>
 
   <ItemGroup Condition="'$(HidMaestroCoreDll)' != ''">
-    <Content Include="$(HidMaestroCoreDll)" Link="HIDMaestro.Core.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(HidMaestroCoreDll)" Link="HIDMaestro.Core.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
   </ItemGroup>
 </Project>

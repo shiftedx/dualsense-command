@@ -264,10 +264,10 @@ if (-not (Test-Path (Join-Path $webDist "index.html"))) {
     throw "web/dist is missing. Run npm run build first."
 }
 if (-not (Test-Path $brokerExe)) {
-    throw "HIDMaestro broker publish output is missing. Build it with dotnet publish tools/dscc-hidmaestro-broker -c Release -r win-x64 --self-contained true -p:HidMaestroCoreDll=<path-to-HIDMaestro.Core.dll> before packaging."
+    throw "HIDMaestro broker publish output is missing. Build it with dotnet publish tools/dscc-hidmaestro-broker -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=None -p:DebugSymbols=false -p:HidMaestroCoreDll=<path-to-HIDMaestro.Core.dll> before packaging."
 }
 if (-not (Test-Path $brokerCoreDll)) {
-    throw "HIDMaestro.Core.dll is missing from the broker publish output. Publish with -p:HidMaestroCoreDll=<path-to-HIDMaestro.Core.dll> so the packaged provider can start."
+    throw "HIDMaestro.Core.dll is missing from the broker publish output. Publish with -p:HidMaestroCoreDll=<path-to-HIDMaestro.Core.dll>; the file must remain next to the broker exe so the provider can start."
 }
 
 if (Test-Path $stagingRoot) {

@@ -10,7 +10,6 @@ use tower::ServiceExt;
 
 #[tokio::test]
 async fn agent_api_contract_serves_pre_hardware_runtime_state() {
-    std::env::set_var("DSCC_PROCESS_SCAN_FIXTURE", "");
     let router = app(AgentState::mock());
 
     let controllers: Vec<ControllerSummary> =

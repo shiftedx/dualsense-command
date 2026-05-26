@@ -1,14 +1,13 @@
+use std::time::Duration;
+#[cfg(any(test, debug_assertions))]
 use std::{
     collections::{BTreeMap, VecDeque},
     sync::{Arc, Mutex, MutexGuard},
-    time::Duration,
 };
 
-use crate::{
-    enumeration::{DeviceAccess, RawHidDevice},
-    error::DeviceError,
-    status::RawDeviceId,
-};
+#[cfg(any(test, debug_assertions))]
+use crate::enumeration::DeviceAccess;
+use crate::{enumeration::RawHidDevice, error::DeviceError, status::RawDeviceId};
 
 pub trait DeviceTransport: Send + Sync + 'static {
     fn enumerate(&self) -> Result<Vec<RawHidDevice>, DeviceError>;
@@ -56,11 +55,13 @@ pub trait DeviceHandle: Send {
     }
 }
 
+#[cfg(any(test, debug_assertions))]
 #[derive(Clone, Debug, Default)]
 pub struct MockTransport {
     inner: Arc<Mutex<MockTransportInner>>,
 }
 
+#[cfg(any(test, debug_assertions))]
 #[derive(Clone, Debug, Default)]
 struct MockTransportInner {
     devices: Vec<RawHidDevice>,
@@ -74,6 +75,7 @@ struct MockTransportInner {
     open_errors: BTreeMap<RawDeviceId, DeviceError>,
 }
 
+#[cfg(any(test, debug_assertions))]
 impl MockTransport {
     pub fn new() -> Self {
         Self::default()
@@ -158,6 +160,7 @@ impl MockTransport {
     }
 }
 
+#[cfg(any(test, debug_assertions))]
 impl DeviceTransport for MockTransport {
     fn enumerate(&self) -> Result<Vec<RawHidDevice>, DeviceError> {
         let inner = self.lock();
@@ -195,12 +198,14 @@ impl DeviceTransport for MockTransport {
     }
 }
 
+#[cfg(any(test, debug_assertions))]
 #[derive(Clone, Debug)]
 struct MockDeviceHandle {
     id: RawDeviceId,
     inner: Arc<Mutex<MockTransportInner>>,
 }
 
+#[cfg(any(test, debug_assertions))]
 impl MockDeviceHandle {
     fn lock(&self) -> MutexGuard<'_, MockTransportInner> {
         match self.inner.lock() {
@@ -210,6 +215,7 @@ impl MockDeviceHandle {
     }
 }
 
+#[cfg(any(test, debug_assertions))]
 impl DeviceHandle for MockDeviceHandle {
     fn read_timeout(&mut self, _timeout: Duration) -> Result<Option<Vec<u8>>, DeviceError> {
         Ok(self

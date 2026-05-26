@@ -379,7 +379,6 @@ export interface InputBridgeConfig {
   enabled: boolean;
   outputKind: 'xbox360' | string;
   autoStart: boolean;
-  hidePhysical: boolean;
   bindings: InputBridgeBindingConfig[];
 }
 

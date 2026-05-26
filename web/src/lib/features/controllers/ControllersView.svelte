@@ -428,7 +428,7 @@
         </div>
         <div>
           <dt>Duplicate Input</dt>
-          <dd>{currentControllerConfig?.inputBridge?.hidePhysical ? 'HidHide not configured' : 'Physical controller visible'}</dd>
+          <dd>Physical controller visible</dd>
         </div>
         <div class="wide">
           <dt>Bridge Session</dt>
