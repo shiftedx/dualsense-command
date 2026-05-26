@@ -1,13 +1,15 @@
 # Production Readiness
 
-Last updated: 2026-05-25
+Last updated: 2026-05-26
 
-DSCC `0.3.0` is a public unsigned Windows beta. It is ready for testers, but it
+DSCC `0.3.1` is a public unsigned Windows beta. It is ready for testers, but it
 should not be called broadly production-ready yet.
 
 ## Current Status
 
 - Windows x86_64 MSI is the main release path.
+- DSCC Standard is the recommended Windows installer for most users.
+- Bridge installers are opt-in for non-Steam DSCC Input Bridge testing.
 - The MSI and binaries are unsigned. README and troubleshooting docs explain the
   SmartScreen warning.
 - Linux artifacts are beta archives with bundled web UI assets.
@@ -21,6 +23,8 @@ Keep these points visible in README, troubleshooting, issue templates, and
 support replies:
 
 - The Windows installer is unsigned and may trigger SmartScreen.
+- Standard is the default download. Bridge builds are larger compatibility
+  options for non-Steam game testing.
 - DSCC does not auto-install updates.
 - Hardware claims should point to the Windows hardware matrix and say whether a
   controller/transport cell is verified or pending.
@@ -32,8 +36,9 @@ support replies:
 
 ## Already In Place
 
-- GitHub release workflow builds Windows MSI, Windows raw binaries, Linux beta
-  archives with `web/dist`, and SHA256 checksum files.
+- GitHub release workflow builds Standard, Bridge, and Bridge
+  framework-dependent Windows MSIs, Windows raw binaries, Linux beta archives
+  with `web/dist`, and SHA256 checksum files.
 - Release packaging reuses the checked `web/dist` artifact instead of rebuilding
   the web UI separately for Windows and Linux.
 - Release workflow runs Rust and web checks before packaging.
@@ -98,7 +103,8 @@ Also confirm:
 - Version metadata matches the tag, crates, web package, root package, MSI, and
   changelog.
 - README and troubleshooting docs mention that the MSI is unsigned.
-- MSI, archives, and checksum files are uploaded.
+- Standard, Bridge, Bridge framework-dependent, archives, and checksum files
+  are uploaded.
 - The final MSI installs, launches, upgrades, and uninstalls cleanly.
   Use `packaging\windows-installer-smoke.ps1` for the repeatable Windows smoke.
 - Hardware-matrix entries used in release notes are marked Verified or clearly

@@ -136,8 +136,23 @@ struct BrokerRequest<'a> {
     session_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     kind: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    state: Option<&'a VirtualGamepadState>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BrokerUpdateFrame<'a> {
+    protocol: &'static str,
+    id: u64,
+    command: &'static str,
+    session_id: &'a str,
+    kind: &'static str,
+    lx: i16,
+    ly: i16,
+    rx: i16,
+    ry: i16,
+    lt: u16,
+    rt: u16,
+    buttons: u32,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -185,7 +200,7 @@ impl HidMaestroBrokerBackend {
         };
         let mut guard = self.lock();
         let process = ensure_broker_process(&mut guard, command)?;
-        process.request("provider_status", None, None, None, None)
+        process.request("provider_status", None, None, None)
     }
 
     fn broker_request(
@@ -194,7 +209,6 @@ impl HidMaestroBrokerBackend {
         controller_id: Option<&str>,
         session_id: Option<&str>,
         kind: Option<VirtualOutputKind>,
-        state: Option<&VirtualGamepadState>,
     ) -> Result<BrokerResponse, VirtualOutputError> {
         let Some(command) = &self.command else {
             return Err(VirtualOutputError::Unavailable(
@@ -203,7 +217,7 @@ impl HidMaestroBrokerBackend {
         };
         let mut guard = self.lock();
         let process = ensure_broker_process(&mut guard, command)?;
-        process.request(command_name, controller_id, session_id, kind, state)
+        process.request(command_name, controller_id, session_id, kind)
     }
 
     fn broker_update(
@@ -268,8 +282,7 @@ impl VirtualOutputBackend for HidMaestroBrokerBackend {
         controller_id: &str,
         kind: VirtualOutputKind,
     ) -> Result<VirtualOutputTarget, VirtualOutputError> {
-        let response =
-            self.broker_request("create", Some(controller_id), None, Some(kind), None)?;
+        let response = self.broker_request("create", Some(controller_id), None, Some(kind))?;
         if !response.ok {
             return Err(VirtualOutputError::BackendFault(
                 response
@@ -294,13 +307,8 @@ impl VirtualOutputBackend for HidMaestroBrokerBackend {
     }
 
     fn drop_session(&self, target: &VirtualOutputTarget) -> Result<(), VirtualOutputError> {
-        let response = self.broker_request(
-            "destroy",
-            None,
-            Some(&target.session_id),
-            Some(target.kind),
-            None,
-        )?;
+        let response =
+            self.broker_request("destroy", None, Some(&target.session_id), Some(target.kind))?;
         if response.ok {
             Ok(())
         } else {
@@ -320,10 +328,9 @@ impl BrokerProcess {
         controller_id: Option<&str>,
         session_id: Option<&str>,
         kind: Option<VirtualOutputKind>,
-        state: Option<&VirtualGamepadState>,
     ) -> Result<BrokerResponse, VirtualOutputError> {
         let id = self.next_request_id();
-        self.write_request(id, command, controller_id, session_id, kind, state)?;
+        self.write_request(id, command, controller_id, session_id, kind)?;
         let mut line = String::new();
         self.stdout
             .read_line(&mut line)
@@ -348,14 +355,7 @@ impl BrokerProcess {
         state: &VirtualGamepadState,
     ) -> Result<(), VirtualOutputError> {
         let id = self.next_request_id();
-        self.write_request(
-            id,
-            "update",
-            None,
-            Some(session_id),
-            Some(kind),
-            Some(state),
-        )
+        self.write_update_frame(id, session_id, kind, state)
     }
 
     fn next_request_id(&mut self) -> u64 {
@@ -371,7 +371,6 @@ impl BrokerProcess {
         controller_id: Option<&str>,
         session_id: Option<&str>,
         kind: Option<VirtualOutputKind>,
-        state: Option<&VirtualGamepadState>,
     ) -> Result<(), VirtualOutputError> {
         let request = BrokerRequest {
             protocol: BROKER_PROTOCOL,
@@ -380,7 +379,6 @@ impl BrokerProcess {
             controller_id,
             session_id,
             kind: kind.map(output_kind_wire),
-            state,
         };
         serde_json::to_writer(&mut self.stdin, &request)
             .map_err(|_| broker_fault("HIDMaestro broker request serialization failed"))?;
@@ -389,12 +387,28 @@ impl BrokerProcess {
             .and_then(|_| self.stdin.flush())
             .map_err(|_| broker_fault("HIDMaestro broker request write failed"))
     }
+
+    fn write_update_frame(
+        &mut self,
+        id: u64,
+        session_id: &str,
+        kind: VirtualOutputKind,
+        state: &VirtualGamepadState,
+    ) -> Result<(), VirtualOutputError> {
+        let frame = BrokerUpdateFrame::from_state(id, session_id, kind, state);
+        serde_json::to_writer(&mut self.stdin, &frame)
+            .map_err(|_| broker_fault("HIDMaestro broker update serialization failed"))?;
+        self.stdin
+            .write_all(b"\n")
+            .and_then(|_| self.stdin.flush())
+            .map_err(|_| broker_fault("HIDMaestro broker update write failed"))
+    }
 }
 
 impl Drop for BrokerProcess {
     fn drop(&mut self) {
-        let _ = self.request("cleanup", None, None, None, None);
-        let _ = self.request("shutdown", None, None, None, None);
+        let _ = self.request("cleanup", None, None, None);
+        let _ = self.request("shutdown", None, None, None);
         let _ = self.child.kill();
     }
 }
@@ -439,7 +453,7 @@ fn spawn_broker_process(command: &BrokerCommand) -> Result<BrokerProcess, Virtua
         stdout: BufReader::new(stdout),
         next_id: 1,
     };
-    let response = process.request("hello", None, None, None, None)?;
+    let response = process.request("hello", None, None, None)?;
     if response.ok {
         Ok(process)
     } else {
@@ -477,8 +491,12 @@ fn discover_hidmaestro_broker() -> Option<BrokerCommand> {
 }
 
 fn output_kind_wire(kind: VirtualOutputKind) -> String {
+    output_kind_wire_static(kind).to_string()
+}
+
+fn output_kind_wire_static(kind: VirtualOutputKind) -> &'static str {
     match kind {
-        VirtualOutputKind::Xbox360 => "xbox360".to_string(),
+        VirtualOutputKind::Xbox360 => "xbox360",
     }
 }
 
@@ -491,6 +509,98 @@ fn parse_output_kind(kind: &str) -> Option<VirtualOutputKind> {
 
 fn broker_fault(message: &str) -> VirtualOutputError {
     VirtualOutputError::BackendFault(message.to_string())
+}
+
+impl<'a> BrokerUpdateFrame<'a> {
+    fn from_state(
+        id: u64,
+        session_id: &'a str,
+        kind: VirtualOutputKind,
+        state: &VirtualGamepadState,
+    ) -> Self {
+        Self {
+            protocol: BROKER_PROTOCOL,
+            id,
+            command: "update",
+            session_id,
+            kind: output_kind_wire_static(kind),
+            lx: signed_axis_wire(state.left_stick.x),
+            ly: signed_axis_wire(state.left_stick.y),
+            rx: signed_axis_wire(state.right_stick.x),
+            ry: signed_axis_wire(state.right_stick.y),
+            lt: trigger_wire(state.triggers.l2),
+            rt: trigger_wire(state.triggers.r2),
+            buttons: button_mask(&state.buttons.buttons),
+        }
+    }
+}
+
+const SIGNED_AXIS_WIRE_MAX: f64 = 32767.0;
+const TRIGGER_WIRE_MAX: f64 = 65535.0;
+
+const BUTTON_A: u32 = 1 << 0;
+const BUTTON_B: u32 = 1 << 1;
+const BUTTON_X: u32 = 1 << 2;
+const BUTTON_Y: u32 = 1 << 3;
+const BUTTON_DPAD_UP: u32 = 1 << 4;
+const BUTTON_DPAD_RIGHT: u32 = 1 << 5;
+const BUTTON_DPAD_DOWN: u32 = 1 << 6;
+const BUTTON_DPAD_LEFT: u32 = 1 << 7;
+const BUTTON_LEFT_SHOULDER: u32 = 1 << 8;
+const BUTTON_RIGHT_SHOULDER: u32 = 1 << 9;
+const BUTTON_LEFT_THUMB: u32 = 1 << 10;
+const BUTTON_RIGHT_THUMB: u32 = 1 << 11;
+const BUTTON_BACK: u32 = 1 << 12;
+const BUTTON_START: u32 = 1 << 13;
+const BUTTON_GUIDE: u32 = 1 << 14;
+const BUTTON_TOUCHPAD: u32 = 1 << 15;
+const BUTTON_SHARE: u32 = 1 << 16;
+
+fn signed_axis_wire(value: f64) -> i16 {
+    if !value.is_finite() {
+        return 0;
+    }
+    (value.clamp(-1.0, 1.0) * SIGNED_AXIS_WIRE_MAX).round() as i16
+}
+
+fn trigger_wire(value: f64) -> u16 {
+    if !value.is_finite() {
+        return 0;
+    }
+    (value.clamp(0.0, 1.0) * TRIGGER_WIRE_MAX).round() as u16
+}
+
+fn button_mask(buttons: &BTreeMap<String, bool>) -> u32 {
+    buttons.iter().fold(0, |mask, (button, pressed)| {
+        if *pressed {
+            mask | button_bit(button)
+        } else {
+            mask
+        }
+    })
+}
+
+fn button_bit(button: &str) -> u32 {
+    match button {
+        "a" => BUTTON_A,
+        "b" => BUTTON_B,
+        "x" => BUTTON_X,
+        "y" => BUTTON_Y,
+        "dpad_up" => BUTTON_DPAD_UP,
+        "dpad_right" => BUTTON_DPAD_RIGHT,
+        "dpad_down" => BUTTON_DPAD_DOWN,
+        "dpad_left" => BUTTON_DPAD_LEFT,
+        "left_shoulder" => BUTTON_LEFT_SHOULDER,
+        "right_shoulder" => BUTTON_RIGHT_SHOULDER,
+        "left_thumb" => BUTTON_LEFT_THUMB,
+        "right_thumb" => BUTTON_RIGHT_THUMB,
+        "back" => BUTTON_BACK,
+        "start" => BUTTON_START,
+        "guide" => BUTTON_GUIDE,
+        "touchpad" => BUTTON_TOUCHPAD,
+        "share" => BUTTON_SHARE,
+        _ => 0,
+    }
 }
 
 #[cfg(any(test, debug_assertions))]
@@ -674,5 +784,38 @@ mod tests {
             backend.create_session("controller-1", VirtualOutputKind::Xbox360),
             Err(VirtualOutputError::Unavailable(_))
         ));
+    }
+
+    #[test]
+    fn hidmaestro_update_frame_is_compact_and_clamped() {
+        let mut state = VirtualGamepadState::neutral();
+        state.left_stick.x = 2.0;
+        state.left_stick.y = -2.0;
+        state.right_stick.x = 0.5;
+        state.right_stick.y = f64::NAN;
+        state.triggers.l2 = -1.0;
+        state.triggers.r2 = 1.5;
+        state.buttons.buttons.insert("a".to_string(), true);
+        state.buttons.buttons.insert("b".to_string(), false);
+        state.buttons.buttons.insert("dpad_right".to_string(), true);
+        state.buttons.buttons.insert("unknown".to_string(), true);
+
+        let frame =
+            BrokerUpdateFrame::from_state(42, "session-1", VirtualOutputKind::Xbox360, &state);
+
+        assert_eq!(frame.lx, 32767);
+        assert_eq!(frame.ly, -32767);
+        assert_eq!(frame.rx, 16384);
+        assert_eq!(frame.ry, 0);
+        assert_eq!(frame.lt, 0);
+        assert_eq!(frame.rt, 65535);
+        assert_eq!(frame.buttons, BUTTON_A | BUTTON_DPAD_RIGHT);
+
+        let json = serde_json::to_string(&frame).unwrap();
+        assert!(json.contains("\"command\":\"update\""));
+        assert!(json.contains("\"sessionId\":\"session-1\""));
+        assert!(json.contains("\"buttons\":33"));
+        assert!(!json.contains("state"));
+        assert!(!json.contains("leftStick"));
     }
 }

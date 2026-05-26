@@ -9,6 +9,9 @@ Download DSCC only from the [official Releases page](https://github.com/shiftedx
 and compare the file with the published SHA256 checksum if you want extra
 confidence.
 
+Most users should download the `standard` Windows MSI. The `bridge` installers
+are only for users testing DSCC Input Bridge with non-Steam games.
+
 If you choose to continue, use SmartScreen's **More info** option only after
 confirming the download came from the official release page. Delete installers
 from any other source.

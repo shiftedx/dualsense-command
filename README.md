@@ -10,8 +10,8 @@ lightbar controls, and racing telemetry without Python setup or scripts.
 
 Get the latest Windows installer from [GitHub Releases](https://github.com/shiftedx/dualsense-command/releases/latest).
 
-- Current release: `0.3.0`
-- Recommended download: Windows x86_64 MSI
+- Current release: `0.3.1`
+- Recommended download: **DSCC Standard** Windows x86_64 MSI
 - Linux builds: beta archive with bundled web UI
 
 The MSI is unsigned, so Windows SmartScreen may warn you. DSCC stores profiles
@@ -19,9 +19,23 @@ and settings in your user folder and preserves them during upgrades. Continue
 past SmartScreen only if you downloaded the MSI from the official release page
 and checked it against the published checksum when needed.
 
+## Which Windows Installer Should I Use?
+
+Pick one. Most people should not install the larger bridge build.
+
+| Installer | Use this when | Includes non-Steam DSCC Input Bridge broker? | Notes |
+| --- | --- | --- | --- |
+| **DSCC Standard** | You want controller tuning, profiles, haptics, telemetry, diagnostics, Steam Input support, and the smallest normal install. | No | **Recommended for most users.** Non-Steam bridge screens stay available but show the provider as not installed. |
+| **DSCC Bridge** | You want to test DSCC Input Bridge with local non-Steam games and you do not want to install a separate .NET runtime. | Yes, self-contained | Larger installer. Best plug-and-play bridge option. |
+| **DSCC Bridge Framework-Dependent** | You want bridge support and already have the matching x64 .NET runtime installed. | Yes, framework-dependent | Smaller than Bridge, but it has a prerequisite. Advanced users only. |
+
+Steam games and normal controller tuning do not need the Bridge installers.
+Use Bridge only to expand compatibility beyond Steam.
+
 ## Quick Start
 
-1. Download and run the Windows MSI.
+1. Download and run the **DSCC Standard** Windows MSI unless you specifically
+   need non-Steam DSCC Input Bridge testing.
 2. Launch **DualSense Command Center** from the Start menu.
 3. Connect a DualSense or DualSense Edge controller over USB or Bluetooth.
 4. Open DSCC from the tray icon, or visit `http://127.0.0.1:43473/`.

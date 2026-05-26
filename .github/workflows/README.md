@@ -22,10 +22,20 @@ Linux runners install `libudev-dev` so `hidapi` can compile.
 
 It builds:
 
-- Unsigned Windows MSI.
+- Unsigned Windows Standard MSI.
+- Unsigned Windows Bridge MSI.
+- Unsigned Windows Bridge framework-dependent MSI.
 - Windows raw binary zip.
 - Linux beta archive with bundled web UI.
 - SHA256 checksum files.
+
+Windows installer intent is deliberately explicit:
+
+| Artifact | Default audience |
+| --- | --- |
+| `standard` | Most users. Controller tuning, profiles, haptics, telemetry, diagnostics, and Steam Input support without the non-Steam bridge broker payload. |
+| `bridge` | Users testing DSCC Input Bridge for non-Steam games. Bundles the self-contained HIDMaestro broker. |
+| `bridge-framework-dependent` | Advanced bridge users with the matching x64 .NET runtime already installed. |
 
 The release workflow publishes the GitHub Release and uploads artifacts. Windows
 artifacts are unsigned unless signing is added later.

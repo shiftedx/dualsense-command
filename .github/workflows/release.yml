@@ -11,6 +11,8 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   WINDOWS_TARGET: x86_64-pc-windows-gnu
+  HIDMAESTRO_RELEASE_URL: https://github.com/hifihedgehog/HIDMaestro/releases/download/v1.3.13/HIDMaestro-v1.3.13.zip
+  HIDMAESTRO_RELEASE_SHA256: 4948B815E65AFDD72BED8C1E29E8108ED8388B58F805FECA2C452E06CF499227
 
 jobs:
   rust-checks:
@@ -83,6 +85,9 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
       - uses: actions/download-artifact@v6
         with:
           name: release-web-dist
@@ -99,7 +104,7 @@ jobs:
         run: |
           $tag = '${{ github.ref_name }}'
           if ($tag -notmatch '^v?([0-9]+\.[0-9]+)(?:\.([0-9]+))?(?:[-+].*)?$') {
-            throw "Release tag '$tag' must look like v0.3, v0.3.0, or v0.3.0-beta.1."
+            throw "Release tag '$tag' must look like v0.3, v0.3.1, or v0.3.1-beta.1."
           }
           $patch = if ([string]::IsNullOrWhiteSpace($Matches[2])) { '0' } else { $Matches[2] }
           "msi_version=$($Matches[1]).$patch" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
@@ -107,13 +112,81 @@ jobs:
       - name: Build Windows GNU binaries
         shell: pwsh
         run: cargo build -p dscc-agent -p dscc-tray -p dscc-cli --release --target $env:WINDOWS_TARGET
-      - name: Build unsigned MSI
+      - name: Resolve HIDMaestro broker dependency
+        id: hidmaestro
         shell: pwsh
         run: |
+          $root = Join-Path $PWD 'target\hidmaestro'
+          $zipPath = Join-Path $root 'HIDMaestro-v1.3.13.zip'
+          $extractPath = Join-Path $root 'release'
+          New-Item -ItemType Directory -Path $root -Force | Out-Null
+          Invoke-WebRequest -Uri $env:HIDMAESTRO_RELEASE_URL -OutFile $zipPath
+          $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToUpperInvariant()
+          if ($hash -ne $env:HIDMAESTRO_RELEASE_SHA256.ToUpperInvariant()) {
+            throw "HIDMaestro release hash mismatch. Expected $env:HIDMAESTRO_RELEASE_SHA256 but found $hash."
+          }
+          if (Test-Path -LiteralPath $extractPath) {
+            Remove-Item -LiteralPath $extractPath -Recurse -Force
+          }
+          Expand-Archive -LiteralPath $zipPath -DestinationPath $extractPath -Force
+          $coreDll = Join-Path $extractPath 'HIDMaestro.Core.dll'
+          if (-not (Test-Path -LiteralPath $coreDll)) {
+            throw "HIDMaestro.Core.dll was not found in the approved release archive."
+          }
+          "core_dll=$coreDll" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Build HIDMaestro broker package flavors
+        shell: pwsh
+        run: |
+          $coreDll = '${{ steps.hidmaestro.outputs.core_dll }}'
+          $publishRoot = Join-Path $PWD 'target\hidmaestro-broker'
+          $selfContained = Join-Path $publishRoot 'self-contained'
+          $frameworkDependent = Join-Path $publishRoot 'framework-dependent'
+          foreach ($dir in @($selfContained, $frameworkDependent)) {
+            if (Test-Path -LiteralPath $dir) {
+              Remove-Item -LiteralPath $dir -Recurse -Force
+            }
+          }
+          dotnet publish tools/dscc-hidmaestro-broker `
+            -c Release `
+            -r win-x64 `
+            -o $selfContained `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:EnableCompressionInSingleFile=true `
+            -p:DebugType=None `
+            -p:DebugSymbols=false `
+            -p:HidMaestroCoreDll="$coreDll"
+          dotnet publish tools/dscc-hidmaestro-broker `
+            -c Release `
+            -r win-x64 `
+            -o $frameworkDependent `
+            --self-contained false `
+            -p:PublishSingleFile=false `
+            -p:DebugType=None `
+            -p:DebugSymbols=false `
+            -p:HidMaestroCoreDll="$coreDll"
+      - name: Build unsigned MSIs
+        shell: pwsh
+        run: |
+          $selfContainedBroker = Join-Path $PWD 'target\hidmaestro-broker\self-contained'
+          $frameworkDependentBroker = Join-Path $PWD 'target\hidmaestro-broker\framework-dependent'
           powershell -NoProfile -ExecutionPolicy Bypass -File packaging\package-msi.ps1 `
             -Version '${{ steps.version.outputs.msi_version }}' `
             -TargetTriple $env:WINDOWS_TARGET `
-            -SkipWebBuild
+            -SkipWebBuild `
+            -InstallerFlavor Standard
+          powershell -NoProfile -ExecutionPolicy Bypass -File packaging\package-msi.ps1 `
+            -Version '${{ steps.version.outputs.msi_version }}' `
+            -TargetTriple $env:WINDOWS_TARGET `
+            -SkipWebBuild `
+            -InstallerFlavor Bridge `
+            -BrokerPublishPath $selfContainedBroker
+          powershell -NoProfile -ExecutionPolicy Bypass -File packaging\package-msi.ps1 `
+            -Version '${{ steps.version.outputs.msi_version }}' `
+            -TargetTriple $env:WINDOWS_TARGET `
+            -SkipWebBuild `
+            -InstallerFlavor BridgeFrameworkDependent `
+            -BrokerPublishPath $frameworkDependentBroker
       - name: Stage Windows artifacts and checksums
         shell: pwsh
         run: |
@@ -121,9 +194,16 @@ jobs:
           $artifactRoot = Join-Path $PWD 'target\release-artifacts\windows'
           New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
 
-          $msiSource = Join-Path $PWD "target\installer\DualSenseCommandCenter-${{ steps.version.outputs.msi_version }}.msi"
-          $msiDest = Join-Path $artifactRoot "DualSenseCommandCenter-$suffix-windows-x86_64-unsigned.msi"
-          Copy-Item -LiteralPath $msiSource -Destination $msiDest -Force
+          $msiArtifacts = @(
+            @{ Flavor = 'standard'; Name = 'standard' },
+            @{ Flavor = 'bridge'; Name = 'bridge' },
+            @{ Flavor = 'bridge-framework-dependent'; Name = 'bridge-framework-dependent' }
+          )
+          foreach ($artifact in $msiArtifacts) {
+            $msiSource = Join-Path $PWD "target\installer\DualSenseCommandCenter-${{ steps.version.outputs.msi_version }}-$($artifact.Flavor).msi"
+            $msiDest = Join-Path $artifactRoot "DualSenseCommandCenter-$suffix-windows-x86_64-$($artifact.Name)-unsigned.msi"
+            Copy-Item -LiteralPath $msiSource -Destination $msiDest -Force
+          }
 
           $binaryStage = Join-Path $PWD 'target\release-artifacts\windows-bin'
           if (Test-Path -LiteralPath $binaryStage) {
@@ -287,6 +367,17 @@ jobs:
           ## Release Artifacts
 
           Verify downloaded files against the published SHA256 checksum files.
+
+          Windows users should choose one installer:
+
+          - `standard`: recommended for most users. Includes controller tuning,
+            profiles, haptics, diagnostics, telemetry, and Steam Input support.
+            It does not bundle the optional non-Steam Input Bridge broker.
+          - `bridge`: includes the self-contained HIDMaestro broker for DSCC
+            Input Bridge testing with local non-Steam apps. Larger download.
+          - `bridge-framework-dependent`: advanced bridge build for machines
+            that already have the matching x64 .NET runtime installed. Smaller
+            than `bridge`, less plug-and-play than `standard`.
 
           The Linux archive includes the bundled production web UI, so
           `./dscc-cli serve --addr 127.0.0.1:43473` can serve the app without

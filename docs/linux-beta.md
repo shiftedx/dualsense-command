@@ -20,7 +20,7 @@ Extract into a fresh folder so the bundled `web/dist` stays beside the binaries:
 
 ```bash
 mkdir dscc-linux-beta
-tar -xzf DualSenseCommandCenter-v0.3.0-linux-x86_64-experimental.tar.gz -C dscc-linux-beta
+tar -xzf DualSenseCommandCenter-v0.3.1-linux-x86_64-experimental.tar.gz -C dscc-linux-beta
 cd dscc-linux-beta
 ./dscc-cli serve --addr 127.0.0.1:43473
 ```

@@ -289,7 +289,7 @@ code,
 
 .dm-tuning-ribbon {
   display: grid;
-  grid-template-columns: minmax(440px, 1.4fr) minmax(360px, 0.72fr);
+  grid-template-columns: minmax(650px, 1.4fr) minmax(360px, 0.72fr);
   align-items: stretch;
   gap: 10px;
   flex: 0 0 62px;
@@ -309,7 +309,7 @@ code,
 
 .dm-steam-identity {
   display: grid;
-  grid-template-columns: 92px minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: 92px repeat(3, minmax(0, 1fr));
   align-items: center;
   gap: 12px;
   overflow: hidden;
@@ -518,6 +518,11 @@ button.dm-ribbon-picker-item.active {
   box-shadow: inset 0 0 0 1px rgba(0, 112, 204, 0.55);
 }
 
+button.dm-ribbon-picker-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
 .dm-ribbon-picker-thumb {
   display: grid;
   place-items: center;
@@ -637,11 +642,11 @@ button.dm-ribbon-picker-item.active {
 
 .dm-games-page {
   display: grid;
-  grid-template-columns: minmax(260px, 320px) minmax(0, 1220px);
+  grid-template-columns: minmax(0, 1220px);
   justify-content: center;
   gap: clamp(16px, 2vw, 26px);
   flex: 1 1 0;
-  width: min(1500px, 100%);
+  width: min(1240px, 100%);
   min-height: 0;
   margin: 18px auto 0;
 }
@@ -1100,7 +1105,7 @@ button.dm-ribbon-picker-item.active {
   flex: 1 1 0;
   width: min(1500px, 100%);
   min-height: 0;
-  margin: 18px auto 0;
+  margin: 0 auto;
 }
 
 .dm-controllers-workbench {

@@ -1,8 +1,12 @@
 param(
-    [string]$Version = "0.3.0",
+    [string]$Version = "0.3.1",
     [string]$TargetTriple,
     [switch]$SkipWebBuild,
     [switch]$AllowDebugAgent,
+    [ValidateSet("Standard", "Bridge", "BridgeFrameworkDependent")]
+    [string]$InstallerFlavor = "Standard",
+    [switch]$FrameworkDependentBroker,
+    [string]$BrokerPublishPath,
     [string]$CertificatePath,
     [string]$CertificatePassword,
     [string]$TimestampUrl = 'http://timestamp.digicert.com'
@@ -49,6 +53,16 @@ function Copy-DirectoryClean([string]$Source, [string]$Destination) {
     }
     New-Item -ItemType Directory -Path $Destination | Out-Null
     Copy-Item -Path (Join-Path $Source "*") -Destination $Destination -Recurse -Force
+}
+
+function Copy-FilesClean([string[]]$Files, [string]$Destination) {
+    if (Test-Path $Destination) {
+        Remove-Item -LiteralPath $Destination -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $Destination | Out-Null
+    foreach ($file in $Files) {
+        Copy-Item -LiteralPath $file -Destination $Destination -Force
+    }
 }
 
 function Assert-FileSha256([string]$Path, [string]$ExpectedHash) {
@@ -208,7 +222,21 @@ $targetRoot = Join-Path $repoRoot "target"
 $stagingRoot = Join-Path $targetRoot "installer\staging"
 $wixRoot = Join-Path $targetRoot "installer\wix"
 $msiRoot = Join-Path $targetRoot "installer"
-$msiPath = Join-Path $msiRoot ("DualSenseCommandCenter-{0}.msi" -f $Version)
+$effectiveFlavor = if ($FrameworkDependentBroker) { "BridgeFrameworkDependent" } else { $InstallerFlavor }
+$includeBroker = $effectiveFlavor -ne "Standard"
+$frameworkDependentBroker = $effectiveFlavor -eq "BridgeFrameworkDependent"
+$installerFlavorSlug = switch ($effectiveFlavor) {
+    "Standard" { "standard" }
+    "Bridge" { "bridge" }
+    "BridgeFrameworkDependent" { "bridge-framework-dependent" }
+}
+$installerFlavorLabel = switch ($effectiveFlavor) {
+    "Standard" { "DSCC Standard" }
+    "Bridge" { "DSCC Bridge" }
+    "BridgeFrameworkDependent" { "DSCC Bridge Framework-Dependent" }
+}
+$msiName = "DualSenseCommandCenter-{0}-{1}.msi" -f $Version, $installerFlavorSlug
+$msiPath = Join-Path $msiRoot $msiName
 
 if (-not $SkipWebBuild) {
     Push-Location $webRoot
@@ -231,9 +259,24 @@ $releaseTray = Join-Path $buildRoot "release\dscc-tray.exe"
 $debugTray = Join-Path $buildRoot "debug\dscc-tray.exe"
 $releaseCli = Join-Path $buildRoot "release\dscc-cli.exe"
 $debugCli = Join-Path $buildRoot "debug\dscc-cli.exe"
-$brokerPublish = Join-Path $repoRoot "tools\dscc-hidmaestro-broker\bin\Release\net10.0\win-x64\publish"
+$defaultBrokerPublish = Join-Path $repoRoot "tools\dscc-hidmaestro-broker\bin\Release\net10.0\win-x64\publish"
+$brokerPublish = if ([string]::IsNullOrWhiteSpace($BrokerPublishPath)) {
+    $defaultBrokerPublish
+} else {
+    (Resolve-Path -LiteralPath $BrokerPublishPath).Path
+}
 $brokerExe = Join-Path $brokerPublish "dscc-hidmaestro-broker.exe"
+$brokerDll = Join-Path $brokerPublish "dscc-hidmaestro-broker.dll"
+$brokerDepsJson = Join-Path $brokerPublish "dscc-hidmaestro-broker.deps.json"
+$brokerRuntimeConfigJson = Join-Path $brokerPublish "dscc-hidmaestro-broker.runtimeconfig.json"
 $brokerCoreDll = Join-Path $brokerPublish "HIDMaestro.Core.dll"
+$brokerFlavor = if (-not $includeBroker) {
+    "not bundled"
+} elseif ($frameworkDependentBroker) {
+    "framework-dependent"
+} else {
+    "self-contained"
+}
 if (Test-Path $releaseAgent) {
     $agentExe = $releaseAgent
 } elseif ($AllowDebugAgent -and (Test-Path $debugAgent)) {
@@ -263,11 +306,36 @@ $webDist = Join-Path $webRoot "dist"
 if (-not (Test-Path (Join-Path $webDist "index.html"))) {
     throw "web/dist is missing. Run npm run build first."
 }
-if (-not (Test-Path $brokerExe)) {
+if ($includeBroker -and -not (Test-Path $brokerExe)) {
+    if ($frameworkDependentBroker) {
+        throw "HIDMaestro framework-dependent broker publish output is missing. Build it with dotnet publish tools/dscc-hidmaestro-broker -c Release -r win-x64 --self-contained false -p:PublishSingleFile=false -p:DebugType=None -p:DebugSymbols=false -p:HidMaestroCoreDll=<path-to-HIDMaestro.Core.dll> before packaging. Target machines must have the x64 .NET 10 Runtime installed."
+    }
     throw "HIDMaestro broker publish output is missing. Build it with dotnet publish tools/dscc-hidmaestro-broker -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=None -p:DebugSymbols=false -p:HidMaestroCoreDll=<path-to-HIDMaestro.Core.dll> before packaging."
 }
-if (-not (Test-Path $brokerCoreDll)) {
+if ($includeBroker -and -not (Test-Path $brokerCoreDll)) {
     throw "HIDMaestro.Core.dll is missing from the broker publish output. Publish with -p:HidMaestroCoreDll=<path-to-HIDMaestro.Core.dll>; the file must remain next to the broker exe so the provider can start."
+}
+if ($includeBroker -and $frameworkDependentBroker) {
+    $frameworkDependentFiles = @($brokerDll, $brokerDepsJson, $brokerRuntimeConfigJson)
+    foreach ($requiredBrokerFile in $frameworkDependentFiles) {
+        if (-not (Test-Path -LiteralPath $requiredBrokerFile)) {
+            throw "HIDMaestro framework-dependent broker publish output is incomplete. Missing '$requiredBrokerFile'. Rebuild with dotnet publish tools/dscc-hidmaestro-broker -c Release -r win-x64 --self-contained false -p:PublishSingleFile=false -p:DebugType=None -p:DebugSymbols=false -p:HidMaestroCoreDll=<path-to-HIDMaestro.Core.dll>."
+        }
+    }
+    $runtimeConfig = Get-Content -LiteralPath $brokerRuntimeConfigJson -Raw
+    if ($runtimeConfig -match '"includedFrameworks"') {
+        throw "HIDMaestro broker runtimeconfig is self-contained. Rebuild with --self-contained false for the framework-dependent installer."
+    }
+    if ($runtimeConfig -notmatch '"framework"') {
+        throw "HIDMaestro broker runtimeconfig does not declare a shared .NET framework prerequisite."
+    }
+} elseif ($includeBroker) {
+    $frameworkDependentMarkers = @($brokerDll, $brokerDepsJson, $brokerRuntimeConfigJson)
+    foreach ($markerFile in $frameworkDependentMarkers) {
+        if (Test-Path -LiteralPath $markerFile) {
+            throw "HIDMaestro broker publish output appears to be framework-dependent because '$markerFile' exists. Rebuild the broker with --self-contained true and -p:PublishSingleFile=true, or use -InstallerFlavor BridgeFrameworkDependent for the prerequisite-based MSI."
+        }
+    }
 }
 
 if (Test-Path $stagingRoot) {
@@ -280,7 +348,13 @@ Copy-Item -LiteralPath $agentExe -Destination (Join-Path $stagingRoot "dscc-agen
 Copy-Item -LiteralPath $trayExe -Destination (Join-Path $stagingRoot "dscc-tray.exe") -Force
 Copy-Item -LiteralPath $cliExe -Destination (Join-Path $stagingRoot "dscc-cli.exe") -Force
 Copy-DirectoryClean -Source $webDist -Destination (Join-Path $stagingRoot "web\dist")
-Copy-DirectoryClean -Source $brokerPublish -Destination (Join-Path $stagingRoot "hidmaestro")
+if ($includeBroker) {
+    if ($frameworkDependentBroker) {
+        Copy-FilesClean -Files @($brokerExe, $brokerDll, $brokerDepsJson, $brokerRuntimeConfigJson, $brokerCoreDll) -Destination (Join-Path $stagingRoot "hidmaestro")
+    } else {
+        Copy-DirectoryClean -Source $brokerPublish -Destination (Join-Path $stagingRoot "hidmaestro")
+    }
+}
 
 # Resolve signtool once if signing was requested, and prompt for the password if it
 # wasn't supplied. Sign the staged binaries here (before WiX harvests them) so the
@@ -355,6 +429,9 @@ DualSense Command Center test build
 8. The local UI opens at http://127.0.0.1:43473/.
 9. During install/upgrade, DSCC backs up persisted user state to state.preinstall-$Version.json when state.json exists.
 10. If the UI will not open, run dscc-cli.exe support-bundle from this folder and attach the sanitized output to a bug report.
+11. Installer flavor: $installerFlavorLabel.
+12. HIDMaestro broker package flavor: $brokerFlavor.
+13. Standard is the normal installer for Steam Input, controller tuning, haptics, profiles, and diagnostics. Use a Bridge installer only when you want DSCC Input Bridge testing for non-Steam games.
 "@
 
 Add-TextFile -Path (Join-Path $stagingRoot "Stop DSCC.cmd") -Content $stopScript
@@ -466,4 +543,13 @@ Write-Output "MSI: $msiPath"
 Write-Output "Agent: $agentExe"
 Write-Output "Tray: $trayExe"
 Write-Output "CLI: $cliExe"
+Write-Output "Installer flavor: $installerFlavorLabel"
+if ($includeBroker) {
+    Write-Output "HIDMaestro broker: $brokerFlavor ($brokerPublish)"
+} else {
+    Write-Output "HIDMaestro broker: not bundled"
+}
+if ($frameworkDependentBroker) {
+    Write-Output "Broker prerequisite: x64 .NET 10 Runtime installed on the target machine"
+}
 Write-Output "Staging: $stagingRoot"
