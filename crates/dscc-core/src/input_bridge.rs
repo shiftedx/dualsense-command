@@ -12,8 +12,6 @@ pub struct InputBridgeConfig {
     #[serde(default)]
     pub auto_start: bool,
     #[serde(default)]
-    pub hide_physical: bool,
-    #[serde(default)]
     pub bindings: Vec<InputBridgeBindingConfig>,
 }
 
@@ -23,7 +21,6 @@ impl Default for InputBridgeConfig {
             enabled: false,
             output_kind: InputBridgeOutputKind::Xbox360,
             auto_start: false,
-            hide_physical: false,
             bindings: default_input_bridge_bindings(),
         }
     }
@@ -32,7 +29,6 @@ impl Default for InputBridgeConfig {
 impl InputBridgeConfig {
     pub fn normalized(mut self) -> Self {
         self.output_kind = InputBridgeOutputKind::Xbox360;
-        self.hide_physical = false;
         self.bindings = normalize_input_bridge_bindings(self.bindings);
         self
     }

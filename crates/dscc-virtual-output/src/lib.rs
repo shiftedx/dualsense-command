@@ -493,11 +493,13 @@ fn broker_fault(message: &str) -> VirtualOutputError {
     VirtualOutputError::BackendFault(message.to_string())
 }
 
+#[cfg(any(test, debug_assertions))]
 #[derive(Clone, Debug, Default)]
 pub struct MockVirtualOutputBackend {
     inner: Arc<Mutex<MockVirtualOutputBackendInner>>,
 }
 
+#[cfg(any(test, debug_assertions))]
 #[derive(Clone, Debug)]
 struct MockVirtualOutputBackendInner {
     available: bool,
@@ -506,11 +508,13 @@ struct MockVirtualOutputBackendInner {
     next_session: u64,
 }
 
+#[cfg(any(test, debug_assertions))]
 #[derive(Clone, Debug)]
 struct MockVirtualOutputSession {
     states: Vec<VirtualGamepadState>,
 }
 
+#[cfg(any(test, debug_assertions))]
 impl Default for MockVirtualOutputBackendInner {
     fn default() -> Self {
         Self {
@@ -522,6 +526,7 @@ impl Default for MockVirtualOutputBackendInner {
     }
 }
 
+#[cfg(any(test, debug_assertions))]
 impl MockVirtualOutputBackend {
     pub fn new() -> Self {
         Self::default()
@@ -553,6 +558,7 @@ impl MockVirtualOutputBackend {
     }
 }
 
+#[cfg(any(test, debug_assertions))]
 impl VirtualOutputBackend for MockVirtualOutputBackend {
     fn status(&self) -> VirtualOutputBackendStatus {
         let inner = self.lock();

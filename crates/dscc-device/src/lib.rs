@@ -55,4 +55,6 @@ pub use status::{
     ControllerInfo, ControllerState, DeviceFamily, DevicePathHint, DeviceTransportKind,
     RawDeviceId,
 };
-pub use transport::{DeviceHandle, DeviceTransport, MockTransport};
+#[cfg(any(test, debug_assertions))]
+pub use transport::MockTransport;
+pub use transport::{DeviceHandle, DeviceTransport};

@@ -15,6 +15,10 @@ dotnet publish tools/dscc-hidmaestro-broker `
   -c Release `
   -r win-x64 `
   --self-contained true `
+  -p:PublishSingleFile=true `
+  -p:EnableCompressionInSingleFile=true `
+  -p:DebugType=None `
+  -p:DebugSymbols=false `
   -p:HidMaestroCoreDll="C:\path\to\HIDMaestro.Core.dll"
 ```
 

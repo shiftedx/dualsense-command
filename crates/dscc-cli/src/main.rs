@@ -9,8 +9,10 @@ use anyhow::{bail, Context};
 use clap::{Args, Parser, Subcommand};
 use dscc_device::{
     list_sanitized_hid, list_sanitized_hid_with_access_probe, DeviceTransportKind, HidApiTransport,
-    MockTransport, RawHidDevice, SanitizedHidDevice,
+    SanitizedHidDevice,
 };
+#[cfg(any(test, debug_assertions))]
+use dscc_device::{MockTransport, RawHidDevice};
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:43473";
@@ -55,6 +57,7 @@ enum Command {
         command: DevicesCommand,
     },
     /// Print a local mock controller list for demos and diagnostics.
+    #[cfg(any(test, debug_assertions))]
     MockDevices {
         /// Output JSON instead of a readable table.
         #[arg(long)]
@@ -120,6 +123,7 @@ struct DeviceListHidArgs {
     #[arg(long)]
     json: bool,
     /// Use synthetic sanitized HID records instead of probing the host.
+    #[cfg(any(test, debug_assertions))]
     #[arg(long)]
     mock: bool,
     /// Attempt to open supported Sony controller candidates and report sanitized access state.
@@ -196,6 +200,7 @@ async fn main() -> anyhow::Result<()> {
             DevicesCommand::Diagnose(args) => devices_diagnose(args).await,
             DevicesCommand::ListHid(args) => devices_list_hid(args),
         },
+        #[cfg(any(test, debug_assertions))]
         Command::MockDevices { json } => print_mock_devices(json).await,
     }
 }
@@ -246,6 +251,7 @@ async fn print_support_bundle(url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(any(test, debug_assertions))]
 async fn print_mock_devices(json: bool) -> anyhow::Result<()> {
     let mock = mock_controllers();
 
@@ -291,7 +297,7 @@ async fn devices_watch(args: DeviceWatchArgs) -> anyhow::Result<()> {
 
 async fn devices_diagnose(args: DeviceDiagnoseArgs) -> anyhow::Result<()> {
     let client = http_client()?;
-    let diagnostics = fetch_diagnostics_or_mock(&client, &args.agent.url).await;
+    let diagnostics = fetch_diagnostics_or_fallback(&client, &args.agent.url).await;
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&diagnostics)?);
@@ -309,12 +315,17 @@ fn devices_list_hid(args: DeviceListHidArgs) -> anyhow::Result<()> {
         );
     }
 
+    #[cfg(any(test, debug_assertions))]
     let candidates = if args.mock {
         mock_hid_candidates()
     } else {
         enumerate_sanitized_hid_candidates(args.probe_open)
             .context("failed to enumerate sanitized HID candidates")?
     };
+
+    #[cfg(not(any(test, debug_assertions)))]
+    let candidates = enumerate_sanitized_hid_candidates(args.probe_open)
+        .context("failed to enumerate sanitized HID candidates")?;
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&candidates)?);
@@ -359,7 +370,7 @@ async fn fetch_controllers(
         .context("agent controller response was not valid JSON")
 }
 
-async fn fetch_diagnostics_or_mock(
+async fn fetch_diagnostics_or_fallback(
     client: &reqwest::Client,
     base_url: &str,
 ) -> DiagnosticsResponse {
@@ -398,7 +409,7 @@ fn fallback_diagnostics(reason: String) -> DiagnosticsResponse {
         },
         HealthCheck {
             name: "device-backend".to_string(),
-            status: "mock".to_string(),
+            status: "unavailable".to_string(),
             detail: "Agent registry is unavailable; use devices list-hid --experimental to query sanitized dscc-device HID enumeration directly.".to_string(),
         },
     ];
@@ -635,6 +646,7 @@ fn format_battery(value: Option<u8>) -> String {
         .unwrap_or_else(|| "-".to_string())
 }
 
+#[cfg(any(test, debug_assertions))]
 fn mock_controllers() -> Vec<ControllerSummary> {
     vec![ControllerSummary {
         id: "mock-dualsense-1".to_string(),
@@ -646,6 +658,7 @@ fn mock_controllers() -> Vec<ControllerSummary> {
     }]
 }
 
+#[cfg(any(test, debug_assertions))]
 fn mock_hid_candidates() -> Vec<SanitizedHidCandidate> {
     let transport = MockTransport::with_devices(vec![RawHidDevice::mock("mock://hid-candidate-1")
         .with_manufacturer("Mock Manufacturer")

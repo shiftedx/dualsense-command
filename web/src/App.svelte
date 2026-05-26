@@ -2266,7 +2266,6 @@
     enabled: false,
     outputKind: 'xbox360',
     autoStart: false,
-    hidePhysical: false,
     bindings: []
   });
 

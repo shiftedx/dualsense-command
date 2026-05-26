@@ -5,10 +5,11 @@ use dscc_core::input_bridge::{
     InputBridgeConfig, InputBridgeSource, InputBridgeTarget, VirtualAxis,
 };
 use dscc_device::ControllerInputState;
+#[cfg(any(test, debug_assertions))]
+use dscc_virtual_output::MockVirtualOutputBackend;
 use dscc_virtual_output::{
-    HidMaestroBrokerBackend, MockVirtualOutputBackend, VirtualButtonState, VirtualGamepadState,
-    VirtualOutputBackend, VirtualOutputBackendState, VirtualOutputError, VirtualOutputKind,
-    VirtualOutputTarget,
+    HidMaestroBrokerBackend, VirtualButtonState, VirtualGamepadState, VirtualOutputBackend,
+    VirtualOutputBackendState, VirtualOutputError, VirtualOutputKind, VirtualOutputTarget,
 };
 use serde::{Deserialize, Serialize};
 
@@ -75,6 +76,7 @@ impl InputBridgeService {
         }
     }
 
+    #[cfg(any(test, debug_assertions))]
     pub(crate) fn mock() -> Self {
         Self {
             backend: Arc::new(MockVirtualOutputBackend::new()),
@@ -336,6 +338,11 @@ fn public_backend_status_message(message: &str, state: VirtualOutputBackendState
 }
 
 fn input_bridge_warnings(provider: &str, state: VirtualOutputBackendState) -> Vec<String> {
+    #[cfg(any(test, debug_assertions))]
+    if provider == "mock" {
+        return vec!["Input Bridge is using the in-memory test backend.".to_string()];
+    }
+
     match (provider, state) {
         ("hidmaestro", VirtualOutputBackendState::Available) => vec![
             "HIDMaestro creates the virtual controller; HidHide remains optional for duplicate-input control.".to_string(),
@@ -343,7 +350,6 @@ fn input_bridge_warnings(provider: &str, state: VirtualOutputBackendState) -> Ve
         ("hidmaestro", _) => vec![
             "Install or configure the DSCC HIDMaestro broker before starting bridge sessions.".to_string(),
         ],
-        ("mock", _) => vec!["Input Bridge is using the in-memory test backend.".to_string()],
         _ => Vec::new(),
     }
 }
