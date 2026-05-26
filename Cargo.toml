@@ -23,4 +23,5 @@ dscc-device = { path = "crates/dscc-device" }
 dscc-telemetry = { path = "crates/dscc-telemetry" }
 dscc-virtual-output = { path = "crates/dscc-virtual-output" }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 thiserror = "1"

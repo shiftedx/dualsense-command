@@ -32,6 +32,7 @@ impl Default for InputBridgeConfig {
 impl InputBridgeConfig {
     pub fn normalized(mut self) -> Self {
         self.output_kind = InputBridgeOutputKind::Xbox360;
+        self.hide_physical = false;
         self.bindings = normalize_input_bridge_bindings(self.bindings);
         self
     }

@@ -6,8 +6,9 @@ use dscc_core::input_bridge::{
 };
 use dscc_device::ControllerInputState;
 use dscc_virtual_output::{
-    MockVirtualOutputBackend, VirtualButtonState, VirtualGamepadState, VirtualOutputBackend,
-    VirtualOutputBackendState, VirtualOutputError, VirtualOutputKind, VirtualOutputTarget,
+    HidMaestroBrokerBackend, MockVirtualOutputBackend, VirtualButtonState, VirtualGamepadState,
+    VirtualOutputBackend, VirtualOutputBackendState, VirtualOutputError, VirtualOutputKind,
+    VirtualOutputTarget,
 };
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +17,7 @@ const KNOWN_INPUT_BUTTON_COUNT: usize = 23;
 #[derive(Clone)]
 pub(crate) struct InputBridgeService {
     backend: Arc<dyn VirtualOutputBackend>,
+    provider: String,
     sessions: Arc<Mutex<BTreeMap<String, InputBridgeSessionRecord>>>,
 }
 
@@ -65,9 +67,18 @@ pub struct InputBridgeSessionSummary {
 }
 
 impl InputBridgeService {
+    pub(crate) fn production() -> Self {
+        Self {
+            backend: Arc::new(HidMaestroBrokerBackend::from_env_or_default()),
+            provider: "hidmaestro".to_string(),
+            sessions: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+
     pub(crate) fn mock() -> Self {
         Self {
             backend: Arc::new(MockVirtualOutputBackend::new()),
+            provider: "mock".to_string(),
             sessions: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
@@ -78,21 +89,16 @@ impl InputBridgeService {
         InputBridgeStatusResponse {
             available: backend.state == VirtualOutputBackendState::Available,
             backend_id: public_backend_id(&backend.backend_id),
-            provider: "mock".to_string(),
+            provider: self.provider.clone(),
             state: backend_state_label(backend.state).to_string(),
-            message: public_backend_status_message(backend.state).to_string(),
+            message: public_backend_status_message(&backend.message, backend.state),
             supported_kinds: backend
                 .supported_kinds
                 .into_iter()
                 .map(output_kind_label)
                 .collect(),
             sessions,
-            warnings: vec![
-                "DSCC Input Bridge is wired to the mock virtual-output provider in this build."
-                    .to_string(),
-                "HIDMaestro, HidHide, and ViGEm are not bundled or invoked by this runtime."
-                    .to_string(),
-            ],
+            warnings: input_bridge_warnings(&self.provider, backend.state),
         }
     }
 
@@ -245,8 +251,11 @@ impl InputBridgeService {
         controller_id: &str,
         updated_at_ms: u64,
     ) -> InputBridgeSessionSummary {
-        let mut sessions = self.lock();
-        let Some(record) = sessions.remove(controller_id) else {
+        let record = {
+            let mut sessions = self.lock();
+            sessions.remove(controller_id)
+        };
+        let Some(record) = record else {
             return InputBridgeSessionSummary {
                 controller_id: controller_id.to_string(),
                 state: InputBridgeSessionState::Disabled,
@@ -307,11 +316,35 @@ fn backend_state_label(state: VirtualOutputBackendState) -> &'static str {
     }
 }
 
-fn public_backend_status_message(state: VirtualOutputBackendState) -> &'static str {
+fn public_backend_status_message(message: &str, state: VirtualOutputBackendState) -> String {
+    let trimmed = message.trim();
+    let safe = !trimmed.is_empty()
+        && trimmed.len() <= 180
+        && !trimmed.contains(":\\")
+        && !trimmed.contains("\\\\")
+        && !trimmed.contains('/');
+    if safe {
+        return trimmed.to_string();
+    }
     match state {
-        VirtualOutputBackendState::Available => "Virtual output backend is available.",
-        VirtualOutputBackendState::Unavailable => "Virtual output backend is unavailable.",
-        VirtualOutputBackendState::Faulted => "Virtual output backend fault.",
+        VirtualOutputBackendState::Available => "Virtual output backend is available.".to_string(),
+        VirtualOutputBackendState::Unavailable => {
+            "Virtual output backend is unavailable.".to_string()
+        }
+        VirtualOutputBackendState::Faulted => "Virtual output backend fault.".to_string(),
+    }
+}
+
+fn input_bridge_warnings(provider: &str, state: VirtualOutputBackendState) -> Vec<String> {
+    match (provider, state) {
+        ("hidmaestro", VirtualOutputBackendState::Available) => vec![
+            "HIDMaestro creates the virtual controller; HidHide remains optional for duplicate-input control.".to_string(),
+        ],
+        ("hidmaestro", _) => vec![
+            "Install or configure the DSCC HIDMaestro broker before starting bridge sessions.".to_string(),
+        ],
+        ("mock", _) => vec!["Input Bridge is using the in-memory test backend.".to_string()],
+        _ => Vec::new(),
     }
 }
 
@@ -628,6 +661,7 @@ mod tests {
     fn public_status_redacts_private_backend_and_session_ids() {
         let service = InputBridgeService {
             backend: Arc::new(PrivateIdBackend),
+            provider: "hidmaestro".to_string(),
             sessions: Arc::new(Mutex::new(BTreeMap::new())),
         };
 

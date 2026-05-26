@@ -273,8 +273,8 @@ export const mockInputBridgeStatus: InputBridgeStatus = {
   supportedKinds: ['xbox360'],
   sessions: [],
   warnings: [
-    'DSCC Input Bridge is wired to the mock virtual-output provider in this build.',
-    'HIDMaestro, HidHide, and ViGEm are not bundled or invoked by this runtime.'
+    'Dev mock mode uses an in-memory virtual-output provider; production builds use the configured HIDMaestro broker.',
+    'HidHide remains optional and is not changed automatically.'
   ]
 };
 

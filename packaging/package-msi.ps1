@@ -231,6 +231,9 @@ $releaseTray = Join-Path $buildRoot "release\dscc-tray.exe"
 $debugTray = Join-Path $buildRoot "debug\dscc-tray.exe"
 $releaseCli = Join-Path $buildRoot "release\dscc-cli.exe"
 $debugCli = Join-Path $buildRoot "debug\dscc-cli.exe"
+$brokerPublish = Join-Path $repoRoot "tools\dscc-hidmaestro-broker\bin\Release\net10.0\win-x64\publish"
+$brokerExe = Join-Path $brokerPublish "dscc-hidmaestro-broker.exe"
+$brokerCoreDll = Join-Path $brokerPublish "HIDMaestro.Core.dll"
 if (Test-Path $releaseAgent) {
     $agentExe = $releaseAgent
 } elseif ($AllowDebugAgent -and (Test-Path $debugAgent)) {
@@ -260,6 +263,12 @@ $webDist = Join-Path $webRoot "dist"
 if (-not (Test-Path (Join-Path $webDist "index.html"))) {
     throw "web/dist is missing. Run npm run build first."
 }
+if (-not (Test-Path $brokerExe)) {
+    throw "HIDMaestro broker publish output is missing. Build it with dotnet publish tools/dscc-hidmaestro-broker -c Release -r win-x64 --self-contained true -p:HidMaestroCoreDll=<path-to-HIDMaestro.Core.dll> before packaging."
+}
+if (-not (Test-Path $brokerCoreDll)) {
+    throw "HIDMaestro.Core.dll is missing from the broker publish output. Publish with -p:HidMaestroCoreDll=<path-to-HIDMaestro.Core.dll> so the packaged provider can start."
+}
 
 if (Test-Path $stagingRoot) {
     Remove-Item -LiteralPath $stagingRoot -Recurse -Force
@@ -271,6 +280,7 @@ Copy-Item -LiteralPath $agentExe -Destination (Join-Path $stagingRoot "dscc-agen
 Copy-Item -LiteralPath $trayExe -Destination (Join-Path $stagingRoot "dscc-tray.exe") -Force
 Copy-Item -LiteralPath $cliExe -Destination (Join-Path $stagingRoot "dscc-cli.exe") -Force
 Copy-DirectoryClean -Source $webDist -Destination (Join-Path $stagingRoot "web\dist")
+Copy-DirectoryClean -Source $brokerPublish -Destination (Join-Path $stagingRoot "hidmaestro")
 
 # Resolve signtool once if signing was requested, and prompt for the password if it
 # wasn't supplied. Sign the staged binaries here (before WiX harvests them) so the

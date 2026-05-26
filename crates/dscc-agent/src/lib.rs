@@ -117,6 +117,7 @@ fn current_timestamp_millis() -> u64 {
 const TELEMETRY_PACKET_STALE_AFTER: Duration = Duration::from_secs(2);
 const HARDWARE_OUTPUT_INTERVAL: Duration = Duration::from_millis(33);
 const INPUT_BRIDGE_PROCESS_INTERVAL: Duration = Duration::from_millis(8);
+const INPUT_BRIDGE_CONFIG_REFRESH_INTERVAL: Duration = Duration::from_millis(100);
 const INPUT_BRIDGE_STALE_AFTER: Duration = Duration::from_millis(250);
 const HARDWARE_OUTPUT_KEEPALIVE_INTERVAL: Duration = Duration::from_millis(750);
 const MANUAL_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
@@ -2326,6 +2327,16 @@ impl DeviceBackendSummary {
     }
 }
 
+fn input_bridge_service_for_device_backend(
+    device_backend: &DeviceBackendSummary,
+) -> InputBridgeService {
+    if device_backend.status == "mock" {
+        InputBridgeService::mock()
+    } else {
+        InputBridgeService::production()
+    }
+}
+
 impl PersistenceStore {
     fn default() -> Option<Self> {
         if let Some(config_dir) = std::env::var_os("DSCC_CONFIG_DIR") {
@@ -3941,6 +3952,70 @@ fn windows_process_names() -> io::Result<Vec<String>> {
     }
 }
 
+#[cfg(all(target_os = "windows", not(test)))]
+fn windows_process_image_paths_matching(targets: &[String]) -> io::Result<Vec<PathBuf>> {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
+        System::{
+            Diagnostics::ToolHelp::{
+                CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+                TH32CS_SNAPPROCESS,
+            },
+            Threading::{
+                OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+            },
+        },
+    };
+
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut paths = Vec::new();
+
+        if Process32FirstW(snapshot, &mut entry) != 0 {
+            loop {
+                let len = entry
+                    .szExeFile
+                    .iter()
+                    .position(|value| *value == 0)
+                    .unwrap_or(entry.szExeFile.len());
+                let process_name = String::from_utf16_lossy(&entry.szExeFile[..len]);
+                if targets
+                    .iter()
+                    .any(|target| target.eq_ignore_ascii_case(&process_name))
+                {
+                    let process =
+                        OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, entry.th32ProcessID);
+                    if !process.is_null() {
+                        let mut buffer = [0_u16; 32768];
+                        let mut size = buffer.len() as u32;
+                        if QueryFullProcessImageNameW(process, 0, buffer.as_mut_ptr(), &mut size)
+                            != 0
+                            && size > 0
+                        {
+                            paths.push(PathBuf::from(String::from_utf16_lossy(
+                                &buffer[..size as usize],
+                            )));
+                        }
+                        CloseHandle(process);
+                    }
+                }
+                if Process32NextW(snapshot, &mut entry) == 0 {
+                    break;
+                }
+            }
+        }
+
+        CloseHandle(snapshot);
+        Ok(paths)
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn windows_process_running(target: &str) -> bool {
     windows_process_names()
@@ -5468,7 +5543,7 @@ impl AgentState {
             discovery_cache: Arc::new(DiscoveryCache::default()),
             realtime_runtime: Arc::new(Mutex::new(RealtimeRuntime::default())),
             effect_runtime: Arc::new(Mutex::new(EffectRuntimeCache::default())),
-            input_bridge: InputBridgeService::mock(),
+            input_bridge: input_bridge_service_for_device_backend(&device_backend),
             inner: Arc::new(RwLock::new(AgentStateInner {
                 controllers,
                 controller_names: persisted.controller_names,
@@ -12920,7 +12995,13 @@ async fn read_controller_input_state(
         inner.controllers.detail(&id).ok_or(StatusCode::NOT_FOUND)?;
     }
 
-    match state.read_input_state_for_controller(&id).await {
+    match state
+        .read_input_state_for_controller_with_options(
+            &id,
+            ControllerInputReadOptions::bridge_poll(),
+        )
+        .await
+    {
         Ok(Some(input)) => Ok(controller_input_available(id, input)),
         Ok(None) => Ok(controller_input_unavailable(
             id,
@@ -13985,6 +14066,14 @@ async fn start_input_bridge_session(
             })),
         ));
     }
+    if !local_app_execution_verified_for_input_bridge(&state, &detection).await {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "DSCC Input Bridge can only start while the registered local app executable is running"
+            })),
+        ));
+    }
     let existing = state.input_bridge.session_summary(&controller_id);
     if existing.state == InputBridgeSessionState::Active {
         return Ok(Json(existing));
@@ -14029,6 +14118,81 @@ fn detection_allows_input_bridge(detection: &GameDetectionResponse) -> bool {
     })
 }
 
+#[cfg(test)]
+async fn local_app_execution_verified_for_input_bridge(
+    _state: &AgentState,
+    detection: &GameDetectionResponse,
+) -> bool {
+    detection_allows_input_bridge(detection)
+}
+
+#[cfg(not(test))]
+async fn local_app_execution_verified_for_input_bridge(
+    state: &AgentState,
+    detection: &GameDetectionResponse,
+) -> bool {
+    let Some(active_game_id) = detection.active_game_id.as_deref() else {
+        return false;
+    };
+    let user_game = {
+        let inner = state.inner.read().await;
+        inner.user_games.get(active_game_id).cloned()
+    };
+    let Some(user_game) = user_game else {
+        return false;
+    };
+    tokio::task::spawn_blocking(move || registered_local_app_is_running(&user_game))
+        .await
+        .unwrap_or(false)
+}
+
+#[cfg(not(test))]
+fn registered_local_app_is_running(game: &UserGameConfig) -> bool {
+    let Ok(install_root) = PathBuf::from(&game.install_path).canonicalize() else {
+        return false;
+    };
+    if game.process_names.is_empty() {
+        return false;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        windows_process_image_paths_matching(&game.process_names)
+            .map(|paths| {
+                paths
+                    .iter()
+                    .any(|path| local_app_process_path_allowed(game, &install_root, path))
+            })
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
+fn local_app_process_path_allowed(
+    game: &UserGameConfig,
+    install_root: &FsPath,
+    process_path: &FsPath,
+) -> bool {
+    let Some(file_name) = process_path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    if !game
+        .process_names
+        .iter()
+        .any(|process| process.eq_ignore_ascii_case(file_name))
+    {
+        return false;
+    }
+    process_path
+        .canonicalize()
+        .map(|path| path.starts_with(install_root))
+        .unwrap_or(false)
+}
+
 async fn stop_input_bridge_session(
     Path(controller_id): Path<String>,
     State(state): State<AgentState>,
@@ -14047,12 +14211,17 @@ async fn stop_input_bridge_session(
 async fn run_input_bridge_session_loop(state: AgentState, controller_id: String) {
     let mut last_input_at = Instant::now();
     let mut last_game_check_at = Instant::now();
+    let mut last_config_check_at: Option<Instant> = None;
+    let mut active_config: Option<InputBridgeConfig> = None;
     loop {
         if !state.input_bridge.is_active(&controller_id) {
             break;
         }
 
-        let config = {
+        if last_config_check_at
+            .map(|checked_at| checked_at.elapsed() >= INPUT_BRIDGE_CONFIG_REFRESH_INTERVAL)
+            .unwrap_or(true)
+        {
             let inner = state.inner.read().await;
             let Some(detail) = inner.controllers.detail(&controller_id) else {
                 state
@@ -14082,7 +14251,12 @@ async fn run_input_bridge_session_loop(state: AgentState, controller_id: String)
                 send_input_bridge_invalidation(&state, "input-bridge-config-disabled");
                 break;
             }
-            config.input_bridge
+            active_config = Some(config.input_bridge);
+            last_config_check_at = Some(Instant::now());
+        }
+        let Some(config) = active_config.as_ref() else {
+            tokio::time::sleep(INPUT_BRIDGE_PROCESS_INTERVAL).await;
+            continue;
         };
 
         if last_game_check_at.elapsed() >= HARDWARE_GAME_DETECTION_INTERVAL {
@@ -14094,6 +14268,13 @@ async fn run_input_bridge_session_loop(state: AgentState, controller_id: String)
                     .input_bridge
                     .stop_session(&controller_id, current_timestamp_millis());
                 send_input_bridge_invalidation(&state, "input-bridge-local-app-inactive");
+                break;
+            }
+            if !local_app_execution_verified_for_input_bridge(&state, &detection).await {
+                state
+                    .input_bridge
+                    .stop_session(&controller_id, current_timestamp_millis());
+                send_input_bridge_invalidation(&state, "input-bridge-local-app-unverified");
                 break;
             }
             last_game_check_at = Instant::now();
@@ -14113,7 +14294,7 @@ async fn run_input_bridge_session_loop(state: AgentState, controller_id: String)
                     .submit_controller_input(
                         &controller_id,
                         &input,
-                        &config,
+                        config,
                         current_timestamp_millis(),
                     )
                     .is_err()
@@ -15944,6 +16125,20 @@ mod tests {
         assert_eq!(status.supported_kinds, vec!["xbox360".to_string()]);
     }
 
+    #[test]
+    fn hid_agent_state_uses_hidmaestro_bridge_provider_not_mock() {
+        let service = input_bridge_service_for_device_backend(&DeviceBackendSummary {
+            status: "hidapi".to_string(),
+            detail: "test hid backend".to_string(),
+        });
+        let status = service.status_response();
+
+        assert_eq!(status.provider, "hidmaestro");
+        assert_eq!(status.backend_id, "hidmaestro");
+        assert!(!status.available);
+        assert_ne!(status.provider, "mock");
+    }
+
     #[tokio::test]
     async fn input_bridge_start_refuses_unknown_and_unconfigured_controllers() {
         let router = app(AgentState::from_controller_events([attach_event(
@@ -16014,6 +16209,39 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn input_bridge_local_app_path_check_requires_registered_root() {
+        let root = temp_test_dir("dscc-local-app-root");
+        let outside = temp_test_dir("dscc-local-app-outside");
+        fs::create_dir_all(&root).expect("local app root");
+        fs::create_dir_all(&outside).expect("outside root");
+        let registered_exe = root.join("NightDriveLab.exe");
+        let outside_exe = outside.join("NightDriveLab.exe");
+        fs::write(&registered_exe, b"fixture").expect("registered exe");
+        fs::write(&outside_exe, b"fixture").expect("outside exe");
+        let install_root = root.canonicalize().expect("canonical root");
+        let game = UserGameConfig {
+            game_id: "local-night-drive-lab-test".to_string(),
+            app_id: "local:test".to_string(),
+            name: "Night Drive Lab".to_string(),
+            install_dir: "NightDriveLab".to_string(),
+            install_path: install_root.display().to_string(),
+            process_names: vec!["NightDriveLab.exe".to_string()],
+            added_at: current_timestamp(),
+        };
+
+        assert!(local_app_process_path_allowed(
+            &game,
+            &install_root,
+            &registered_exe
+        ));
+        assert!(!local_app_process_path_allowed(
+            &game,
+            &install_root,
+            &outside_exe
+        ));
     }
 
     #[tokio::test]

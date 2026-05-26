@@ -760,6 +760,8 @@
   let lightbarColor = '#4cc9f0';
   let rpmColor = '#ff3a2e';
   let lightbarBrightness = 72;
+  let leftStickDeadzone = 0;
+  let rightStickDeadzone = 0;
 
   // Theme-styled color picker (replaces the native OS color dialog).
   const colorPresets = [
@@ -1089,7 +1091,7 @@
     : Boolean(steamInputStatus?.running);
   $: mappingAvailabilityMessage = bridgeContextActive
     ? inputBridgeStatus?.available
-      ? 'Bridge edits are staged through DSCC typed mapping. Virtual output is mock-only until a provider passes validation.'
+      ? 'Bridge edits are staged through DSCC typed mapping and sent through the configured virtual-output provider.'
       : inputBridgeStatus?.message ?? 'DSCC Input Bridge backend is unavailable.'
     : steamInputStatus?.available
       ? ''
@@ -2142,7 +2144,7 @@
   };
 
   const saveControllerInputMode = async (mode: ControllerInputMode) => {
-    if (!controller || !currentControllerConfig || inputBridgeBusy) return;
+    if (!controller || !currentControllerConfig || currentControllerConfig.controllerId !== controller.id || inputBridgeBusy) return;
     inputBridgeBusy = 'mode';
     try {
       const config = editableConfigFromController(currentControllerConfig);
@@ -2952,6 +2954,8 @@
     lightbarColor = config.lightbar?.color ?? '#4cc9f0';
     rpmColor = config.lightbar?.rpmColor ?? '#ff3a2e';
     lightbarBrightness = config.lightbar?.brightness ?? 72;
+    leftStickDeadzone = normalizeStickDeadzone(config.sticks?.leftDeadzone ?? 0);
+    rightStickDeadzone = normalizeStickDeadzone(config.sticks?.rightDeadzone ?? 0);
     forzaBodyRumbleMode = normalizeForzaBodyRumbleMode(config.forza?.bodyRumbleMode);
     forzaEffects = normalizeForzaEffects(config.forza?.effects);
   };
@@ -2967,8 +2971,11 @@
     currentControllerConfig = null;
     profileSaveBaselineSignature = '';
     try {
-      applyControllerConfig(await getControllerConfig(controllerId));
+      const config = await getControllerConfig(controllerId);
+      if (config.controllerId !== controllerId || selectedControllerId !== controllerId) return;
+      applyControllerConfig(config);
     } catch (caught) {
+      if (selectedControllerId !== controllerId) return;
       configLoadError = caught instanceof Error ? caught.message : 'Unable to load controller configuration.';
       showToast(configLoadError, 'error');
     }
@@ -3209,14 +3216,21 @@
         bodyRumbleMode: normalizeForzaBodyRumbleMode(forzaBodyRumbleMode),
         effects: normalizeForzaEffects(forzaEffects)
       },
+      sticks: {
+        ...base.sticks,
+        leftDeadzone: normalizeStickDeadzone(leftStickDeadzone),
+        rightDeadzone: normalizeStickDeadzone(rightStickDeadzone)
+      },
       buttons: normalizeButtonAssignments(base.buttons, controller?.family === 'DualSense Edge')
     };
   };
 
   const saveCurrentConfig = async () => {
-    if (!controller) return false;
+    if (!controller || (currentControllerConfig && currentControllerConfig.controllerId !== controller.id)) return false;
+    const controllerId = controller.id;
     try {
-      currentControllerConfig = await saveControllerConfig(controller.id, buildControllerConfig());
+      const updated = await saveControllerConfig(controllerId, buildControllerConfig());
+      if (selectedControllerId === controllerId) currentControllerConfig = updated;
       return true;
     } catch (caught) {
       setApplyMessage(caught instanceof Error ? caught.message : 'Unable to save config');
@@ -3225,7 +3239,7 @@
   };
 
   const syncLiveControllerConfig = async () => {
-    if (!controller || !currentControllerConfig) return;
+    if (!controller || !currentControllerConfig || currentControllerConfig.controllerId !== controller.id) return;
     if (liveConfigSyncInFlight) {
       liveConfigSyncQueued = true;
       return;
@@ -3233,8 +3247,10 @@
 
     liveConfigSyncInFlight = true;
     liveConfigSyncQueued = false;
+    const controllerId = controller.id;
     try {
-      currentControllerConfig = await saveControllerConfig(controller.id, buildControllerConfig());
+      const updated = await saveControllerConfig(controllerId, buildControllerConfig());
+      if (selectedControllerId === controllerId) currentControllerConfig = updated;
     } catch (caught) {
       setApplyMessage(caught instanceof Error ? caught.message : 'Unable to update live controller config');
     } finally {
@@ -3284,6 +3300,17 @@
     lightbarBrightness = normalizeTriggerPercent(value);
     scheduleLiveControllerConfigSync();
   };
+
+  const normalizeStickDeadzone = (value: number | string | undefined | null) => {
+    const number = typeof value === 'number' ? value : Number(value ?? 0);
+    return Math.max(0, Math.min(40, Math.round(Number.isFinite(number) ? number : 0)));
+  };
+
+  const setStickDeadzone = (side: 'left' | 'right', value: number | string) => {
+    if (side === 'left') leftStickDeadzone = normalizeStickDeadzone(value);
+    else rightStickDeadzone = normalizeStickDeadzone(value);
+    scheduleLiveControllerConfigSync();
+  };
   const restoreDefaults = async () => {
     const selectedProfile = profiles.find((profile) => profile.id === (selectedOverrideProfileId || activeProfileId));
     const profileId = selectedProfile && !selectedProfile.builtIn
@@ -3331,7 +3358,9 @@
   };
 
   const sanitizeSupportText = (value: string | undefined | null) =>
-    (value ?? '').replace(/[A-Z]:\\[^"'\s]+/gi, '[local-path]').replace(/\/(?:home|Users)\/[^"'\s]+/gi, '[local-path]');
+    (value ?? '')
+      .replace(/[A-Z]:\\[^"'\r\n]+/gi, '[local-path]')
+      .replace(/\/(?:home|Users)\/[^"'\r\n]+/gi, '[local-path]');
 
   const buildUiSupportBundle = (agentBundleError?: string): SupportBundle => ({
     schema: 'dev.dscc.support-bundle.ui.v1',
@@ -4018,9 +4047,12 @@
 
   async function pollTriggerInput() {
     if (triggerInputBusy || !shouldPollTriggerInput()) return;
+    const requestedControllerId = controller?.id;
+    if (!requestedControllerId) return;
     triggerInputBusy = true;
     try {
-      const input = await getControllerInput(controller?.id);
+      const input = await getControllerInput(requestedControllerId);
+      if (input.controllerId !== requestedControllerId || controller?.id !== requestedControllerId) return;
       if (input.available) {
         const nextL2 = clampUnit(input.triggers.l2);
         const nextR2 = clampUnit(input.triggers.r2);
@@ -4475,6 +4507,8 @@
         bind:renameName={controllerRenameName}
         renameBusy={controllerRenameBusy}
         {currentControllerConfig}
+        {leftStickDeadzone}
+        {rightStickDeadzone}
         inputBridge={snapshot?.inputBridge ?? null}
         activeGameName={selectedGame?.name ?? null}
         activeInputProvider={selectedGame?.inputProvider ?? currentControllerConfig?.inputMode ?? 'native_dualsense'}
@@ -4491,6 +4525,7 @@
         onRenameKeydown={handleControllerRenameKeydown}
         {inputBridgeBusy}
         onSetInputMode={saveControllerInputMode}
+        onSetStickDeadzone={setStickDeadzone}
         onStartInputBridge={startControllerInputBridge}
         onStopInputBridge={stopControllerInputBridge}
         onRefreshEdgeProfiles={() => controller && void loadEdgeProfiles(controller.id, true)}
