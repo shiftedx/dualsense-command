@@ -1,5 +1,6 @@
 import type {
   AddCustomGameResponse,
+  AddLocalAppRequest,
   AppSettingsResponse,
   ActionAccepted,
   AppSnapshot,
@@ -18,7 +19,12 @@ import type {
   SteamLibraryBrowseResponse,
   SteamLibraryEntry,
   SteamLibraryResponse,
-  SupportedGame
+  SupportedGame,
+  InputBridgeBindingWriteRequest,
+  InputBridgeBindingWriteResponse,
+  InputBridgeStatus,
+  ValidateLocalAppRequest,
+  ValidateLocalAppResponse
 } from '../types';
 import {
   MOCK_CONTROLLER_ID,
@@ -28,6 +34,7 @@ import {
   MOCK_PROFILE_ID,
   mockAppSnapshot,
   mockControllerConfig,
+  mockInputBridgeStatus,
   mockProfileConfigs
 } from './fixture';
 import type { MockEditableControllerConfig } from './fixture';
@@ -129,13 +136,50 @@ export async function runMockEffectTest(request: EffectTestRequest): Promise<Moc
 
 export async function getMockControllerInput(controllerId?: string | null): Promise<ControllerInputState> {
   const seconds = (Date.now() - mockStartedAt) / 1000;
+  const leftX = signedWave(seconds, 0.9, 0.12);
+  const leftY = signedWave(seconds, 0.65, 1.6);
+  const rightX = signedWave(seconds, 0.48, 2.4);
+  const rightY = signedWave(seconds, 0.72, 3.1);
+  const l2 = roundedUnit(wave(seconds, 0.16, 0.86, 0.25));
+  const r2 = roundedUnit(wave(seconds, 0.08, 0.94, 1.1));
+  const faceBeat = Math.floor(seconds * 2) % 4;
   return {
     controllerId: controllerId || MOCK_CONTROLLER_ID,
     available: true,
     source: 'mock',
-    message: 'Mock trigger input is synthesized in-browser.',
-    l2: roundedUnit(wave(seconds, 0.16, 0.86, 0.25)),
-    r2: roundedUnit(wave(seconds, 0.08, 0.94, 1.1))
+    message: 'Mock controller input is synthesized in-browser.',
+    sampledAtMs: Date.now(),
+    ageMs: 0,
+    axes: {
+      leftStick: stickState(leftX, leftY),
+      rightStick: stickState(rightX, rightY)
+    },
+    triggers: { l2, r2 },
+    buttons: [
+      mockButton('cross', 'Cross', faceBeat === 0),
+      mockButton('circle', 'Circle', faceBeat === 1),
+      mockButton('square', 'Square', faceBeat === 2),
+      mockButton('triangle', 'Triangle', faceBeat === 3),
+      mockButton('dpad_up', 'D-Pad Up', Math.sin(seconds * 1.7) > 0.72),
+      mockButton('dpad_right', 'D-Pad Right', Math.sin(seconds * 1.3) > 0.72),
+      mockButton('dpad_down', 'D-Pad Down', Math.sin(seconds * 1.7) < -0.72),
+      mockButton('dpad_left', 'D-Pad Left', Math.sin(seconds * 1.3) < -0.72),
+      mockButton('l1', 'L1', Math.sin(seconds * 1.1) > 0.78),
+      mockButton('r1', 'R1', Math.cos(seconds * 1.1) > 0.78),
+      { id: 'l2', label: 'L2', pressed: l2 > 0.5, value: l2 },
+      { id: 'r2', label: 'R2', pressed: r2 > 0.5, value: r2 },
+      mockButton('create', 'Create', false),
+      mockButton('options', 'Options', false),
+      mockButton('l3', 'L3', Math.hypot(leftX, leftY) > 0.84),
+      mockButton('r3', 'R3', Math.hypot(rightX, rightY) > 0.84),
+      mockButton('ps', 'PS', false),
+      mockButton('touchpad', 'Touchpad', Math.sin(seconds * 0.8) > 0.88),
+      mockButton('mute', 'Mute', false),
+      mockButton('edge_fn_left', 'Fn Left', false),
+      mockButton('edge_fn_right', 'Fn Right', false),
+      mockButton('edge_back_left', 'Back Left', Math.sin(seconds * 0.95) > 0.84),
+      mockButton('edge_back_right', 'Back Right', Math.cos(seconds * 0.95) > 0.84)
+    ]
   };
 }
 
@@ -383,6 +427,8 @@ export async function addMockCustomGame(
   const game: SupportedGame = {
     gameId: entry.suggestedGameId,
     name: entry.name,
+    source: 'steam',
+    inputProvider: 'steam_input',
     appId: entry.appId,
     installPath: entry.installPath,
     installed: true,
@@ -394,6 +440,114 @@ export async function addMockCustomGame(
   mockCustomGames.set(entry.suggestedGameId, game);
   const detection = state.snapshot.gameDetection;
   const supportedGames = [...(detection.supportedGames ?? []), game];
+  state.snapshot = {
+    ...state.snapshot,
+    gameDetection: { ...detection, supportedGames }
+  };
+  return { game: clone(game) };
+}
+
+export async function getMockInputBridgeStatus(): Promise<InputBridgeStatus> {
+  return clone(state.snapshot.inputBridge ?? mockInputBridgeStatus);
+}
+
+export async function writeMockInputBridgeBinding(
+  request: InputBridgeBindingWriteRequest
+): Promise<InputBridgeBindingWriteResponse> {
+  if (!request.inputId.trim() || !request.target.trim()) {
+    throw new Error('inputId and target are required');
+  }
+  return {
+    accepted: true,
+    message: request.dryRun
+      ? `Validated mock DSCC Bridge binding for ${request.inputId}.`
+      : `Staged mock DSCC Bridge binding for ${request.inputId}.`,
+    dryRun: Boolean(request.dryRun),
+    warnings: ['Mock mode does not write a real virtual controller.']
+  };
+}
+
+export async function startMockInputBridgeSession(controllerId: string) {
+  const session = {
+    controllerId,
+    state: 'active' as const,
+    sessionId: `${controllerId}-mock-bridge`,
+    outputKind: 'xbox360',
+    message: 'Mock DSCC Input Bridge session is active.',
+    updatedAtMs: Date.now()
+  };
+  state.snapshot = {
+    ...state.snapshot,
+    inputBridge: {
+      ...state.snapshot.inputBridge,
+      sessions: [
+        ...state.snapshot.inputBridge.sessions.filter((item) => item.controllerId !== controllerId),
+        session
+      ]
+    }
+  };
+  return clone(session);
+}
+
+export async function stopMockInputBridgeSession(controllerId: string) {
+  const session = {
+    controllerId,
+    state: 'disabled' as const,
+    sessionId: null,
+    outputKind: null,
+    message: 'Mock DSCC Input Bridge stopped and neutralized its output.',
+    updatedAtMs: Date.now()
+  };
+  state.snapshot = {
+    ...state.snapshot,
+    inputBridge: {
+      ...state.snapshot.inputBridge,
+      sessions: state.snapshot.inputBridge.sessions.filter((item) => item.controllerId !== controllerId)
+    }
+  };
+  return clone(session);
+}
+
+export async function validateMockLocalApp(
+  request: ValidateLocalAppRequest
+): Promise<ValidateLocalAppResponse> {
+  const executableName = fileNameFromPath(request.executablePath || 'NightDriveLab.exe');
+  if (!executableName.toLowerCase().endsWith('.exe')) {
+    throw new Error('Local app path must point to a .exe file.');
+  }
+  return {
+    valid: true,
+    name: request.name?.trim() || executableName.replace(/\.exe$/i, ''),
+    executableName,
+    processNames: request.processNames?.length ? request.processNames : [executableName],
+    warnings: []
+  };
+}
+
+export async function addMockLocalApp(
+  request: AddLocalAppRequest
+): Promise<AddCustomGameResponse> {
+  const validation = await validateMockLocalApp(request);
+  const gameId = mockLocalGameId(validation.name, request.executablePath);
+  const game: SupportedGame = {
+    gameId,
+    name: validation.name,
+    source: 'local_app',
+    inputProvider: 'dscc_input_bridge',
+    appId: 'local:mock',
+    installPath: null,
+    processNames: validation.processNames,
+    executableName: validation.executableName,
+    installed: true,
+    running: false,
+    supportLevel: 'custom'
+  };
+  mockCustomGames.set(gameId, game);
+  const detection = state.snapshot.gameDetection;
+  const existing = detection.supportedGames ?? [];
+  const supportedGames = existing.some((item) => item.gameId === gameId)
+    ? existing.map((item) => (item.gameId === gameId ? game : item))
+    : [...existing, game];
   state.snapshot = {
     ...state.snapshot,
     gameDetection: { ...detection, supportedGames }
@@ -666,6 +820,7 @@ function editableConfigFromController(config: ControllerConfiguration): MockEdit
     forza: clone(config.forza),
     sticks: clone(config.sticks),
     buttons: clone(config.buttons),
+    inputBridge: clone(config.inputBridge),
     profileAssignments: clone(config.profileAssignments)
   };
 }
@@ -688,6 +843,24 @@ function requireProfile(profileId: string): ProfileSummary {
 
 function profileName(profileId: string): string {
   return requireProfile(profileId).name;
+}
+
+function fileNameFromPath(path: string): string {
+  return path.trim().split(/[\\/]/).filter(Boolean).pop() ?? 'LocalApp.exe';
+}
+
+function mockLocalGameId(name: string, executablePath: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '') || 'local-app';
+  let hash = 0x811c9dc5;
+  for (const char of executablePath.trim().toLowerCase()) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `local-${slug}-${hash.toString(16).padStart(8, '0').slice(0, 8)}`;
 }
 
 function uniqueProfileId(name: string): string {
@@ -754,6 +927,27 @@ function wave(seconds: number, min: number, max: number, offset: number): number
 
 function roundedUnit(value: number): number {
   return Math.round(Math.max(0, Math.min(1, value)) * 100) / 100;
+}
+
+function signedWave(seconds: number, radius: number, offset: number): number {
+  return Math.round(Math.sin(seconds * 1.45 + offset) * radius * 100) / 100;
+}
+
+function stickState(x: number, y: number) {
+  return {
+    x,
+    y,
+    magnitude: roundedUnit(Math.hypot(x, y))
+  };
+}
+
+function mockButton(id: string, label: string, pressed: boolean) {
+  return {
+    id,
+    label,
+    pressed,
+    value: pressed ? 1 : 0
+  };
 }
 
 function formatDuration(totalSeconds: number): string {

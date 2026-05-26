@@ -29,6 +29,10 @@ use dscc_adapters::{
     AdapterProtocol, BuiltInAdapter, UdpTelemetryAdapter,
 };
 use dscc_core::{
+    input_bridge::{
+        InputBridgeBindingConfig, InputBridgeConfig, InputBridgeSource, InputBridgeTarget,
+        VirtualAxis, VirtualButton,
+    },
     BatteryState, ComparableValue, ComparisonOp, ConnectionState, ControllerCapabilities,
     ControllerFamily, ControllerId, ControllerInfo, ControllerOutputFrame, ControllerState,
     ControllerTransportKind, EffectEngine, EffectRule, EffectTarget, EffectTemplate,
@@ -40,14 +44,16 @@ use dscc_device::{
     BatteryInfo as DeviceBatteryInfo, BatteryState as DeviceBatteryState,
     ConnectionState as DeviceConnectionState,
     ControllerCapabilities as DeviceControllerCapabilities, ControllerId as DeviceControllerId,
-    ControllerInfo as DeviceControllerInfo, ControllerInputState, ControllerOutputManager,
-    ControllerOutputTarget, ControllerOutputWrite, ControllerState as DeviceControllerState,
-    DeviceConfig, DeviceEvent, DeviceFamily, DeviceManager, DevicePathHint, DeviceTransport,
-    DeviceTransportKind, EdgeButton, EdgeButtonMapping, EdgeOnboardProfile, EdgeOnboardSlotId,
-    EdgeProfileIntensity, EdgeStickPreset, EdgeStickProfile, EdgeTriggerDeadzone, HidApiTransport,
-    MockTransport, OutputMode, RawDeviceId, RawHidDevice,
+    ControllerInfo as DeviceControllerInfo, ControllerInputReadOptions, ControllerInputState,
+    ControllerOutputManager, ControllerOutputTarget, ControllerOutputWrite,
+    ControllerState as DeviceControllerState, DeviceConfig, DeviceEvent, DeviceFamily,
+    DeviceManager, DevicePathHint, DeviceTransport, DeviceTransportKind, EdgeButton,
+    EdgeButtonMapping, EdgeOnboardProfile, EdgeOnboardSlotId, EdgeProfileIntensity,
+    EdgeStickPreset, EdgeStickProfile, EdgeTriggerDeadzone, HidApiTransport, MockTransport,
+    OutputMode, RawDeviceId, RawHidDevice,
 };
 use dscc_telemetry::{AdapterDetection, SignalName, SignalSnapshot, SignalUpdate, SignalValue};
+use dscc_virtual_output::VirtualOutputKind;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tokio::{
     net::{TcpListener, UdpSocket},
@@ -61,6 +67,7 @@ mod env_policy;
 mod forza_glyphs;
 mod game_modules;
 mod http_security;
+mod input_bridge;
 
 pub use bind_addr::{
     resolve_agent_bind_addr, DEFAULT_BIND_ADDR, DEFAULT_FORZA_BIND_ADDR, FORZA_BIND_ADDR_ENV,
@@ -89,6 +96,10 @@ use game_modules::{
     FORZA_DATA_OUT_ADAPTER_ID, FORZA_HORIZON_IMMERSIVE_PROFILE_ID, FORZA_HORIZON_PROFILE_ID,
 };
 pub(crate) use http_security::{reject_cross_origin_mutations, request_origin_matches_host};
+pub(crate) use input_bridge::{
+    InputBridgeService, InputBridgeSessionState, InputBridgeSessionSummary,
+    InputBridgeStatusResponse,
+};
 
 const GLOBAL_PROFILE_ID: &str = "global";
 const DEFAULT_PROFILE_ID: &str = GLOBAL_PROFILE_ID;
@@ -105,6 +116,8 @@ fn current_timestamp_millis() -> u64 {
 
 const TELEMETRY_PACKET_STALE_AFTER: Duration = Duration::from_secs(2);
 const HARDWARE_OUTPUT_INTERVAL: Duration = Duration::from_millis(33);
+const INPUT_BRIDGE_PROCESS_INTERVAL: Duration = Duration::from_millis(8);
+const INPUT_BRIDGE_STALE_AFTER: Duration = Duration::from_millis(250);
 const HARDWARE_OUTPUT_KEEPALIVE_INTERVAL: Duration = Duration::from_millis(750);
 const MANUAL_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 const BASE_FEEL_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_millis(33);
@@ -377,10 +390,13 @@ pub struct AgentState {
     started_at: Instant,
     bind_addr: SocketAddr,
     output_manager: Option<Arc<ControllerOutputManager<HidApiTransport>>>,
+    #[cfg(test)]
+    input_overrides: Arc<Mutex<BTreeMap<String, ControllerInputState>>>,
     output_runtime: Arc<Mutex<HardwareOutputRuntime>>,
     discovery_cache: Arc<DiscoveryCache>,
     realtime_runtime: Arc<Mutex<RealtimeRuntime>>,
     effect_runtime: Arc<Mutex<EffectRuntimeCache>>,
+    input_bridge: InputBridgeService,
 }
 
 #[derive(Debug, Default)]
@@ -1087,6 +1103,8 @@ pub struct ControllerConfig {
     #[serde(default)]
     pub buttons: Vec<ButtonAssignmentConfig>,
     #[serde(default)]
+    pub input_bridge: InputBridgeConfig,
+    #[serde(default)]
     pub profile_assignments: Vec<ProfileAssignmentConfig>,
 }
 
@@ -1103,6 +1121,8 @@ pub struct ProfileConfig {
     pub sticks: StickConfig,
     #[serde(default)]
     pub buttons: Vec<ButtonAssignmentConfig>,
+    #[serde(default)]
+    pub input_bridge: InputBridgeConfig,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -1112,6 +1132,7 @@ pub enum ControllerInputMode {
     #[default]
     NativeDualSense,
     SteamInputCompanion,
+    DsccInputBridge,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1567,6 +1588,7 @@ pub struct AgentSnapshotResponse {
     pub adapters: Vec<AdapterSummary>,
     pub modules: Vec<ModuleSummary>,
     pub steam_input: SteamInputStatus,
+    pub input_bridge: InputBridgeStatusResponse,
     pub game_detection: GameDetectionResponse,
     pub profile_resolution: ProfileResolutionResponse,
     pub effect_state: CurrentEffectResponse,
@@ -1592,6 +1614,7 @@ pub struct SupportBundleResponse {
     pub adapters: Vec<SupportAdapterSummary>,
     pub telemetry: SupportTelemetrySummary,
     pub steam_input: SupportSteamInputSummary,
+    pub input_bridge: SupportInputBridgeSummary,
     pub app_settings: SupportAppSettingsSummary,
     pub safety: SupportSafetySummary,
 }
@@ -1714,6 +1737,17 @@ pub struct SupportSteamInputLayoutSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct SupportInputBridgeSummary {
+    pub available: bool,
+    pub backend_id: String,
+    pub provider: String,
+    pub state: String,
+    pub session_count: usize,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct SupportAppSettingsSummary {
     pub listen_on_all_interfaces: bool,
     pub effective_bind_address: String,
@@ -1806,6 +1840,8 @@ pub struct UpdateControllerConfigRequest {
     #[serde(default)]
     pub buttons: Vec<ButtonAssignmentConfig>,
     #[serde(default)]
+    pub input_bridge: Option<InputBridgeConfig>,
+    #[serde(default)]
     pub profile_assignments: Vec<ProfileAssignmentConfig>,
 }
 
@@ -1824,6 +1860,8 @@ pub struct UpdateProfileConfigRequest {
     pub sticks: StickConfig,
     #[serde(default)]
     pub buttons: Vec<ButtonAssignmentConfig>,
+    #[serde(default)]
+    pub input_bridge: Option<InputBridgeConfig>,
     #[serde(default)]
     pub model: Option<String>,
 }
@@ -1933,10 +1971,18 @@ pub struct SteamAchievementStats {
 pub struct SupportedGameSummary {
     pub game_id: String,
     pub name: String,
+    #[serde(default = "default_game_source")]
+    pub source: String,
+    #[serde(default = "default_game_input_provider")]
+    pub input_provider: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub install_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub process_names: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executable_name: Option<String>,
     pub installed: bool,
     pub running: bool,
     pub support_level: String,
@@ -1944,6 +1990,14 @@ pub struct SupportedGameSummary {
     pub artwork: GameArtwork,
     #[serde(default)]
     pub stats: SteamGameStats,
+}
+
+fn default_game_source() -> String {
+    "built_in".to_string()
+}
+
+fn default_game_input_provider() -> String {
+    "native_dualsense".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -1991,10 +2045,65 @@ pub struct AddUserGameRequest {
     pub process_names: Vec<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidateLocalGameRequest {
+    pub name: Option<String>,
+    pub executable_path: String,
+    #[serde(default)]
+    pub process_names: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidateLocalGameResponse {
+    pub valid: bool,
+    pub name: String,
+    pub executable_name: String,
+    pub process_names: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddLocalGameRequest {
+    pub name: String,
+    pub executable_path: String,
+    #[serde(default)]
+    pub process_names: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct LocalGameValidation {
+    response: ValidateLocalGameResponse,
+    canonical_executable: PathBuf,
+    install_path: PathBuf,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AddUserGameResponse {
     pub game: SupportedGameSummary,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InputBridgeBindingWriteRequest {
+    pub controller_id: Option<String>,
+    pub profile_id: Option<String>,
+    pub input_id: String,
+    pub target: String,
+    #[serde(default)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InputBridgeBindingWriteResponse {
+    pub accepted: bool,
+    pub message: String,
+    pub dry_run: bool,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2085,8 +2194,42 @@ pub struct ControllerInputResponse {
     pub available: bool,
     pub source: String,
     pub message: String,
+    pub sampled_at_ms: Option<u64>,
+    pub age_ms: Option<u64>,
+    pub axes: ControllerInputAxesResponse,
+    pub triggers: ControllerInputTriggersResponse,
+    pub buttons: Vec<ControllerInputButtonResponse>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ControllerInputAxesResponse {
+    pub left_stick: ControllerInputStickResponse,
+    pub right_stick: ControllerInputStickResponse,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ControllerInputStickResponse {
+    pub x: f64,
+    pub y: f64,
+    pub magnitude: f64,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ControllerInputTriggersResponse {
     pub l2: f64,
     pub r2: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ControllerInputButtonResponse {
+    pub id: String,
+    pub label: String,
+    pub pressed: bool,
+    pub value: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -2132,7 +2275,7 @@ struct PersistenceStore {
     state_file: PathBuf,
 }
 
-const PERSISTED_STATE_VERSION: u32 = 7;
+const PERSISTED_STATE_VERSION: u32 = 8;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -3705,8 +3848,24 @@ fn user_game_to_supported_summary(
     SupportedGameSummary {
         game_id: game.game_id.clone(),
         name: game.name.clone(),
+        source: if game.game_id.starts_with("local-") {
+            "local_app".to_string()
+        } else {
+            "steam".to_string()
+        },
+        input_provider: if game.game_id.starts_with("local-") {
+            "dscc_input_bridge".to_string()
+        } else {
+            "steam_input".to_string()
+        },
         app_id: (!game.app_id.is_empty()).then(|| game.app_id.clone()),
-        install_path: (!game.install_path.is_empty()).then(|| game.install_path.clone()),
+        install_path: if game.game_id.starts_with("local-") {
+            None
+        } else {
+            (!game.install_path.is_empty()).then(|| game.install_path.clone())
+        },
+        process_names: game.process_names.clone(),
+        executable_name: game.process_names.first().cloned(),
         installed,
         running: false,
         support_level: "custom".to_string(),
@@ -5303,10 +5462,13 @@ impl AgentState {
             bind_addr: default_agent_bind_addr(),
             event_tx,
             output_manager: None,
+            #[cfg(test)]
+            input_overrides: Arc::new(Mutex::new(BTreeMap::new())),
             output_runtime: Arc::new(Mutex::new(HardwareOutputRuntime::default())),
             discovery_cache: Arc::new(DiscoveryCache::default()),
             realtime_runtime: Arc::new(Mutex::new(RealtimeRuntime::default())),
             effect_runtime: Arc::new(Mutex::new(EffectRuntimeCache::default())),
+            input_bridge: InputBridgeService::mock(),
             inner: Arc::new(RwLock::new(AgentStateInner {
                 controllers,
                 controller_names: persisted.controller_names,
@@ -5603,6 +5765,31 @@ impl AgentState {
         &self,
         controller_id: &str,
     ) -> Result<Option<ControllerInputState>, String> {
+        self.read_input_state_for_controller_with_options(
+            controller_id,
+            ControllerInputReadOptions::default(),
+        )
+        .await
+    }
+
+    async fn read_input_state_for_controller_with_options(
+        &self,
+        controller_id: &str,
+        options: ControllerInputReadOptions,
+    ) -> Result<Option<ControllerInputState>, String> {
+        #[cfg(test)]
+        {
+            let input = self
+                .input_overrides
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .get(controller_id)
+                .cloned();
+            if input.is_some() {
+                return Ok(input);
+            }
+        }
+
         let manager = self
             .output_manager
             .clone()
@@ -5616,10 +5803,23 @@ impl AgentState {
             controller_output_target_or_reason(&inner, controller_id)?
         };
 
-        tokio::task::spawn_blocking(move || manager.read_input_state(&target))
+        tokio::task::spawn_blocking(move || manager.read_input_state_with_options(&target, options))
             .await
             .map_err(|error| format!("HID input task failed: {error}"))?
             .map_err(|error| error.to_string())
+    }
+
+    #[cfg(test)]
+    fn with_input_override(
+        self,
+        controller_id: impl Into<String>,
+        input: ControllerInputState,
+    ) -> Self {
+        self.input_overrides
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(controller_id.into(), input);
+        self
     }
 
     async fn write_current_output_frame_if_due(
@@ -6189,6 +6389,39 @@ impl AgentState {
                 "Steam install not found in standard locations".to_string()
             },
         });
+        let bridge = self.input_bridge.status_response();
+        checks.push(HealthCheck {
+            name: "input-bridge".to_string(),
+            status: if bridge.available {
+                "pending".to_string()
+            } else {
+                "warning".to_string()
+            },
+            detail: format!(
+                "{} provider {}: {}",
+                bridge.provider, bridge.backend_id, bridge.message
+            ),
+        });
+        checks.push(HealthCheck {
+            name: "local-apps".to_string(),
+            status: if inner
+                .user_games
+                .values()
+                .any(|game| game.game_id.starts_with("local-"))
+            {
+                "ok".to_string()
+            } else {
+                "pending".to_string()
+            },
+            detail: format!(
+                "{} local app profile(s) registered",
+                inner
+                    .user_games
+                    .values()
+                    .filter(|game| game.game_id.starts_with("local-"))
+                    .count()
+            ),
+        });
         for runtime in inner.adapter_runtimes.values() {
             checks.push(adapter_runtime_health_check(runtime, Some(game_detection)));
         }
@@ -6231,6 +6464,7 @@ impl AgentState {
             adapters: materialized_adapters(&inner, Some(&game_detection)),
             modules: module_summaries(),
             steam_input,
+            input_bridge: self.input_bridge.status_response(),
             game_detection: game_detection.clone(),
             profile_resolution,
             effect_state,
@@ -6242,7 +6476,7 @@ impl AgentState {
                 .take(32)
                 .cloned()
                 .collect::<Vec<_>>(),
-            diagnostics,
+            diagnostics: sanitize_diagnostics_response(diagnostics),
             partial_errors: Vec::new(),
         }
     }
@@ -6276,6 +6510,8 @@ impl AgentState {
                     "Steam install paths".to_string(),
                     "Forza install paths".to_string(),
                     "raw Steam bindings".to_string(),
+                    "local app executable paths".to_string(),
+                    "virtual-output provider private paths".to_string(),
                 ],
             },
             environment: support_environment(),
@@ -6291,6 +6527,7 @@ impl AgentState {
             adapters: support_adapter_summaries(&inner, Some(&game_detection)),
             telemetry: support_telemetry_summary(&inner, Some(&game_detection)),
             steam_input: support_steam_input_summary(&steam_input),
+            input_bridge: support_input_bridge_summary(self.input_bridge.status_response()),
             app_settings: support_app_settings_summary(app_settings),
             safety: SupportSafetySummary {
                 hardware_output_enabled,
@@ -6468,6 +6705,21 @@ fn support_steam_input_summary(status: &SteamInputStatus) -> SupportSteamInputSu
                 source: sanitize_support_text(&layout.source),
                 binding_count: layout.binding_count,
             })
+            .collect(),
+    }
+}
+
+fn support_input_bridge_summary(status: InputBridgeStatusResponse) -> SupportInputBridgeSummary {
+    SupportInputBridgeSummary {
+        available: status.available,
+        backend_id: sanitize_support_text(&status.backend_id),
+        provider: sanitize_support_text(&status.provider),
+        state: status.state,
+        session_count: status.sessions.len(),
+        warnings: status
+            .warnings
+            .iter()
+            .map(|warning| sanitize_support_text(warning))
             .collect(),
     }
 }
@@ -6673,6 +6925,7 @@ impl ControllerConfig {
             forza: ForzaTelemetryConfig::default(),
             sticks: StickConfig::default(),
             buttons: default_button_assignments(edge),
+            input_bridge: InputBridgeConfig::default(),
             profile_assignments: default_profile_assignments(edge),
         }
     }
@@ -6681,6 +6934,7 @@ impl ControllerConfig {
         controller_id: impl Into<String>,
         model: impl Into<String>,
         request: UpdateControllerConfigRequest,
+        existing_input_bridge: Option<InputBridgeConfig>,
     ) -> Self {
         let model = model.into();
         let edge = model == "DualSense Edge";
@@ -6693,6 +6947,11 @@ impl ControllerConfig {
             forza: request.forza.normalized(),
             sticks: request.sticks.normalized(),
             buttons: normalize_controller_button_assignments(request.buttons, edge),
+            input_bridge: request
+                .input_bridge
+                .or(existing_input_bridge)
+                .unwrap_or_default()
+                .normalized(),
             profile_assignments: normalize_profile_assignments(request.profile_assignments),
         }
     }
@@ -6705,9 +6964,11 @@ impl ControllerConfig {
         self.input_mode = match self.input_mode {
             ControllerInputMode::NativeDualSense => ControllerInputMode::NativeDualSense,
             ControllerInputMode::SteamInputCompanion => ControllerInputMode::SteamInputCompanion,
+            ControllerInputMode::DsccInputBridge => ControllerInputMode::DsccInputBridge,
         };
         self.buttons =
             normalize_controller_button_assignments(self.buttons, self.model == "DualSense Edge");
+        self.input_bridge = self.input_bridge.normalized();
         self.profile_assignments = normalize_profile_assignments(self.profile_assignments);
         self
     }
@@ -6728,6 +6989,7 @@ impl ProfileConfig {
             forza: config.forza.clone(),
             sticks: config.sticks.clone(),
             buttons: config.buttons.clone(),
+            input_bridge: config.input_bridge.clone(),
         }
         .normalized_for_model(&config.model)
     }
@@ -6740,9 +7002,11 @@ impl ProfileConfig {
         self.input_mode = match self.input_mode {
             ControllerInputMode::NativeDualSense => ControllerInputMode::NativeDualSense,
             ControllerInputMode::SteamInputCompanion => ControllerInputMode::SteamInputCompanion,
+            ControllerInputMode::DsccInputBridge => ControllerInputMode::DsccInputBridge,
         };
         self.buttons =
             normalize_controller_button_assignments(self.buttons, model == "DualSense Edge");
+        self.input_bridge = self.input_bridge.normalized();
         self
     }
 
@@ -6754,6 +7018,7 @@ impl ProfileConfig {
         config.forza = profile_config.forza;
         config.sticks = profile_config.sticks;
         config.buttons = profile_config.buttons;
+        config.input_bridge = profile_config.input_bridge;
     }
 }
 
@@ -11433,12 +11698,31 @@ pub fn app(state: AgentState) -> Router {
             "/api/steam-input/paddle-preset",
             post(apply_steam_input_paddle_preset),
         )
+        .route("/api/input-bridge", get(get_input_bridge_status))
+        .route(
+            "/api/input-bridge/bindings",
+            post(write_input_bridge_binding),
+        )
+        .route(
+            "/api/input-bridge/sessions/:controller_id",
+            get(get_input_bridge_session),
+        )
+        .route(
+            "/api/input-bridge/sessions/:controller_id/start",
+            post(start_input_bridge_session),
+        )
+        .route(
+            "/api/input-bridge/sessions/:controller_id/stop",
+            post(stop_input_bridge_session),
+        )
         .route("/api/modules", get(list_modules))
         .route("/api/games/detected", get(get_detected_game))
         .route("/api/games/art/:game_id/:kind", get(get_game_art))
         .route("/api/games/steam-art/:app_id/:kind", get(get_steam_app_art))
         .route("/api/games/steam-library", get(list_steam_library))
         .route("/api/games/steam-library/browse", get(browse_steam_library))
+        .route("/api/games/local/validate", post(validate_local_game))
+        .route("/api/games/local", post(add_local_game))
         .route("/api/games/custom", post(add_custom_game))
         .route("/api/games/custom/:game_id", delete(remove_custom_game))
         .route("/api/effects/current", get(get_current_effect))
@@ -12361,7 +12645,12 @@ async fn update_controller_config(
     let (config, to_save) = {
         let mut inner = state.inner.write().await;
         let detail = inner.controllers.detail(&id).ok_or(StatusCode::NOT_FOUND)?;
-        let config = ControllerConfig::from_update(id.clone(), detail.model, request);
+        let existing_input_bridge = inner
+            .controller_configs
+            .get(&id)
+            .map(|config| config.input_bridge.clone());
+        let config =
+            ControllerConfig::from_update(id.clone(), detail.model, request, existing_input_bridge);
         inner.controller_configs.insert(id.clone(), config.clone());
         inner.effect_revision = inner.effect_revision.saturating_add(1);
         inner.logs.push(LogEntry {
@@ -12650,13 +12939,40 @@ fn controller_input_available(
     controller_id: String,
     input: ControllerInputState,
 ) -> ControllerInputResponse {
+    let sampled_at_ms = current_timestamp_millis();
     ControllerInputResponse {
         controller_id,
         available: true,
         source: "hid".to_string(),
-        message: "Live DualSense trigger input is available".to_string(),
-        l2: input.l2,
-        r2: input.r2,
+        message: "Live DualSense input is available".to_string(),
+        sampled_at_ms: Some(sampled_at_ms),
+        age_ms: Some(0),
+        axes: ControllerInputAxesResponse {
+            left_stick: ControllerInputStickResponse {
+                x: input.left_stick.x,
+                y: input.left_stick.y,
+                magnitude: input.left_stick.magnitude,
+            },
+            right_stick: ControllerInputStickResponse {
+                x: input.right_stick.x,
+                y: input.right_stick.y,
+                magnitude: input.right_stick.magnitude,
+            },
+        },
+        triggers: ControllerInputTriggersResponse {
+            l2: input.l2,
+            r2: input.r2,
+        },
+        buttons: input
+            .buttons
+            .into_iter()
+            .map(|button| ControllerInputButtonResponse {
+                id: button.id.to_string(),
+                label: button.label.to_string(),
+                pressed: button.pressed,
+                value: button.value,
+            })
+            .collect(),
     }
 }
 
@@ -12670,8 +12986,14 @@ fn controller_input_unavailable(
         available: false,
         source: source.to_string(),
         message,
-        l2: 0.0,
-        r2: 0.0,
+        sampled_at_ms: None,
+        age_ms: None,
+        axes: ControllerInputAxesResponse {
+            left_stick: ControllerInputStickResponse::default(),
+            right_stick: ControllerInputStickResponse::default(),
+        },
+        triggers: ControllerInputTriggersResponse::default(),
+        buttons: Vec::new(),
     }
 }
 
@@ -13099,15 +13421,6 @@ async fn update_profile_config(
         .model
         .clone()
         .unwrap_or_else(|| model_hint_for_profile_buttons(&request.buttons).to_string());
-    let profile_config = ProfileConfig {
-        input_mode: request.input_mode,
-        trigger: request.trigger,
-        lightbar: request.lightbar,
-        forza: request.forza,
-        sticks: request.sticks,
-        buttons: request.buttons,
-    }
-    .normalized_for_model(&model_hint);
     let (profile_name, to_save) = {
         let mut inner = state.inner.write().await;
         let profile_name = inner
@@ -13125,6 +13438,21 @@ async fn update_profile_config(
         let Some(profile_name) = profile_name else {
             return Err(StatusCode::FORBIDDEN);
         };
+        let existing_input_bridge = inner
+            .profile_configs
+            .get(&id)
+            .map(|config| config.input_bridge.clone())
+            .unwrap_or_default();
+        let profile_config = ProfileConfig {
+            input_mode: request.input_mode,
+            trigger: request.trigger,
+            lightbar: request.lightbar,
+            forza: request.forza,
+            sticks: request.sticks,
+            buttons: request.buttons,
+            input_bridge: request.input_bridge.unwrap_or(existing_input_bridge),
+        }
+        .normalized_for_model(&model_hint);
 
         inner
             .profile_configs
@@ -13600,6 +13928,714 @@ fn read_browse_entries(dir: &FsPath) -> (Vec<SteamLibraryBrowseEntry>, bool) {
     (combined, truncated)
 }
 
+async fn get_input_bridge_status(
+    State(state): State<AgentState>,
+) -> Json<InputBridgeStatusResponse> {
+    Json(state.input_bridge.status_response())
+}
+
+async fn get_input_bridge_session(
+    Path(controller_id): Path<String>,
+    State(state): State<AgentState>,
+) -> Json<InputBridgeSessionSummary> {
+    Json(state.input_bridge.session_summary(&controller_id))
+}
+
+async fn start_input_bridge_session(
+    Path(controller_id): Path<String>,
+    State(state): State<AgentState>,
+) -> Result<Json<InputBridgeSessionSummary>, (StatusCode, Json<serde_json::Value>)> {
+    {
+        let inner = state.inner.read().await;
+        let detail = inner.controllers.detail(&controller_id).ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "controller not found"})),
+            )
+        })?;
+        if !detail.connected {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({"error": "controller is not connected"})),
+            ));
+        }
+        let config = inner
+            .controller_configs
+            .get(&controller_id)
+            .cloned()
+            .unwrap_or_else(|| ControllerConfig::default_for(&controller_id, detail.model));
+        if config.input_mode != ControllerInputMode::DsccInputBridge || !config.input_bridge.enabled
+        {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": "DSCC Input Bridge must be explicitly enabled for this controller"
+                })),
+            ));
+        }
+    }
+    let detection = state
+        .cached_game_detection_with_ttl(HARDWARE_GAME_DETECTION_INTERVAL)
+        .await;
+    if !detection_allows_input_bridge(&detection) {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "DSCC Input Bridge can only start while a local app is active"
+            })),
+        ));
+    }
+    let existing = state.input_bridge.session_summary(&controller_id);
+    if existing.state == InputBridgeSessionState::Active {
+        return Ok(Json(existing));
+    }
+    let summary = state
+        .input_bridge
+        .start_session(
+            &controller_id,
+            VirtualOutputKind::Xbox360,
+            current_timestamp_millis(),
+        )
+        .map_err(|error| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": error})),
+            )
+        })?;
+    let loop_state = state.clone();
+    let loop_controller_id = controller_id.clone();
+    tokio::spawn(async move {
+        run_input_bridge_session_loop(loop_state, loop_controller_id).await;
+    });
+    let _ = state.event_tx.send(RealtimeMessage {
+        kind: "snapshot_invalidated".to_string(),
+        controller: None,
+        message: Some("input-bridge-started".to_string()),
+    });
+    Ok(Json(summary))
+}
+
+fn detection_allows_input_bridge(detection: &GameDetectionResponse) -> bool {
+    let Some(active_game_id) = detection.active_game_id.as_deref() else {
+        return false;
+    };
+    if !active_game_id.starts_with("local-") {
+        return false;
+    }
+    detection.selected_game.as_ref().is_some_and(|game| {
+        game.game_id == active_game_id
+            && game.source == "local_app"
+            && game.input_provider == "dscc_input_bridge"
+    })
+}
+
+async fn stop_input_bridge_session(
+    Path(controller_id): Path<String>,
+    State(state): State<AgentState>,
+) -> Json<InputBridgeSessionSummary> {
+    let summary = state
+        .input_bridge
+        .stop_session(&controller_id, current_timestamp_millis());
+    let _ = state.event_tx.send(RealtimeMessage {
+        kind: "snapshot_invalidated".to_string(),
+        controller: None,
+        message: Some("input-bridge-stopped".to_string()),
+    });
+    Json(summary)
+}
+
+async fn run_input_bridge_session_loop(state: AgentState, controller_id: String) {
+    let mut last_input_at = Instant::now();
+    let mut last_game_check_at = Instant::now();
+    loop {
+        if !state.input_bridge.is_active(&controller_id) {
+            break;
+        }
+
+        let config = {
+            let inner = state.inner.read().await;
+            let Some(detail) = inner.controllers.detail(&controller_id) else {
+                state
+                    .input_bridge
+                    .stop_session(&controller_id, current_timestamp_millis());
+                send_input_bridge_invalidation(&state, "input-bridge-controller-disconnected");
+                break;
+            };
+            if !detail.connected {
+                state
+                    .input_bridge
+                    .stop_session(&controller_id, current_timestamp_millis());
+                send_input_bridge_invalidation(&state, "input-bridge-controller-disconnected");
+                break;
+            }
+            let config = inner
+                .controller_configs
+                .get(&controller_id)
+                .cloned()
+                .unwrap_or_else(|| ControllerConfig::default_for(&controller_id, detail.model));
+            if config.input_mode != ControllerInputMode::DsccInputBridge
+                || !config.input_bridge.enabled
+            {
+                state
+                    .input_bridge
+                    .stop_session(&controller_id, current_timestamp_millis());
+                send_input_bridge_invalidation(&state, "input-bridge-config-disabled");
+                break;
+            }
+            config.input_bridge
+        };
+
+        if last_game_check_at.elapsed() >= HARDWARE_GAME_DETECTION_INTERVAL {
+            let detection = state
+                .cached_game_detection_with_ttl(HARDWARE_GAME_DETECTION_INTERVAL)
+                .await;
+            if !detection_allows_input_bridge(&detection) {
+                state
+                    .input_bridge
+                    .stop_session(&controller_id, current_timestamp_millis());
+                send_input_bridge_invalidation(&state, "input-bridge-local-app-inactive");
+                break;
+            }
+            last_game_check_at = Instant::now();
+        }
+
+        match state
+            .read_input_state_for_controller_with_options(
+                &controller_id,
+                ControllerInputReadOptions::bridge_poll(),
+            )
+            .await
+        {
+            Ok(Some(input)) => {
+                last_input_at = Instant::now();
+                if state
+                    .input_bridge
+                    .submit_controller_input(
+                        &controller_id,
+                        &input,
+                        &config,
+                        current_timestamp_millis(),
+                    )
+                    .is_err()
+                {
+                    state.input_bridge.neutralize_session(
+                        &controller_id,
+                        InputBridgeSessionState::Faulted,
+                        "DSCC Input Bridge backend fault; virtual output was neutralized.",
+                        current_timestamp_millis(),
+                    );
+                    tracing::warn!(controller_id = %controller_id, "DSCC Input Bridge backend fault");
+                    send_input_bridge_invalidation(&state, "input-bridge-backend-fault");
+                    break;
+                }
+            }
+            Ok(None) => {
+                if last_input_at.elapsed() >= INPUT_BRIDGE_STALE_AFTER {
+                    state.input_bridge.neutralize_session(
+                        &controller_id,
+                        InputBridgeSessionState::Stale,
+                        "DSCC Input Bridge neutralized output after stale controller input.",
+                        current_timestamp_millis(),
+                    );
+                    send_input_bridge_invalidation(&state, "input-bridge-input-stale");
+                    last_input_at = Instant::now();
+                }
+            }
+            Err(_) => {
+                state.input_bridge.neutralize_session(
+                    &controller_id,
+                    InputBridgeSessionState::Faulted,
+                    "DSCC Input Bridge input read failed; virtual output was neutralized.",
+                    current_timestamp_millis(),
+                );
+                tracing::warn!(controller_id = %controller_id, "DSCC Input Bridge input read failed");
+                send_input_bridge_invalidation(&state, "input-bridge-input-fault");
+                break;
+            }
+        }
+
+        tokio::time::sleep(INPUT_BRIDGE_PROCESS_INTERVAL).await;
+    }
+}
+
+fn send_input_bridge_invalidation(state: &AgentState, message: &str) {
+    let _ = state.event_tx.send(RealtimeMessage {
+        kind: "snapshot_invalidated".to_string(),
+        controller: None,
+        message: Some(message.to_string()),
+    });
+}
+
+async fn write_input_bridge_binding(
+    State(state): State<AgentState>,
+    Json(request): Json<InputBridgeBindingWriteRequest>,
+) -> Result<Json<InputBridgeBindingWriteResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let input_id = request.input_id.trim();
+    let target = request.target.trim();
+    if input_id.is_empty() || target.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "inputId and target are required"})),
+        ));
+    }
+    let source = bridge_source_from_input_id(input_id).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Unsupported DSCC Input Bridge source"})),
+        )
+    })?;
+    let target = bridge_target_from_raw(target).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Unsupported DSCC Input Bridge target"})),
+        )
+    })?;
+    let binding = InputBridgeBindingConfig { source, target };
+    let mut warnings = Vec::new();
+    if !request.dry_run {
+        let to_save = {
+            let mut inner = state.inner.write().await;
+            let profile_id = request.profile_id.as_deref().map(str::trim).unwrap_or("");
+            let wrote_profile = if !profile_id.is_empty()
+                && inner
+                    .profiles
+                    .iter()
+                    .any(|profile| profile.id == profile_id && !profile.built_in)
+            {
+                let config = inner
+                    .profile_configs
+                    .entry(profile_id.to_string())
+                    .or_insert_with(ProfileConfig::default);
+                upsert_input_bridge_binding(&mut config.input_bridge, binding.clone());
+                true
+            } else {
+                false
+            };
+
+            if !wrote_profile {
+                let controller_id = request
+                    .controller_id
+                    .as_deref()
+                    .map(str::trim)
+                    .unwrap_or("");
+                if controller_id.is_empty() {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": "controllerId is required when no writable profileId is provided"
+                        })),
+                    ));
+                }
+                let model = inner
+                    .controllers
+                    .detail(controller_id)
+                    .map(|detail| detail.model)
+                    .ok_or_else(|| {
+                        (
+                            StatusCode::NOT_FOUND,
+                            Json(serde_json::json!({"error": "controller not found"})),
+                        )
+                    })?;
+                let config = inner
+                    .controller_configs
+                    .entry(controller_id.to_string())
+                    .or_insert_with(|| ControllerConfig::default_for(controller_id, model));
+                upsert_input_bridge_binding(&mut config.input_bridge, binding.clone());
+                warnings.push(
+                    "Wrote bridge binding to controller config because the profile is built-in or absent."
+                        .to_string(),
+                );
+            }
+            inner.effect_revision = inner.effect_revision.saturating_add(1);
+            build_persist_snapshot(&inner)
+        };
+        persist_snapshot(&state, to_save).await;
+        let _ = state.event_tx.send(RealtimeMessage {
+            kind: "snapshot_invalidated".to_string(),
+            controller: None,
+            message: Some("input-bridge-binding-updated".to_string()),
+        });
+    }
+    Ok(Json(InputBridgeBindingWriteResponse {
+        accepted: true,
+        message: if request.dry_run {
+            format!("Validated DSCC Input Bridge binding for {input_id}.")
+        } else {
+            format!("Saved DSCC Input Bridge binding for {input_id}.")
+        },
+        dry_run: request.dry_run,
+        warnings,
+    }))
+}
+
+fn upsert_input_bridge_binding(config: &mut InputBridgeConfig, binding: InputBridgeBindingConfig) {
+    config
+        .bindings
+        .retain(|existing| existing.source != binding.source);
+    config.bindings.push(binding);
+    *config = config.clone().normalized();
+}
+
+fn bridge_source_from_input_id(input_id: &str) -> Option<InputBridgeSource> {
+    let normalized = input_id.trim().to_ascii_lowercase();
+    let source = match normalized.as_str() {
+        "button_a" => InputBridgeSource::Button("cross".to_string()),
+        "button_b" => InputBridgeSource::Button("circle".to_string()),
+        "button_x" => InputBridgeSource::Button("square".to_string()),
+        "button_y" => InputBridgeSource::Button("triangle".to_string()),
+        "dpad_north" | "dpad_up" => InputBridgeSource::Button("dpad_up".to_string()),
+        "dpad_south" | "dpad_down" => InputBridgeSource::Button("dpad_down".to_string()),
+        "dpad_west" | "dpad_left" => InputBridgeSource::Button("dpad_left".to_string()),
+        "dpad_east" | "dpad_right" => InputBridgeSource::Button("dpad_right".to_string()),
+        "left_bumper" | "button_should_left" => InputBridgeSource::Button("l1".to_string()),
+        "right_bumper" | "button_should_right" => InputBridgeSource::Button("r1".to_string()),
+        "click:left_trigger" | "left_trigger:click" => InputBridgeSource::Axis("l2".to_string()),
+        "click:right_trigger" | "right_trigger:click" => InputBridgeSource::Axis("r2".to_string()),
+        "button_menu" => InputBridgeSource::Button("create".to_string()),
+        "button_escape" => InputBridgeSource::Button("options".to_string()),
+        "click:left_joystick" | "left_joystick:click" | "click:joystick" | "joystick:click" => {
+            InputBridgeSource::Button("l3".to_string())
+        }
+        "click:right_joystick" | "right_joystick:click" => {
+            InputBridgeSource::Button("r3".to_string())
+        }
+        "click:left_trackpad" | "left_trackpad:click" => {
+            InputBridgeSource::Button("touchpad".to_string())
+        }
+        "click:right_trackpad" | "right_trackpad:click" => {
+            InputBridgeSource::Button("touchpad".to_string())
+        }
+        "button_back_left" => InputBridgeSource::Button("edge_back_left".to_string()),
+        "button_back_right" => InputBridgeSource::Button("edge_back_right".to_string()),
+        "button_back_left_upper" => InputBridgeSource::Button("edge_fn_left".to_string()),
+        "button_back_right_upper" => InputBridgeSource::Button("edge_fn_right".to_string()),
+        _ if normalized.contains("center_trackpad") || normalized.contains("gyro") => return None,
+        _ => return None,
+    };
+    Some(source)
+}
+
+fn bridge_target_from_raw(raw: &str) -> Option<InputBridgeTarget> {
+    let command = raw.split(',').next()?.trim();
+    let mut parts = command.split_whitespace();
+    let kind = parts.next()?.to_ascii_lowercase();
+    let param = parts.next().unwrap_or("").to_ascii_lowercase();
+    if kind != "xinput_button" {
+        return None;
+    }
+    match param.as_str() {
+        "a" => Some(InputBridgeTarget::Button(VirtualButton::A)),
+        "b" => Some(InputBridgeTarget::Button(VirtualButton::B)),
+        "x" => Some(InputBridgeTarget::Button(VirtualButton::X)),
+        "y" => Some(InputBridgeTarget::Button(VirtualButton::Y)),
+        "dpad_up" => Some(InputBridgeTarget::Button(VirtualButton::DpadUp)),
+        "dpad_down" => Some(InputBridgeTarget::Button(VirtualButton::DpadDown)),
+        "dpad_left" => Some(InputBridgeTarget::Button(VirtualButton::DpadLeft)),
+        "dpad_right" => Some(InputBridgeTarget::Button(VirtualButton::DpadRight)),
+        "shoulder_left" => Some(InputBridgeTarget::Button(VirtualButton::LeftShoulder)),
+        "shoulder_right" => Some(InputBridgeTarget::Button(VirtualButton::RightShoulder)),
+        "trigger_left" => Some(InputBridgeTarget::Axis(VirtualAxis::LeftTrigger)),
+        "trigger_right" => Some(InputBridgeTarget::Axis(VirtualAxis::RightTrigger)),
+        "joystick_left" => Some(InputBridgeTarget::Button(VirtualButton::LeftThumb)),
+        "joystick_right" => Some(InputBridgeTarget::Button(VirtualButton::RightThumb)),
+        "select" | "back" => Some(InputBridgeTarget::Button(VirtualButton::Back)),
+        "start" => Some(InputBridgeTarget::Button(VirtualButton::Start)),
+        "guide" => Some(InputBridgeTarget::Button(VirtualButton::Guide)),
+        _ => None,
+    }
+}
+
+async fn validate_local_game(
+    Json(request): Json<ValidateLocalGameRequest>,
+) -> Result<Json<ValidateLocalGameResponse>, (StatusCode, Json<serde_json::Value>)> {
+    validate_local_game_request(
+        request.name.as_deref(),
+        &request.executable_path,
+        &request.process_names,
+    )
+    .map(|validation| validation.response)
+    .map(Json)
+}
+
+async fn add_local_game(
+    State(state): State<AgentState>,
+    Json(request): Json<AddLocalGameRequest>,
+) -> Result<(StatusCode, Json<AddUserGameResponse>), (StatusCode, Json<serde_json::Value>)> {
+    let validation = validate_local_game_request(
+        Some(&request.name),
+        &request.executable_path,
+        &request.process_names,
+    )?;
+    let canonical_exe = validation.canonical_executable.clone();
+    let install_path = validation.install_path.display().to_string();
+    let game_id = local_game_id(&validation.response.name, &canonical_exe);
+    let new_game = UserGameConfig {
+        game_id: game_id.clone(),
+        app_id: format!(
+            "local:{}",
+            short_stable_hash(&canonical_exe.display().to_string())
+        ),
+        name: validation.response.name.clone(),
+        install_dir: validation
+            .install_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("LocalApp")
+            .to_string(),
+        install_path,
+        process_names: validation.response.process_names.clone(),
+        added_at: current_timestamp(),
+    };
+    let (summary, to_save) = {
+        let mut inner = state.inner.write().await;
+        if inner.user_games.contains_key(&game_id) {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": "Local app already registered",
+                    "gameId": game_id,
+                })),
+            ));
+        }
+        if inner
+            .user_games
+            .values()
+            .any(|game| game.app_id == new_game.app_id)
+        {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": "Local app executable already registered"
+                })),
+            ));
+        }
+        inner.user_games.insert(game_id.clone(), new_game.clone());
+        inner.logs.push(LogEntry {
+            level: "info".to_string(),
+            message: format!(
+                "Registered local app {} ({} processes)",
+                new_game.name,
+                new_game.process_names.len()
+            ),
+            timestamp: current_timestamp(),
+        });
+        inner.effect_revision = inner.effect_revision.saturating_add(1);
+        let summary = user_game_to_supported_summary(&new_game, None, SteamGameStats::default());
+        (summary, build_persist_snapshot(&inner))
+    };
+    persist_snapshot(&state, to_save).await;
+    {
+        let mut cache = state.discovery_cache.game_detection.lock().await;
+        cache.value = None;
+        cache.refreshed_at = None;
+    }
+    let _ = state.event_tx.send(RealtimeMessage {
+        kind: "snapshot_invalidated".to_string(),
+        controller: None,
+        message: Some("local-game-added".to_string()),
+    });
+    Ok((
+        StatusCode::CREATED,
+        Json(AddUserGameResponse { game: summary }),
+    ))
+}
+
+fn validate_local_game_request(
+    name: Option<&str>,
+    executable_path: &str,
+    process_names: &[String],
+) -> Result<LocalGameValidation, (StatusCode, Json<serde_json::Value>)> {
+    let requested = executable_path.trim();
+    if requested.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "executablePath is required"})),
+        ));
+    }
+    let path = PathBuf::from(requested);
+    let canonical = path.canonicalize().map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Local app path could not be validated"})),
+        )
+    })?;
+    if !canonical.is_file()
+        || canonical
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_none_or(|ext| !ext.eq_ignore_ascii_case("exe"))
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Local app path must point to a .exe file"})),
+        ));
+    }
+    let executable_name = canonical
+        .file_name()
+        .and_then(|file| file.to_str())
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Local app executable name is invalid"})),
+            )
+        })?
+        .to_string();
+    if is_protected_local_app_process(&executable_name) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "Local app executable is a protected system process"
+            })),
+        ));
+    }
+    let install_path = canonical.parent().map(PathBuf::from).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Local app parent directory is invalid"})),
+        )
+    })?;
+    let mut processes = sanitize_user_game_process_names(process_names);
+    if !processes
+        .iter()
+        .any(|process| process.eq_ignore_ascii_case(&executable_name))
+    {
+        processes.insert(0, executable_name.clone());
+    }
+    if processes.len() > USER_GAME_PROCESS_CANDIDATE_LIMIT {
+        processes.truncate(USER_GAME_PROCESS_CANDIDATE_LIMIT);
+    }
+    let processes = validate_local_app_process_names(&install_path, processes)?;
+    let name = name
+        .and_then(|name| {
+            let trimmed = name.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        })
+        .unwrap_or_else(|| {
+            executable_name
+                .strip_suffix(".exe")
+                .or_else(|| executable_name.strip_suffix(".EXE"))
+                .unwrap_or(&executable_name)
+                .to_string()
+        });
+    Ok(LocalGameValidation {
+        response: ValidateLocalGameResponse {
+            valid: true,
+            name,
+            executable_name,
+            process_names: processes,
+            warnings: Vec::new(),
+        },
+        canonical_executable: canonical,
+        install_path,
+    })
+}
+
+fn validate_local_app_process_names(
+    install_path: &FsPath,
+    processes: Vec<String>,
+) -> Result<Vec<String>, (StatusCode, Json<serde_json::Value>)> {
+    let mut validated = Vec::new();
+    for process in processes {
+        if is_protected_local_app_process(&process) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "Watched process is a protected system process"
+                })),
+            ));
+        }
+        let valid = install_path
+            .join(&process)
+            .canonicalize()
+            .ok()
+            .filter(|path| path.starts_with(install_path))
+            .filter(|path| path.is_file())
+            .filter(|path| {
+                path.extension()
+                    .and_then(|ext| ext.to_str())
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
+            })
+            .is_some();
+        if !valid {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "Watched processes must be .exe files in the selected app folder"
+                })),
+            ));
+        }
+        if !validated
+            .iter()
+            .any(|existing: &String| existing.eq_ignore_ascii_case(&process))
+        {
+            validated.push(process);
+        }
+    }
+    Ok(validated)
+}
+
+fn is_protected_local_app_process(process: &str) -> bool {
+    const PROTECTED: &[&str] = &[
+        "csrss.exe",
+        "dwm.exe",
+        "explorer.exe",
+        "lsass.exe",
+        "services.exe",
+        "smss.exe",
+        "spoolsv.exe",
+        "svchost.exe",
+        "system.exe",
+        "taskhostw.exe",
+        "wininit.exe",
+        "winlogon.exe",
+    ];
+    PROTECTED
+        .iter()
+        .any(|protected| protected.eq_ignore_ascii_case(process.trim()))
+}
+
+fn local_game_id(name: &str, executable_path: &FsPath) -> String {
+    format!(
+        "local-{}-{}",
+        slug_fragment(name),
+        short_stable_hash(&executable_path.display().to_string())
+    )
+}
+
+fn slug_fragment(value: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in value.chars().flat_map(|ch| ch.to_lowercase()) {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+            last_dash = false;
+        } else if !last_dash && !out.is_empty() {
+            out.push('-');
+            last_dash = true;
+        }
+        if out.len() >= 32 {
+            break;
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    if out.is_empty() {
+        "app".to_string()
+    } else {
+        out
+    }
+}
+
+fn short_stable_hash(value: &str) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")[..8].to_string()
+}
+
 async fn add_custom_game(
     State(state): State<AgentState>,
     Json(request): Json<AddUserGameRequest>,
@@ -13981,6 +15017,32 @@ mod tests {
             std::process::id(),
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
         ))
+    }
+
+    async fn seed_active_local_game(state: &AgentState, game_id: &str) {
+        let mut detection = no_game_detection("process_scan");
+        detection.active_game_id = Some(game_id.to_string());
+        detection.active_game_name = Some("Night Drive Lab".to_string());
+        detection.source = "process_scan".to_string();
+        detection.confidence = 100;
+        detection.process_name = Some("NightDriveLab.exe".to_string());
+        detection.selected_game = Some(SupportedGameSummary {
+            game_id: game_id.to_string(),
+            name: "Night Drive Lab".to_string(),
+            source: "local_app".to_string(),
+            input_provider: "dscc_input_bridge".to_string(),
+            app_id: Some("local:test".to_string()),
+            install_path: None,
+            process_names: vec!["NightDriveLab.exe".to_string()],
+            executable_name: Some("NightDriveLab.exe".to_string()),
+            installed: true,
+            running: true,
+            support_level: "custom".to_string(),
+            artwork: GameArtwork::default(),
+            stats: SteamGameStats::default(),
+        });
+        let mut cache = state.discovery_cache.game_detection.lock().await;
+        cache.store(detection, Instant::now());
     }
 
     #[test]
@@ -14868,6 +15930,379 @@ mod tests {
             .buttons
             .iter()
             .any(|button| button.key == "Back Right" && button.label == "R3"));
+    }
+
+    #[tokio::test]
+    async fn input_bridge_status_route_reports_mock_backend() {
+        let router = app(AgentState::mock());
+
+        let status: InputBridgeStatusResponse =
+            get_json(router, "/api/input-bridge", StatusCode::OK).await;
+
+        assert!(status.available);
+        assert_eq!(status.provider, "mock");
+        assert_eq!(status.supported_kinds, vec!["xbox360".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn input_bridge_start_refuses_unknown_and_unconfigured_controllers() {
+        let router = app(AgentState::from_controller_events([attach_event(
+            "edge-bridge-refused",
+            ControllerFamily::DualSenseEdge,
+            ControllerTransportKind::Usb,
+            Some(90),
+        )]));
+
+        let missing = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/input-bridge/sessions/missing/start")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+
+        let unconfigured = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/input-bridge/sessions/edge-bridge-refused/start")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unconfigured.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn input_bridge_start_requires_active_local_bridge_app() {
+        let state = AgentState::from_controller_events([attach_event(
+            "edge-bridge-no-app",
+            ControllerFamily::DualSenseEdge,
+            ControllerTransportKind::Usb,
+            Some(90),
+        )]);
+        {
+            let mut inner = state.inner.write().await;
+            let mut config = ControllerConfig::default_for("edge-bridge-no-app", "DualSense Edge");
+            config.input_mode = ControllerInputMode::DsccInputBridge;
+            config.input_bridge = InputBridgeConfig {
+                enabled: true,
+                ..InputBridgeConfig::default()
+            }
+            .normalized();
+            inner
+                .controller_configs
+                .insert("edge-bridge-no-app".to_string(), config);
+        }
+        let router = app(state);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/input-bridge/sessions/edge-bridge-no-app/start")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn input_bridge_session_can_start_and_stop_when_explicitly_enabled_for_local_app() {
+        let state = AgentState::from_controller_events([attach_event(
+            "edge-bridge",
+            ControllerFamily::DualSenseEdge,
+            ControllerTransportKind::Usb,
+            Some(90),
+        )])
+        .with_input_override("edge-bridge", sample_controller_input());
+        {
+            let mut inner = state.inner.write().await;
+            let mut config = ControllerConfig::default_for("edge-bridge", "DualSense Edge");
+            config.input_mode = ControllerInputMode::DsccInputBridge;
+            config.input_bridge = InputBridgeConfig {
+                enabled: true,
+                ..InputBridgeConfig::default()
+            }
+            .normalized();
+            inner
+                .controller_configs
+                .insert("edge-bridge".to_string(), config);
+        }
+        seed_active_local_game(&state, "local-night-drive-lab-test").await;
+        let router = app(state);
+
+        let start = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/input-bridge/sessions/edge-bridge/start")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(start.status(), StatusCode::OK);
+        let body = to_bytes(start.into_body(), 1024 * 1024).await.unwrap();
+        let summary: InputBridgeSessionSummary = serde_json::from_slice(&body).unwrap();
+        assert_eq!(summary.state, InputBridgeSessionState::Active);
+
+        let stop = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/input-bridge/sessions/edge-bridge/stop")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(stop.status(), StatusCode::OK);
+        let body = to_bytes(stop.into_body(), 1024 * 1024).await.unwrap();
+        let summary: InputBridgeSessionSummary = serde_json::from_slice(&body).unwrap();
+        assert_eq!(summary.state, InputBridgeSessionState::Disabled);
+    }
+
+    #[tokio::test]
+    async fn input_bridge_binding_write_persists_typed_controller_config() {
+        let router = app(AgentState::from_controller_events([attach_event(
+            "edge-bridge-write",
+            ControllerFamily::DualSenseEdge,
+            ControllerTransportKind::Usb,
+            Some(90),
+        )]));
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/input-bridge/bindings")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{
+                            "controllerId":"edge-bridge-write",
+                            "inputId":"button_a",
+                            "target":"xinput_button b, , B"
+                        }"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let config: ControllerConfig = get_json(
+            router,
+            "/api/controllers/edge-bridge-write/config",
+            StatusCode::OK,
+        )
+        .await;
+        assert!(config.input_bridge.bindings.iter().any(|binding| {
+            binding.source == InputBridgeSource::Button("cross".to_string())
+                && binding.target == InputBridgeTarget::Button(VirtualButton::B)
+        }));
+        assert!(!config.input_bridge.bindings.iter().any(|binding| {
+            binding.source == InputBridgeSource::Button("cross".to_string())
+                && binding.target == InputBridgeTarget::Button(VirtualButton::A)
+        }));
+    }
+
+    #[tokio::test]
+    async fn new_input_bridge_mutations_reject_cross_origin_requests() {
+        let router = app(AgentState::mock());
+        for (uri, body) in [
+            (
+                "/api/input-bridge/bindings",
+                r#"{"inputId":"cross","target":"xinput_button a, , A"}"#,
+            ),
+            ("/api/input-bridge/sessions/mock/start", "{}"),
+            ("/api/input-bridge/sessions/mock/stop", "{}"),
+            (
+                "/api/games/local/validate",
+                r#"{"name":"Night Drive Lab","executablePath":"C:\\Games\\NightDriveLab.exe"}"#,
+            ),
+            (
+                "/api/games/local",
+                r#"{"name":"Night Drive Lab","executablePath":"C:\\Games\\NightDriveLab.exe"}"#,
+            ),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(uri)
+                        .header("host", "127.0.0.1:43473")
+                        .header("origin", "http://evil.example")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{uri}");
+        }
+    }
+
+    #[tokio::test]
+    async fn local_app_routes_validate_add_and_reject_duplicate_executable() {
+        let root = temp_test_dir("dscc-local-app");
+        fs::create_dir_all(&root).expect("local app temp dir");
+        let exe = root.join("NightDriveLab.exe");
+        fs::write(&exe, b"mock exe").expect("local app exe fixture");
+        let router = app(AgentState::mock());
+
+        let validate = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/games/local/validate")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "name": "Night Drive Lab",
+                            "executablePath": exe.display().to_string()
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(validate.status(), StatusCode::OK);
+        let body = to_bytes(validate.into_body(), 1024 * 1024).await.unwrap();
+        let validation_value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(validation_value.get("installPath").is_none());
+        let validation: ValidateLocalGameResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(validation.executable_name, "NightDriveLab.exe");
+        assert_eq!(
+            validation.process_names,
+            vec!["NightDriveLab.exe".to_string()]
+        );
+
+        for index in 0..USER_GAME_PROCESS_CANDIDATE_LIMIT {
+            fs::write(root.join(format!("Aux{index}.exe")), b"mock exe")
+                .expect("local app auxiliary exe fixture");
+        }
+        let process_names: Vec<String> = (0..USER_GAME_PROCESS_CANDIDATE_LIMIT)
+            .map(|index| format!("Aux{index}.exe"))
+            .collect();
+        let capped_validate = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/games/local/validate")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "name": "Night Drive Lab",
+                            "executablePath": exe.display().to_string(),
+                            "processNames": process_names
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(capped_validate.status(), StatusCode::OK);
+        let body = to_bytes(capped_validate.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let capped_validation: ValidateLocalGameResponse = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            capped_validation.process_names.len(),
+            USER_GAME_PROCESS_CANDIDATE_LIMIT
+        );
+        assert_eq!(capped_validation.process_names[0], "NightDriveLab.exe");
+        assert!(!capped_validation
+            .process_names
+            .iter()
+            .any(|process| process == "Aux7.exe"));
+
+        let add = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/games/local")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "name": "Night Drive Lab",
+                            "executablePath": exe.display().to_string()
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(add.status(), StatusCode::CREATED);
+        let body = to_bytes(add.into_body(), 1024 * 1024).await.unwrap();
+        let added: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let game = added.get("game").expect("response includes game");
+        assert!(game
+            .get("gameId")
+            .and_then(|value| value.as_str())
+            .is_some_and(|game_id| game_id.starts_with("local-night-drive-lab-")));
+        assert!(game.get("installPath").is_none());
+
+        let duplicate = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/games/local")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "name": "Renamed Lab",
+                            "executablePath": exe.display().to_string()
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(duplicate.status(), StatusCode::CONFLICT);
+
+        let protected_process = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/games/local/validate")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "name": "Night Drive Lab",
+                            "executablePath": exe.display().to_string(),
+                            "processNames": ["explorer.exe"]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(protected_process.status(), StatusCode::BAD_REQUEST);
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -19889,6 +21324,91 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn controller_input_endpoint_returns_live_nested_state() {
+        let state = AgentState::from_controller_events([attach_event(
+            "edge-input",
+            ControllerFamily::DualSenseEdge,
+            ControllerTransportKind::Usb,
+            Some(72),
+        )])
+        .with_input_override("edge-input", sample_controller_input());
+        let router = app(state);
+
+        let input: ControllerInputResponse =
+            get_json(router, "/api/controllers/edge-input/input", StatusCode::OK).await;
+
+        assert!(input.available);
+        assert_eq!(input.controller_id, "edge-input");
+        assert_eq!(input.source, "hid");
+        assert!(input.sampled_at_ms.is_some());
+        assert_eq!(input.age_ms, Some(0));
+        assert!((input.axes.left_stick.x - 0.25).abs() < f64::EPSILON);
+        assert!((input.axes.right_stick.y + 0.75).abs() < f64::EPSILON);
+        assert!((input.triggers.l2 - 0.4).abs() < f64::EPSILON);
+        assert!(input
+            .buttons
+            .iter()
+            .any(|button| button.id == "cross" && button.pressed && button.value == 1.0));
+    }
+
+    #[tokio::test]
+    async fn current_controller_input_uses_connected_controller() {
+        let state = AgentState::from_controller_events([attach_event(
+            "edge-current",
+            ControllerFamily::DualSenseEdge,
+            ControllerTransportKind::Bluetooth,
+            Some(72),
+        )])
+        .with_input_override("edge-current", sample_controller_input());
+        let router = app(state);
+
+        let input: ControllerInputResponse =
+            get_json(router, "/api/controllers/current/input", StatusCode::OK).await;
+
+        assert!(input.available);
+        assert_eq!(input.controller_id, "edge-current");
+        assert!((input.triggers.r2 - 0.8).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn controller_input_endpoint_reports_unavailable_without_live_report() {
+        let router = app(AgentState::from_controller_events([attach_event(
+            "usb-pad",
+            ControllerFamily::DualSense,
+            ControllerTransportKind::Usb,
+            Some(72),
+        )]));
+
+        let input: ControllerInputResponse =
+            get_json(router, "/api/controllers/usb-pad/input", StatusCode::OK).await;
+
+        assert!(!input.available);
+        assert_eq!(input.source, "hid");
+        assert_eq!(input.sampled_at_ms, None);
+        assert_eq!(input.age_ms, None);
+        assert_eq!(
+            input.axes.left_stick,
+            ControllerInputStickResponse::default()
+        );
+        assert!(input.buttons.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unknown_controller_input_returns_not_found() {
+        let response = app(AgentState::mock())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/controllers/no-such-controller/input")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
     async fn permission_denied_event_is_actionable_controller_state() {
         let state = AgentState::from_controller_events([attach_event(
             "locked-pad",
@@ -20662,6 +22182,37 @@ mod tests {
                     "controller added by test fixture",
                 )),
         )
+    }
+
+    fn sample_controller_input() -> ControllerInputState {
+        ControllerInputState {
+            left_stick: dscc_device::ControllerInputStickState {
+                x: 0.25,
+                y: 0.5,
+                magnitude: 0.559_016_994,
+            },
+            right_stick: dscc_device::ControllerInputStickState {
+                x: -0.25,
+                y: -0.75,
+                magnitude: 0.790_569_415,
+            },
+            l2: 0.4,
+            r2: 0.8,
+            buttons: vec![
+                dscc_device::ControllerInputButtonState {
+                    id: "cross",
+                    label: "Cross",
+                    pressed: true,
+                    value: 1.0,
+                },
+                dscc_device::ControllerInputButtonState {
+                    id: "r2",
+                    label: "R2",
+                    pressed: true,
+                    value: 0.8,
+                },
+            ],
+        }
     }
 
     fn write_i32(packet: &mut [u8], offset: usize, value: i32) {

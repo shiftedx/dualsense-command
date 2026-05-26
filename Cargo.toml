@@ -6,6 +6,7 @@ members = [
     "crates/dscc-core",
     "crates/dscc-device",
     "crates/dscc-telemetry",
+    "crates/dscc-virtual-output",
     "crates/dscc-tray",
 ]
 resolver = "2"
@@ -20,5 +21,6 @@ dscc-adapters = { path = "crates/dscc-adapters" }
 dscc-core = { path = "crates/dscc-core" }
 dscc-device = { path = "crates/dscc-device" }
 dscc-telemetry = { path = "crates/dscc-telemetry" }
+dscc-virtual-output = { path = "crates/dscc-virtual-output" }
 serde = { version = "1", features = ["derive"] }
 thiserror = "1"

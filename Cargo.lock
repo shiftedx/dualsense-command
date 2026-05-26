@@ -369,6 +369,7 @@ dependencies = [
  "dscc-core",
  "dscc-device",
  "dscc-telemetry",
+ "dscc-virtual-output",
  "reqwest",
  "serde",
  "serde_json",
@@ -427,6 +428,14 @@ dependencies = [
  "serde",
  "serde_json",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "dscc-virtual-output"
+version = "0.3.0"
+dependencies = [
+ "serde",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

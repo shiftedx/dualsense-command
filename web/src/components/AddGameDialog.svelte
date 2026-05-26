@@ -3,9 +3,12 @@
   import { browseSteamLibrary } from '../lib/api';
   import InitialBadge from './InitialBadge.svelte';
   import type {
+    AddLocalAppRequest,
     SteamLibraryBrowseEntry,
     SteamLibraryBrowseResponse,
-    SteamLibraryEntry
+    SteamLibraryEntry,
+    ValidateLocalAppRequest,
+    ValidateLocalAppResponse
   } from '../lib/types';
 
   export let open = false;
@@ -15,7 +18,13 @@
   export let errorMessage = '';
   export let onClose: () => void = () => {};
   export let onAdd: (entry: SteamLibraryEntry, processNames?: string[]) => void | Promise<void> = () => {};
+  export let onValidateLocal: (request: ValidateLocalAppRequest) => Promise<ValidateLocalAppResponse> =
+    async () => {
+      throw new Error('Local app validation is unavailable.');
+    };
+  export let onAddLocal: (request: AddLocalAppRequest) => void | Promise<void> = () => {};
 
+  let mode: 'steam' | 'local' = 'steam';
   let query = '';
   let searchInputEl: HTMLInputElement | null = null;
   let pickEntry: SteamLibraryEntry | null = null;
@@ -26,6 +35,13 @@
   let pickBrowseLoading = false;
   let pickBrowseError = '';
   let pickSelectedExes: Array<{ name: string; relativePath: string }> = [];
+  let localName = '';
+  let localExecutablePath = '';
+  let localProcessDraft = '';
+  let localProcesses: string[] = [];
+  let localValidation: ValidateLocalAppResponse | null = null;
+  let localBusy = false;
+  let localError = '';
 
   $: filtered = (() => {
     const q = query.trim().toLowerCase();
@@ -40,6 +56,11 @@
   })();
 
   $: availableCount = entries.filter((entry) => !entry.alreadyInCatalog).length;
+  $: localProcessList = localProcesses.length
+    ? localProcesses
+    : localValidation?.processNames ?? [];
+  $: localCanValidate = Boolean(localExecutablePath.trim()) && !localBusy;
+  $: localCanAdd = Boolean(localExecutablePath.trim() && localName.trim()) && !localBusy;
 
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === 'Escape') {
@@ -71,6 +92,11 @@
 
   $: if (open && searchInputEl) {
     queueMicrotask(() => searchInputEl?.focus());
+  }
+
+  $: if (!open) {
+    mode = 'steam';
+    localError = '';
   }
 
   async function openPickFor(entry: SteamLibraryEntry) {
@@ -185,6 +211,75 @@
     cancelPick();
     void onAdd(entry, names);
   }
+
+  function localRequest(): ValidateLocalAppRequest {
+    return {
+      name: localName.trim() || null,
+      executablePath: localExecutablePath.trim(),
+      processNames: localProcessList
+    };
+  }
+
+  function addLocalProcess() {
+    const value = localProcessDraft.trim();
+    if (!value) return;
+    if (!localProcesses.some((item) => item.toLowerCase() === value.toLowerCase())) {
+      localProcesses = [...localProcesses, value];
+    }
+    localProcessDraft = '';
+    localValidation = null;
+  }
+
+  function removeLocalProcess(name: string) {
+    localProcesses = localProcessList.filter((item) => item.toLowerCase() !== name.toLowerCase());
+    localValidation = null;
+  }
+
+  function handleLocalProcessKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Enter' && event.key !== ',') return;
+    event.preventDefault();
+    addLocalProcess();
+  }
+
+  async function validateLocal() {
+    if (!localCanValidate) return;
+    localBusy = true;
+    localError = '';
+    try {
+      const response = await onValidateLocal(localRequest());
+      localValidation = response;
+      if (!localName.trim()) localName = response.name;
+      if (!localProcesses.length) localProcesses = response.processNames;
+    } catch (caught) {
+      localValidation = null;
+      localError = caught instanceof Error ? caught.message : 'Unable to validate local app.';
+    } finally {
+      localBusy = false;
+    }
+  }
+
+  async function submitLocalApp() {
+    if (!localCanAdd) return;
+    localBusy = true;
+    localError = '';
+    try {
+      await onAddLocal({
+        name: localName.trim(),
+        executablePath: localExecutablePath.trim(),
+        processNames: localProcessList
+      });
+      localName = '';
+      localExecutablePath = '';
+      localProcessDraft = '';
+      localProcesses = [];
+      localValidation = null;
+      onClose();
+    } catch (caught) {
+      localError = caught instanceof Error ? caught.message : 'Unable to add local app.';
+    } finally {
+      localBusy = false;
+    }
+  }
 </script>
 
 <svelte:window onkeydown={open ? handleKeydown : undefined} />
@@ -206,10 +301,11 @@
       <header class="dm-add-game-head">
         <div>
           <span>Add Game</span>
-          <h2 id="dm-add-game-title">Pick from your Steam library</h2>
+          <h2 id="dm-add-game-title">{mode === 'steam' ? 'Pick from your Steam library' : 'Add a local app'}</h2>
           <p>
-            DSCC saves a profile per game. When the selected game launches via Steam, that profile
-            auto-loads on the controller. Games already covered by a built-in module are marked.
+            {mode === 'steam'
+              ? 'DSCC saves a profile per Steam game and can mirror Steam Input bindings where available.'
+              : 'Local apps use DSCC Input Bridge mappings and process-name detection. No injection, hooks, or game files are modified.'}
           </p>
         </div>
         <button type="button" class="dm-add-game-close" aria-label="Close" onclick={onClose}>
@@ -217,6 +313,24 @@
         </button>
       </header>
 
+      <div class="dm-add-game-tabs" role="tablist" aria-label="Add game source">
+        <button
+          type="button"
+          role="tab"
+          class:active={mode === 'steam'}
+          aria-selected={mode === 'steam'}
+          onclick={() => { mode = 'steam'; }}
+        >Steam Library</button>
+        <button
+          type="button"
+          role="tab"
+          class:active={mode === 'local'}
+          aria-selected={mode === 'local'}
+          onclick={() => { mode = 'local'; }}
+        >Local App</button>
+      </div>
+
+      {#if mode === 'steam'}
       <div class="dm-add-game-search">
         <Search size={14} aria-hidden="true" />
         <input
@@ -313,6 +427,89 @@
         <span>{availableCount} {availableCount === 1 ? 'game' : 'games'} ready to add</span>
         <button type="button" class="dm-add-game-secondary" onclick={onClose}>Close</button>
       </footer>
+      {:else}
+        <div class="dm-local-app-form">
+          {#if localError}
+            <div class="dm-add-game-error" role="alert">{localError}</div>
+          {:else if localValidation?.warnings.length}
+            <div class="dm-add-game-error warn" role="status">{localValidation.warnings.join(' ')}</div>
+          {/if}
+
+          <label class="dm-local-app-field">
+            <span>App name</span>
+            <input
+              bind:value={localName}
+              type="text"
+              maxlength="80"
+              spellcheck="false"
+              placeholder="My non-Steam game"
+              disabled={localBusy}
+            />
+          </label>
+
+          <label class="dm-local-app-field">
+            <span>.exe path</span>
+            <input
+              bind:value={localExecutablePath}
+              type="text"
+              spellcheck="false"
+              placeholder="C:\Games\Example\Example.exe"
+              disabled={localBusy}
+            />
+          </label>
+
+          <div class="dm-local-app-field">
+            <span>Watched processes</span>
+            <div class="dm-local-process-row">
+              <input
+                bind:value={localProcessDraft}
+                type="text"
+                spellcheck="false"
+                placeholder="Example.exe"
+                disabled={localBusy}
+                onkeydown={handleLocalProcessKeydown}
+              />
+              <button type="button" class="dm-add-game-secondary-button" disabled={localBusy || !localProcessDraft.trim()} onclick={addLocalProcess}>Add</button>
+            </div>
+            <div class="dm-local-process-chips" aria-label="Watched process names">
+              {#if localProcessList.length}
+                {#each localProcessList as name (name)}
+                  <span class="dm-add-game-selected-chip">
+                    {name}
+                    <button
+                      type="button"
+                      class="dm-add-game-selected-chip-x"
+                      aria-label={`Remove ${name}`}
+                      onclick={() => removeLocalProcess(name)}
+                    ><X size={11} /></button>
+                  </span>
+                {/each}
+              {:else}
+                <span class="dm-add-game-pick-selected-empty">Validate to infer the executable name, or add one manually.</span>
+              {/if}
+            </div>
+          </div>
+
+          {#if localValidation}
+            <div class="dm-local-validation" role="status">
+              <strong>{localValidation.name}</strong>
+              <span>{localValidation.executableName} / {localValidation.processNames.join(', ')}</span>
+            </div>
+          {/if}
+        </div>
+
+        <footer class="dm-add-game-foot">
+          <span>{localValidation?.valid ? 'Local app validated' : 'DSCC Bridge local app profile'}</span>
+          <div class="dm-add-game-pick-actions">
+            <button type="button" class="dm-add-game-secondary" disabled={!localCanValidate} onclick={() => void validateLocal()}>
+              {localBusy ? 'Working' : 'Validate'}
+            </button>
+            <button type="button" class="dm-add-game-button" disabled={!localCanAdd} onclick={() => void submitLocalApp()}>
+              {localBusy ? 'Adding...' : 'Add Local App'}
+            </button>
+          </div>
+        </footer>
+      {/if}
     </div>
   </div>
 
@@ -538,6 +735,33 @@
     color: var(--tungsten);
   }
 
+  .dm-add-game-tabs {
+    display: inline-flex;
+    align-self: start;
+    gap: 4px;
+    margin: 12px 20px 0;
+    padding: 3px;
+    border: 1px solid rgba(113, 113, 122, 0.24);
+    border-radius: 7px;
+    background: rgba(10, 10, 12, 0.48);
+  }
+
+  .dm-add-game-tabs button {
+    border: 0;
+    border-radius: 5px;
+    padding: 6px 10px;
+    color: var(--tungsten);
+    background: transparent;
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+  }
+
+  .dm-add-game-tabs button.active {
+    color: #FFFFFF;
+    background: rgba(0, 112, 204, 0.3);
+  }
+
   .dm-add-game-search:focus-within {
     border-color: rgba(0, 112, 204, 0.62);
     box-shadow: 0 0 0 2px rgba(0, 112, 204, 0.16);
@@ -568,6 +792,84 @@
     background: rgba(229, 62, 62, 0.14);
     font-size: 12px;
     line-height: 1.35;
+  }
+
+  .dm-add-game-error.warn {
+    border-color: rgba(252, 211, 77, 0.42);
+    color: #FDE68A;
+    background: rgba(120, 53, 15, 0.18);
+  }
+
+  .dm-local-app-form {
+    flex: 1 1 auto;
+    display: grid;
+    align-content: start;
+    gap: 12px;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 14px 20px 8px;
+  }
+
+  .dm-local-app-field {
+    display: grid;
+    gap: 6px;
+    color: var(--tungsten);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .dm-local-app-field input {
+    min-width: 0;
+    padding: 8px 10px;
+    border: 1px solid rgba(113, 113, 122, 0.28);
+    border-radius: 6px;
+    color: #FFFFFF;
+    background: rgba(10, 10, 12, 0.62);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0;
+    outline: none;
+  }
+
+  .dm-local-app-field input:focus {
+    border-color: rgba(0, 112, 204, 0.62);
+    box-shadow: 0 0 0 2px rgba(0, 112, 204, 0.16);
+  }
+
+  .dm-local-process-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+
+  .dm-local-process-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-height: 30px;
+    padding-top: 2px;
+  }
+
+  .dm-local-validation {
+    display: grid;
+    gap: 3px;
+    padding: 10px;
+    border: 1px solid rgba(74, 222, 128, 0.3);
+    border-radius: 6px;
+    background: rgba(20, 83, 45, 0.16);
+  }
+
+  .dm-local-validation strong {
+    color: #FFFFFF;
+    font-size: 13px;
+  }
+
+  .dm-local-validation span {
+    color: var(--tungsten);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
   }
 
   .dm-add-game-list {
@@ -1000,5 +1302,53 @@
   .dm-add-game-secondary:hover {
     border-color: rgba(0, 112, 204, 0.6);
     background: rgba(0, 112, 204, 0.14);
+  }
+
+  @media (max-width: 640px) {
+    .dm-add-game-backdrop {
+      align-items: stretch;
+      padding: 10px;
+    }
+
+    .dm-add-game-dialog {
+      max-height: calc(100vh - 20px);
+      border-radius: 8px;
+    }
+
+    .dm-add-game-head,
+    .dm-add-game-foot {
+      padding-inline: 14px;
+    }
+
+    .dm-add-game-row {
+      grid-template-columns: minmax(0, 1fr);
+      align-items: stretch;
+    }
+
+    .dm-add-game-art {
+      width: 100%;
+      height: 88px;
+    }
+
+    .dm-add-game-foot,
+    .dm-add-game-pick-actions {
+      flex-wrap: wrap;
+    }
+
+    .dm-local-process-row {
+      grid-template-columns: 1fr;
+    }
+
+    .dm-add-game-foot {
+      align-items: stretch;
+    }
+
+    .dm-add-game-foot > span,
+    .dm-add-game-pick-actions,
+    .dm-add-game-button,
+    .dm-add-game-secondary,
+    .dm-add-game-secondary-button {
+      width: 100%;
+    }
   }
 </style>

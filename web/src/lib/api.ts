@@ -4,6 +4,7 @@ import type {
   AppSnapshot,
   AppSettingsResponse,
   ActionAccepted,
+  AddLocalAppRequest,
   ControllerConfiguration,
   ControllerInputState,
   ControllerProfileAssignment,
@@ -16,6 +17,10 @@ import type {
   ExportedProfile,
   GameDetection,
   HealthState,
+  InputBridgeBindingWriteRequest,
+  InputBridgeBindingWriteResponse,
+  InputBridgeSessionSummary,
+  InputBridgeStatus,
   AdapterStatus,
   LogEntry,
   ModuleSummary,
@@ -32,6 +37,8 @@ import type {
   SupportBundle,
   SupportedGame,
   TelemetrySignal,
+  ValidateLocalAppRequest,
+  ValidateLocalAppResponse,
   UpdateEdgeProfileRequest
 } from './types';
 const API_BASE = '/api';
@@ -131,8 +138,26 @@ interface ControllerInputResponseDto {
   available: boolean;
   source: string;
   message: string;
-  l2: number;
-  r2: number;
+  sampledAtMs?: number | null;
+  sampled_at_ms?: number | null;
+  ageMs?: number | null;
+  age_ms?: number | null;
+  axes?: {
+    leftStick?: { x?: number; y?: number; magnitude?: number };
+    left_stick?: { x?: number; y?: number; magnitude?: number };
+    rightStick?: { x?: number; y?: number; magnitude?: number };
+    right_stick?: { x?: number; y?: number; magnitude?: number };
+  };
+  triggers?: {
+    l2?: number;
+    r2?: number;
+  };
+  buttons?: Array<{
+    id?: string;
+    label?: string;
+    pressed?: boolean;
+    value?: number;
+  }>;
 }
 
 interface AgentSnapshotDto {
@@ -143,6 +168,7 @@ interface AgentSnapshotDto {
   adapters: AdapterDto[];
   modules: ModuleSummary[];
   steamInput: SteamInputStatus;
+  inputBridge?: InputBridgeStatus;
   gameDetection: GameDetection;
   profileResolution: ProfileResolution;
   effectState: CurrentEffectState;
@@ -344,6 +370,17 @@ const FALLBACK_STEAM_INPUT: SteamInputStatus = {
   available: false,
   steamPath: null,
   layouts: [],
+  warnings: []
+};
+
+const FALLBACK_INPUT_BRIDGE: InputBridgeStatus = {
+  available: false,
+  backendId: 'unavailable',
+  provider: 'none',
+  state: 'unavailable',
+  message: 'DSCC Input Bridge status is unavailable.',
+  supportedKinds: [],
+  sessions: [],
   warnings: []
 };
 
@@ -618,15 +655,50 @@ export async function getControllerInput(controllerId?: string | null): Promise<
     ? `/controllers/${encodeURIComponent(controllerId)}/input`
     : '/controllers/current/input';
   const response = await apiFetch<ControllerInputResponseDto>(endpoint);
+  const leftStick = response.axes?.leftStick ?? response.axes?.left_stick;
+  const rightStick = response.axes?.rightStick ?? response.axes?.right_stick;
 
   return {
     controllerId: response.controllerId ?? response.controller_id ?? '',
     available: response.available,
     source: response.source,
     message: response.message,
-    l2: response.l2,
-    r2: response.r2
+    sampledAtMs: response.sampledAtMs ?? response.sampled_at_ms ?? null,
+    ageMs: response.ageMs ?? response.age_ms ?? null,
+    axes: {
+      leftStick: normalizeInputStick(leftStick),
+      rightStick: normalizeInputStick(rightStick)
+    },
+    triggers: {
+      l2: clampUnitNumber(response.triggers?.l2),
+      r2: clampUnitNumber(response.triggers?.r2)
+    },
+    buttons: (response.buttons ?? []).map((button) => ({
+      id: button.id ?? '',
+      label: button.label ?? button.id ?? 'Input',
+      pressed: Boolean(button.pressed),
+      value: clampUnitNumber(button.value)
+    }))
   };
+}
+
+function normalizeInputStick(stick?: { x?: number; y?: number; magnitude?: number }) {
+  const x = clampSignedNumber(stick?.x);
+  const y = clampSignedNumber(stick?.y);
+  const magnitude =
+    typeof stick?.magnitude === 'number' && Number.isFinite(stick.magnitude)
+      ? clampUnitNumber(stick.magnitude)
+      : clampUnitNumber(Math.hypot(x, y));
+
+  return { x, y, magnitude };
+}
+
+function clampUnitNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0;
+}
+
+function clampSignedNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.min(1, Math.max(-1, value)) : 0;
 }
 
 export async function getControllerConfig(controllerId: string): Promise<ControllerConfiguration> {
@@ -792,6 +864,35 @@ export async function writeSteamInputPaddlePreset(
   });
 }
 
+export async function getInputBridgeStatus(): Promise<InputBridgeStatus> {
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).getMockInputBridgeStatus();
+  return apiFetch<InputBridgeStatus>('/input-bridge');
+}
+
+export async function writeInputBridgeBinding(
+  request: InputBridgeBindingWriteRequest
+): Promise<InputBridgeBindingWriteResponse> {
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).writeMockInputBridgeBinding(request);
+  return apiFetch<InputBridgeBindingWriteResponse>('/input-bridge/bindings', {
+    method: 'POST',
+    body: JSON.stringify(request)
+  });
+}
+
+export async function startInputBridgeSession(controllerId: string): Promise<InputBridgeSessionSummary> {
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).startMockInputBridgeSession(controllerId);
+  return apiFetch<InputBridgeSessionSummary>(`/input-bridge/sessions/${encodeURIComponent(controllerId)}/start`, {
+    method: 'POST'
+  });
+}
+
+export async function stopInputBridgeSession(controllerId: string): Promise<InputBridgeSessionSummary> {
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).stopMockInputBridgeSession(controllerId);
+  return apiFetch<InputBridgeSessionSummary>(`/input-bridge/sessions/${encodeURIComponent(controllerId)}/stop`, {
+    method: 'POST'
+  });
+}
+
 export async function getSteamLibrary(): Promise<SteamLibraryResponse> {
   if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).getMockSteamLibrary();
   return apiFetch<SteamLibraryResponse>('/games/steam-library');
@@ -808,6 +909,22 @@ export async function addCustomGame(
     method: 'POST',
     headers: jsonHeaders,
     body: JSON.stringify(body)
+  });
+}
+
+export async function validateLocalApp(request: ValidateLocalAppRequest): Promise<ValidateLocalAppResponse> {
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).validateMockLocalApp(request);
+  return apiFetch<ValidateLocalAppResponse>('/games/local/validate', {
+    method: 'POST',
+    body: JSON.stringify(request)
+  });
+}
+
+export async function addLocalApp(request: AddLocalAppRequest): Promise<AddCustomGameResponse> {
+  if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).addMockLocalApp(request);
+  return apiFetch<AddCustomGameResponse>('/games/local', {
+    method: 'POST',
+    body: JSON.stringify(request)
   });
 }
 
@@ -839,6 +956,7 @@ function mapSnapshotDto(dto: AgentSnapshotDto | AppSnapshot): AppSnapshot {
     dto.adapters ?? [],
     dto.modules ?? [],
     dto.steamInput ?? FALLBACK_STEAM_INPUT,
+    dto.inputBridge ?? FALLBACK_INPUT_BRIDGE,
     dto.gameDetection ?? FALLBACK_GAME_DETECTION,
     dto.profileResolution ?? FALLBACK_PROFILE_RESOLUTION,
     dto.effectState ?? FALLBACK_EFFECT_STATE,
@@ -853,6 +971,7 @@ function mapSnapshotDto(dto: AgentSnapshotDto | AppSnapshot): AppSnapshot {
 function normalizeAppSnapshot(snapshot: AppSnapshot): AppSnapshot {
   return {
     ...snapshot,
+    inputBridge: snapshot.inputBridge ?? FALLBACK_INPUT_BRIDGE,
     gameDetection: normalizeGameDetection(snapshot.gameDetection),
     partialErrors: normalizePartialErrors(snapshot.partialErrors)
   };
@@ -928,6 +1047,7 @@ function mapAgentSnapshot(
   adapters: AdapterDto[],
   modules: ModuleSummary[],
   steamInput: SteamInputStatus,
+  inputBridge: InputBridgeStatus,
   gameDetection: GameDetection,
   profileResolution: ProfileResolution,
   effectState: CurrentEffectState,
@@ -962,6 +1082,7 @@ function mapAgentSnapshot(
     adapters: adapters.map(mapAdapter),
     modules,
     steamInput,
+    inputBridge,
     gameDetection: normalizedGameDetection,
     profileResolution,
     effectState,
@@ -988,8 +1109,19 @@ function normalizeGameDetection(gameDetection: GameDetection | undefined): GameD
     adapterId: source.adapterId ?? null,
     profileId: source.profileId ?? null,
     candidates: Array.isArray(source.candidates) ? source.candidates : [],
-    supportedGames: Array.isArray(supportedGames) ? supportedGames : [],
-    selectedGame
+    supportedGames: Array.isArray(supportedGames) ? supportedGames.map(normalizeSupportedGame) : [],
+    selectedGame: selectedGame ? normalizeSupportedGame(selectedGame) : null
+  };
+}
+
+function normalizeSupportedGame(game: SupportedGame): SupportedGame {
+  const local = game.gameId.startsWith('local-') || game.source === 'local_app';
+  return {
+    ...game,
+    source: game.source ?? (game.supportLevel === 'custom' ? 'steam' : 'built_in'),
+    inputProvider: game.inputProvider ?? (local ? 'dscc_input_bridge' : game.supportLevel === 'custom' ? 'steam_input' : 'native_dualsense'),
+    processNames: Array.isArray(game.processNames) ? game.processNames : [],
+    executableName: game.executableName ?? game.processNames?.[0] ?? null
   };
 }
 

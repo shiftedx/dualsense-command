@@ -6,6 +6,8 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+pub mod input_bridge;
+
 use dscc_telemetry::SignalSnapshot;
 
 /// Stable runtime identifier for a controller.

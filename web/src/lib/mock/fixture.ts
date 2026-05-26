@@ -5,6 +5,7 @@ import type {
   CurrentEffectState,
   ExportedProfile,
   ForzaEffectConfiguration,
+  InputBridgeStatus,
   ProfileSummary,
   SteamInputBinding,
   SteamInputLayout,
@@ -15,6 +16,7 @@ export const MOCK_CONTROLLER_ID = 'mock-dualsense-edge-1';
 export const MOCK_GAME_ID = 'forza-horizon-6';
 export const MOCK_APP_ID = 'mock-fh6';
 export const MOCK_PROFILE_ID = 'forza-horizon-mock-track';
+export const MOCK_LOCAL_GAME_ID = 'local-night-drive-lab-6b7c8d9e';
 export const MOCK_LAYOUT_SOURCE = 'mock://steam/userdata/sanitized/config/controller_fh6_edge.vdf';
 export const MOCK_EXPORT_SCHEMA = 'dscc.profile.v1';
 
@@ -170,6 +172,13 @@ export const mockControllerConfig: ControllerConfiguration = {
     { key: 'Fn Left', label: 'Previous DSCC Profile' },
     { key: 'Fn Right', label: 'Next DSCC Profile' }
   ],
+  inputBridge: {
+    enabled: false,
+    outputKind: 'xbox360',
+    autoStart: false,
+    hidePhysical: false,
+    bindings: []
+  },
   profileAssignments: mockControllerProfileAssignments
 };
 
@@ -218,6 +227,8 @@ export const mockProfileConfigs: Record<string, MockEditableControllerConfig> = 
 export const mockSupportedGame: SupportedGame = {
   gameId: MOCK_GAME_ID,
   name: 'Forza Horizon 6 (mock)',
+  source: 'built_in',
+  inputProvider: 'native_dualsense',
   appId: MOCK_APP_ID,
   installPath: 'mock://steam/steamapps/common/ForzaHorizon6',
   installed: true,
@@ -237,6 +248,34 @@ export const mockSupportedGame: SupportedGame = {
       total: 72
     }
   }
+};
+
+export const mockLocalApp: SupportedGame = {
+  gameId: MOCK_LOCAL_GAME_ID,
+  name: 'Night Drive Lab (local)',
+  source: 'local_app',
+  inputProvider: 'dscc_input_bridge',
+  appId: 'local:6b7c8d9e',
+  installPath: null,
+  processNames: ['NightDriveLab.exe'],
+  executableName: 'NightDriveLab.exe',
+  installed: true,
+  running: false,
+  supportLevel: 'custom'
+};
+
+export const mockInputBridgeStatus: InputBridgeStatus = {
+  available: true,
+  backendId: 'mock',
+  provider: 'mock',
+  state: 'available',
+  message: 'Mock virtual output backend is available.',
+  supportedKinds: ['xbox360'],
+  sessions: [],
+  warnings: [
+    'DSCC Input Bridge is wired to the mock virtual-output provider in this build.',
+    'HIDMaestro, HidHide, and ViGEm are not bundled or invoked by this runtime.'
+  ]
 };
 
 export const mockSteamBindings: SteamInputBinding[] = [
@@ -380,6 +419,7 @@ export const mockAppSnapshot: AppSnapshot = {
     layouts: [mockSteamLayout],
     warnings: ['Using an in-memory mock Steam Input layout.']
   },
+  inputBridge: mockInputBridgeStatus,
   gameDetection: {
     activeGameId: MOCK_GAME_ID,
     activeGameName: 'Forza Horizon 6 (mock)',
@@ -389,7 +429,7 @@ export const mockAppSnapshot: AppSnapshot = {
     moduleId: MOCK_GAME_ID,
     adapterId: 'forza-data-out',
     profileId: MOCK_PROFILE_ID,
-    supportedGames: [mockSupportedGame],
+    supportedGames: [mockSupportedGame, mockLocalApp],
     selectedGame: mockSupportedGame,
     candidates: [
       {
@@ -435,6 +475,7 @@ export const mockAppSnapshot: AppSnapshot = {
     { label: 'Agent', state: 'pass', detail: 'Mock agent state is available in-browser.' },
     { label: 'Controller', state: 'pass', detail: 'Mock DualSense Edge is connected.' },
     { label: 'Steam Input', state: 'pass', detail: 'Mock layout contains editable bindings.' },
+    { label: 'Input Bridge', state: 'pass', detail: 'Mock DSCC Input Bridge provider is available.' },
     { label: 'Forza Data Out', state: 'pass', detail: 'Mock telemetry signals are populated.' }
   ],
   partialErrors: []
@@ -465,6 +506,7 @@ function editableConfigFromController(config: ControllerConfiguration): MockEdit
     forza: config.forza,
     sticks: config.sticks,
     buttons: config.buttons,
+    inputBridge: config.inputBridge,
     profileAssignments: config.profileAssignments
   };
 }

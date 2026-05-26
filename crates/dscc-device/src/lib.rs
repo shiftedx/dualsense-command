@@ -44,7 +44,8 @@ pub use metadata::{
     infer_family, DUALSENSE_EDGE_PRODUCT_ID, SONY_INTERACTIVE_ENTERTAINMENT_VENDOR_ID,
 };
 pub use output::{
-    encode_controller_output_frame, ControllerInputState, ControllerOutputManager,
+    encode_controller_output_frame, ControllerInputButtonState, ControllerInputReadOptions,
+    ControllerInputState, ControllerInputStickState, ControllerOutputManager,
     ControllerOutputTarget, ControllerOutputWrite, EncodedOutputReport, OutputReportKind,
 };
 pub use registry::{DeviceRegistry, RegistryConfig, RegistryEntry};
