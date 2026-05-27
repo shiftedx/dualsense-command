@@ -3,24 +3,38 @@ use super::*;
 pub(crate) async fn list_controllers(
     State(state): State<AgentState>,
 ) -> Json<Vec<ControllerSummary>> {
-    let inner = state.inner.read().await;
-    Json(apply_controller_names(
-        inner.controllers.summaries(),
-        &inner.controller_names,
-    ))
+    let (controllers, configs) = {
+        let inner = state.inner.read().await;
+        (
+            apply_controller_names(inner.controllers.summaries(), &inner.controller_names),
+            inner.controller_configs.clone(),
+        )
+    };
+    let diagnostics = state.output_diagnostics_snapshot();
+    Json(state.apply_power_diagnostics_to_controllers(controllers, &diagnostics, &configs))
 }
 
 pub(crate) async fn get_controller(
     Path(id): Path<String>,
     State(state): State<AgentState>,
 ) -> Result<Json<ControllerDetail>, StatusCode> {
-    let inner = state.inner.read().await;
-    inner
-        .controllers
-        .detail(&id)
-        .map(|detail| apply_controller_name(detail, &inner.controller_names))
-        .map(Json)
-        .ok_or(StatusCode::NOT_FOUND)
+    let (detail, configs) = {
+        let inner = state.inner.read().await;
+        (
+            inner
+                .controllers
+                .detail(&id)
+                .map(|detail| apply_controller_name(detail, &inner.controller_names))
+                .ok_or(StatusCode::NOT_FOUND)?,
+            inner.controller_configs.clone(),
+        )
+    };
+    let diagnostics = state.output_diagnostics_snapshot();
+    Ok(Json(state.apply_power_diagnostics_to_controller_detail(
+        detail,
+        &diagnostics,
+        &configs,
+    )))
 }
 
 pub(crate) async fn update_controller(

@@ -2,6 +2,7 @@ import type {
   AdapterStatus,
   AppSettingsResponse,
   AppSnapshot,
+  ControllerPowerDiagnostics,
   ControllerProfileAssignment,
   ControllerStatus,
   CurrentEffectState,
@@ -40,6 +41,29 @@ export interface ControllerDto {
   battery_state?: string;
   permission?: 'unknown' | 'granted' | 'denied';
   diagnostic_state?: ControllerStatus['diagnosticState'];
+  power_diagnostics?: ControllerPowerDiagnosticsDto | null;
+  powerDiagnostics?: ControllerPowerDiagnostics | null;
+}
+
+interface ControllerPowerDiagnosticsDto {
+  written_reports?: number | null;
+  writtenReports?: number | null;
+  output_write_rate_hz?: number | null;
+  outputWriteRateHz?: number | null;
+  output_cadence_ms?: number | null;
+  outputCadenceMs?: number | null;
+  suppressed_redundant_reports?: number | null;
+  suppressedRedundantReports?: number | null;
+  keepalive_interval_ms?: number | null;
+  keepaliveIntervalMs?: number | null;
+  last_write_age_ms?: number | null;
+  lastWriteAgeMs?: number | null;
+  last_suppressed_age_ms?: number | null;
+  lastSuppressedAgeMs?: number | null;
+  native_rumble_passthrough?: boolean | null;
+  nativeRumblePassthrough?: boolean | null;
+  adaptive_triggers_retained?: boolean | null;
+  adaptiveTriggersRetained?: boolean | null;
 }
 
 export interface ProfileDto {
@@ -450,8 +474,42 @@ export function mapController(controller: ControllerDto): ControllerStatus {
     diagnosticState:
       controller.diagnostic_state ??
       (controller.connected || controller.connection_state === 'connected' ? 'ok' : 'disconnected'),
-    capabilities: ['adaptive triggers', 'lightbar', 'player leds', 'rumble']
+    capabilities: ['adaptive triggers', 'lightbar', 'player leds', 'rumble'],
+    powerDiagnostics: mapControllerPowerDiagnostics(controller.power_diagnostics ?? controller.powerDiagnostics)
   };
+}
+
+function mapControllerPowerDiagnostics(
+  diagnostics: ControllerPowerDiagnosticsDto | null | undefined
+): ControllerPowerDiagnostics | null {
+  if (!diagnostics) return null;
+  const normalized: ControllerPowerDiagnostics = {
+    writtenReports: optionalNumber(diagnostics.written_reports ?? diagnostics.writtenReports),
+    outputWriteRateHz: optionalNumber(diagnostics.output_write_rate_hz ?? diagnostics.outputWriteRateHz),
+    outputCadenceMs: optionalNumber(diagnostics.output_cadence_ms ?? diagnostics.outputCadenceMs),
+    suppressedRedundantReports: optionalNumber(
+      diagnostics.suppressed_redundant_reports ?? diagnostics.suppressedRedundantReports
+    ),
+    keepaliveIntervalMs: optionalNumber(diagnostics.keepalive_interval_ms ?? diagnostics.keepaliveIntervalMs),
+    lastWriteAgeMs: optionalNumber(diagnostics.last_write_age_ms ?? diagnostics.lastWriteAgeMs),
+    lastSuppressedAgeMs: optionalNumber(diagnostics.last_suppressed_age_ms ?? diagnostics.lastSuppressedAgeMs),
+    nativeRumblePassthrough: optionalBoolean(
+      diagnostics.native_rumble_passthrough ?? diagnostics.nativeRumblePassthrough
+    ),
+    adaptiveTriggersRetained: optionalBoolean(
+      diagnostics.adaptive_triggers_retained ?? diagnostics.adaptiveTriggersRetained
+    )
+  };
+
+  return Object.values(normalized).some((value) => value !== null && value !== undefined) ? normalized : null;
+}
+
+function optionalNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function optionalBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
 }
 
 export function mapProfile(profile: ProfileDto): ProfileSummary {

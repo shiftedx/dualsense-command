@@ -190,6 +190,7 @@ impl AgentState {
         let game_detection = self.cached_game_detection().await;
         let steam_input = self.cached_steam_input_status_or_refresh().await;
         let hardware_output_enabled = self.hardware_output_enabled();
+        let output_diagnostics = self.output_diagnostics_snapshot();
         let inner = self.inner.read().await;
         let diagnostics = self.diagnostics_from_inner(
             &inner,
@@ -222,9 +223,10 @@ impl AgentState {
             environment: support_environment(),
             status: sanitize_status_response(status),
             paths: support_paths(),
-            controllers: apply_controller_names(
-                inner.controllers.summaries(),
-                &inner.controller_names,
+            controllers: self.apply_power_diagnostics_to_controllers(
+                apply_controller_names(inner.controllers.summaries(), &inner.controller_names),
+                &output_diagnostics,
+                &inner.controller_configs,
             ),
             diagnostics: sanitize_diagnostics_response(diagnostics),
             profile_resolution: profile_resolution(&inner, Some(&game_detection)),

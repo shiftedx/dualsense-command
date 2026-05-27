@@ -1,5 +1,134 @@
 use super::*;
 
+fn adaptive_r2_frame(strength: f64) -> ControllerOutputFrame {
+    ControllerOutputFrame {
+        r2: TriggerOutput::AdaptiveResistance {
+            start_position: 0.42,
+            strength,
+        },
+        ..ControllerOutputFrame::default()
+    }
+}
+
+#[tokio::test]
+async fn identical_encoded_output_is_suppressed_before_keepalive() {
+    let state = AgentState::from_controller_events([attach_event(
+        "edge-output",
+        ControllerFamily::DualSenseEdge,
+        ControllerTransportKind::Usb,
+        Some(84),
+    )]);
+    let now = Instant::now();
+    let frame = adaptive_r2_frame(0.20);
+
+    state.record_output_frame_write("edge-output", &frame, DeviceTransportKind::Usb, now);
+
+    assert!(!state.output_frame_write_due(
+        "edge-output",
+        &frame,
+        DeviceTransportKind::Usb,
+        now + HARDWARE_OUTPUT_KEEPALIVE_INTERVAL - Duration::from_millis(1),
+    ));
+    assert!(state.output_frame_write_due(
+        "edge-output",
+        &frame,
+        DeviceTransportKind::Usb,
+        now + HARDWARE_OUTPUT_KEEPALIVE_INTERVAL,
+    ));
+}
+
+#[tokio::test]
+async fn tiny_float_change_that_encodes_identically_is_suppressed() {
+    let state = AgentState::from_controller_events([attach_event(
+        "edge-output",
+        ControllerFamily::DualSenseEdge,
+        ControllerTransportKind::Bluetooth,
+        Some(84),
+    )]);
+    let now = Instant::now();
+
+    state.record_output_frame_write(
+        "edge-output",
+        &adaptive_r2_frame(0.20),
+        DeviceTransportKind::Bluetooth,
+        now,
+    );
+
+    assert!(!state.output_frame_write_due(
+        "edge-output",
+        &adaptive_r2_frame(0.2001),
+        DeviceTransportKind::Bluetooth,
+        now + Duration::from_millis(33),
+    ));
+}
+
+#[tokio::test]
+async fn changed_encoded_output_is_due_before_keepalive() {
+    let state = AgentState::from_controller_events([attach_event(
+        "edge-output",
+        ControllerFamily::DualSenseEdge,
+        ControllerTransportKind::Bluetooth,
+        Some(84),
+    )]);
+    let now = Instant::now();
+
+    state.record_output_frame_write(
+        "edge-output",
+        &adaptive_r2_frame(0.20),
+        DeviceTransportKind::Bluetooth,
+        now,
+    );
+
+    assert!(state.output_frame_write_due(
+        "edge-output",
+        &adaptive_r2_frame(0.21),
+        DeviceTransportKind::Bluetooth,
+        now + Duration::from_millis(33),
+    ));
+}
+
+#[tokio::test]
+async fn output_diagnostics_count_written_and_suppressed_reports() {
+    let state = AgentState::from_controller_events([attach_event(
+        "edge-output",
+        ControllerFamily::DualSenseEdge,
+        ControllerTransportKind::Usb,
+        Some(84),
+    )]);
+    let now = Instant::now();
+    let first = adaptive_r2_frame(0.20);
+    let changed = adaptive_r2_frame(0.21);
+
+    state.record_output_frame_write("edge-output", &first, DeviceTransportKind::Usb, now);
+    assert!(!state.output_frame_write_due(
+        "edge-output",
+        &adaptive_r2_frame(0.2001),
+        DeviceTransportKind::Usb,
+        now + Duration::from_millis(33),
+    ));
+    assert!(state.output_frame_write_due(
+        "edge-output",
+        &changed,
+        DeviceTransportKind::Usb,
+        now + Duration::from_millis(34),
+    ));
+    state.record_output_frame_write(
+        "edge-output",
+        &changed,
+        DeviceTransportKind::Usb,
+        now + Duration::from_millis(34),
+    );
+
+    let diagnostics = state.output_diagnostics_snapshot();
+    let output = diagnostics
+        .get("edge-output")
+        .expect("controller output diagnostics are recorded");
+    assert_eq!(output.written_reports, 2);
+    assert_eq!(output.suppressed_redundant_reports, 1);
+    assert!(output.last_written_at.is_some());
+    assert!(output.last_suppressed_at.is_some());
+}
+
 #[tokio::test]
 async fn stale_forza_effects_keep_trigger_output_neutral_while_game_runs() {
     let state = AgentState::from_controller_events([attach_event(

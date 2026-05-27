@@ -18,6 +18,7 @@
 
 .dm-controller-overview,
 .dm-input-path-panel,
+.dm-power-diagnostics-panel,
 .dm-live-input-panel,
 .dm-calibration-readout,
 .dm-controller-empty-state {
@@ -181,6 +182,24 @@
 .dm-input-path-actions button:disabled {
   cursor: not-allowed;
   opacity: 0.48;
+}
+
+.dm-power-suggestion-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.dm-power-suggestion-list p {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(113, 113, 122, 0.2);
+  border-radius: 5px;
+  color: rgba(226, 232, 240, 0.82);
+  background: rgba(10, 10, 12, 0.28);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
 }
 
 .dm-live-stick-grid {

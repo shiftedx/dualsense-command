@@ -42,11 +42,11 @@ use dscc_core::{
 };
 use dscc_device::{
     edge_onboard_transport_supported, edge_onboard_write_transport_supported,
-    ControllerInputReadOptions, ControllerInputState, ControllerOutputManager,
-    ControllerOutputTarget, ControllerOutputWrite, DeviceConfig, DeviceManager, DeviceTransport,
-    DeviceTransportKind, EdgeButton, EdgeButtonMapping, EdgeOnboardProfile, EdgeOnboardSlotId,
-    EdgeProfileIntensity, EdgeStickPreset, EdgeStickProfile, EdgeTriggerDeadzone, HidApiTransport,
-    OutputMode, RawDeviceId,
+    encode_controller_output_frame, ControllerInputReadOptions, ControllerInputState,
+    ControllerOutputManager, ControllerOutputTarget, ControllerOutputWrite, DeviceConfig,
+    DeviceManager, DeviceTransport, DeviceTransportKind, EdgeButton, EdgeButtonMapping,
+    EdgeOnboardProfile, EdgeOnboardSlotId, EdgeProfileIntensity, EdgeStickPreset, EdgeStickProfile,
+    EdgeTriggerDeadzone, HidApiTransport, OutputMode, OutputReportKind, RawDeviceId,
 };
 use dscc_telemetry::{SignalName, SignalSnapshot, SignalUpdate, SignalValue};
 use dscc_virtual_output::VirtualOutputKind;
@@ -255,12 +255,117 @@ struct HardwareOutputRuntime {
     last_error: Option<String>,
     last_error_at: Option<Instant>,
     last_output_frames: BTreeMap<String, LastHardwareOutputFrame>,
+    diagnostics: BTreeMap<String, ControllerOutputDiagnostics>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ControllerOutputDiagnostics {
+    written_reports: u64,
+    suppressed_redundant_reports: u64,
+    first_written_at: Option<Instant>,
+    previous_written_at: Option<Instant>,
+    last_written_at: Option<Instant>,
+    last_suppressed_at: Option<Instant>,
 }
 
 #[derive(Debug, Clone)]
 struct LastHardwareOutputFrame {
     frame: ControllerOutputFrame,
+    fingerprint: Option<StableOutputFingerprint>,
     written_at: Instant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct StableOutputFingerprint {
+    report_kind: OutputReportKind,
+    len: usize,
+    hash: u128,
+}
+
+fn stable_output_fingerprint(
+    frame: &ControllerOutputFrame,
+    transport: DeviceTransportKind,
+) -> Result<StableOutputFingerprint, String> {
+    let report = encode_controller_output_frame(frame, transport, 0).map_err(|error| {
+        format!("could not encode controller output fingerprint for {transport:?}: {error}")
+    })?;
+    Ok(StableOutputFingerprint {
+        report_kind: report.kind,
+        len: report.bytes.len(),
+        hash: stable_output_hash(&report.bytes),
+    })
+}
+
+fn stable_output_hash(bytes: &[u8]) -> u128 {
+    let mut low = 0xcbf2_9ce4_8422_2325_u64;
+    let mut high = 0x8422_2325_cbf2_9ce4_u64;
+    for byte in bytes {
+        low ^= u64::from(*byte);
+        low = low.wrapping_mul(0x0000_0100_0000_01b3);
+        high ^= u64::from(*byte).rotate_left(1);
+        high = high.wrapping_mul(0x0000_0100_0000_01d3);
+    }
+    (u128::from(high) << 64) | u128::from(low)
+}
+
+fn controller_power_diagnostics(
+    diagnostics: Option<&ControllerOutputDiagnostics>,
+    config: Option<&ControllerConfig>,
+    now: Instant,
+) -> ControllerPowerDiagnostics {
+    let native_rumble_passthrough = config
+        .is_none_or(|config| config.forza.body_rumble_mode == default_forza_body_rumble_mode());
+    let adaptive_triggers_retained = config.is_none_or(|config| {
+        !config.trigger.effect.eq_ignore_ascii_case("off") && config.trigger.intensity != "Off"
+    });
+    let Some(diagnostics) = diagnostics else {
+        return ControllerPowerDiagnostics {
+            keepalive_interval_ms: duration_millis_u64(HARDWARE_OUTPUT_KEEPALIVE_INTERVAL),
+            native_rumble_passthrough,
+            adaptive_triggers_retained,
+            ..ControllerPowerDiagnostics::default()
+        };
+    };
+
+    ControllerPowerDiagnostics {
+        written_reports: diagnostics.written_reports,
+        suppressed_redundant_reports: diagnostics.suppressed_redundant_reports,
+        output_write_rate_hz: output_write_rate_hz(diagnostics),
+        output_cadence_ms: output_cadence_ms(diagnostics),
+        keepalive_interval_ms: duration_millis_u64(HARDWARE_OUTPUT_KEEPALIVE_INTERVAL),
+        last_write_age_ms: diagnostics
+            .last_written_at
+            .map(|written_at| duration_millis_u64(now.saturating_duration_since(written_at))),
+        last_suppressed_age_ms: diagnostics
+            .last_suppressed_at
+            .map(|suppressed_at| duration_millis_u64(now.saturating_duration_since(suppressed_at))),
+        native_rumble_passthrough,
+        adaptive_triggers_retained,
+    }
+}
+
+fn output_cadence_ms(diagnostics: &ControllerOutputDiagnostics) -> Option<u64> {
+    Some(duration_millis_u64(
+        diagnostics
+            .last_written_at?
+            .saturating_duration_since(diagnostics.previous_written_at?),
+    ))
+}
+
+fn output_write_rate_hz(diagnostics: &ControllerOutputDiagnostics) -> Option<u16> {
+    let first = diagnostics.first_written_at?;
+    let last = diagnostics.last_written_at?;
+    if diagnostics.written_reports < 2 || last <= first {
+        return None;
+    }
+
+    let elapsed_ms = last.duration_since(first).as_millis().max(1);
+    let rate = u128::from(diagnostics.written_reports.saturating_sub(1)) * 1_000 / elapsed_ms;
+    Some(rate.min(u128::from(u16::MAX)) as u16)
+}
+
+fn duration_millis_u64(duration: Duration) -> u64 {
+    duration.as_millis().min(u128::from(u64::MAX)) as u64
 }
 
 #[derive(Debug)]
@@ -850,13 +955,32 @@ impl AgentState {
         &self,
         controller_id: &str,
         frame: &ControllerOutputFrame,
+        transport: DeviceTransportKind,
         now: Instant,
     ) -> bool {
-        let runtime = self.lock_output_runtime();
+        let fingerprint = stable_output_fingerprint(frame, transport).ok();
+        let mut runtime = self.lock_output_runtime();
         match runtime.last_output_frames.get(controller_id) {
             Some(last) => {
-                last.frame != *frame
-                    || now.duration_since(last.written_at) >= HARDWARE_OUTPUT_KEEPALIVE_INTERVAL
+                let same_output = match (last.fingerprint, fingerprint) {
+                    (Some(last_fingerprint), Some(next_fingerprint)) => {
+                        last_fingerprint == next_fingerprint
+                    }
+                    _ => last.frame == *frame,
+                };
+                let keepalive_due =
+                    now.duration_since(last.written_at) >= HARDWARE_OUTPUT_KEEPALIVE_INTERVAL;
+                if same_output && !keepalive_due {
+                    let diagnostics = runtime
+                        .diagnostics
+                        .entry(controller_id.to_string())
+                        .or_default();
+                    diagnostics.suppressed_redundant_reports =
+                        diagnostics.suppressed_redundant_reports.saturating_add(1);
+                    diagnostics.last_suppressed_at = Some(now);
+                    return false;
+                }
+                true
             }
             None => true,
         }
@@ -866,16 +990,65 @@ impl AgentState {
         &self,
         controller_id: &str,
         frame: &ControllerOutputFrame,
+        transport: DeviceTransportKind,
         written_at: Instant,
     ) {
         let mut runtime = self.lock_output_runtime();
+        let diagnostics = runtime
+            .diagnostics
+            .entry(controller_id.to_string())
+            .or_default();
+        diagnostics.written_reports = diagnostics.written_reports.saturating_add(1);
+        if diagnostics.first_written_at.is_none() {
+            diagnostics.first_written_at = Some(written_at);
+        }
+        diagnostics.previous_written_at = diagnostics.last_written_at;
+        diagnostics.last_written_at = Some(written_at);
         runtime.last_output_frames.insert(
             controller_id.to_string(),
             LastHardwareOutputFrame {
                 frame: frame.clone(),
+                fingerprint: stable_output_fingerprint(frame, transport).ok(),
                 written_at,
             },
         );
+    }
+
+    pub(crate) fn output_diagnostics_snapshot(
+        &self,
+    ) -> BTreeMap<String, ControllerOutputDiagnostics> {
+        self.lock_output_runtime().diagnostics.clone()
+    }
+
+    pub(crate) fn apply_power_diagnostics_to_controllers(
+        &self,
+        mut controllers: Vec<ControllerSummary>,
+        diagnostics: &BTreeMap<String, ControllerOutputDiagnostics>,
+        configs: &BTreeMap<String, ControllerConfig>,
+    ) -> Vec<ControllerSummary> {
+        let now = Instant::now();
+        for controller in &mut controllers {
+            controller.power_diagnostics = controller_power_diagnostics(
+                diagnostics.get(&controller.id),
+                configs.get(&controller.id),
+                now,
+            );
+        }
+        controllers
+    }
+
+    pub(crate) fn apply_power_diagnostics_to_controller_detail(
+        &self,
+        mut detail: ControllerDetail,
+        diagnostics: &BTreeMap<String, ControllerOutputDiagnostics>,
+        configs: &BTreeMap<String, ControllerConfig>,
+    ) -> ControllerDetail {
+        detail.power_diagnostics = controller_power_diagnostics(
+            diagnostics.get(&detail.id),
+            configs.get(&detail.id),
+            Instant::now(),
+        );
+        detail
     }
 
     fn has_non_neutral_output_frames(&self) -> bool {
@@ -988,13 +1161,14 @@ impl AgentState {
             let inner = self.inner.read().await;
             controller_output_target_or_reason(&inner, controller_id)?
         };
+        let transport = target.transport;
         let frame_for_write = frame.clone();
         let write =
             tokio::task::spawn_blocking(move || manager.write_frame(&target, &frame_for_write))
                 .await
                 .map_err(|error| format!("HID output task failed: {error}"))?
                 .map_err(|error| error.to_string())?;
-        self.record_output_frame_write(controller_id, frame, Instant::now());
+        self.record_output_frame_write(controller_id, frame, transport, Instant::now());
         Ok(write)
     }
 
@@ -1151,7 +1325,11 @@ impl AgentState {
         let Some((controller_id, frame)) = candidate else {
             return Ok(None);
         };
-        if !self.output_frame_write_due(&controller_id, &frame, Instant::now()) {
+        let transport = {
+            let inner = self.inner.read().await;
+            controller_output_target_or_reason(&inner, &controller_id)?.transport
+        };
+        if !self.output_frame_write_due(&controller_id, &frame, transport, Instant::now()) {
             return Ok(None);
         }
         self.write_output_frame_to_controller(&controller_id, &frame)
@@ -1752,6 +1930,7 @@ impl AgentState {
         let game_detection = self.cached_game_detection().await;
         let steam_input = self.cached_steam_input_status_or_refresh().await;
         let hardware_output_enabled = self.hardware_output_enabled();
+        let output_diagnostics = self.output_diagnostics_snapshot();
         let inner = self.inner.read().await;
         let diagnostics = self.diagnostics_from_inner(
             &inner,
@@ -1770,9 +1949,10 @@ impl AgentState {
         AgentSnapshotResponse {
             status,
             app_settings: self.app_settings_response(&inner.app_settings),
-            controllers: apply_controller_names(
-                inner.controllers.summaries(),
-                &inner.controller_names,
+            controllers: self.apply_power_diagnostics_to_controllers(
+                apply_controller_names(inner.controllers.summaries(), &inner.controller_names),
+                &output_diagnostics,
+                &inner.controller_configs,
             ),
             profiles: inner.profiles.clone(),
             adapters: materialized_adapters(

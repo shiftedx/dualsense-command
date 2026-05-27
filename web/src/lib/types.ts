@@ -48,6 +48,19 @@ export interface ControllerStatus {
     | 'faulted'
     | 'unknown';
   capabilities: string[];
+  powerDiagnostics?: ControllerPowerDiagnostics | null;
+}
+
+export interface ControllerPowerDiagnostics {
+  writtenReports?: number | null;
+  outputWriteRateHz?: number | null;
+  outputCadenceMs?: number | null;
+  suppressedRedundantReports?: number | null;
+  keepaliveIntervalMs?: number | null;
+  lastWriteAgeMs?: number | null;
+  lastSuppressedAgeMs?: number | null;
+  nativeRumblePassthrough?: boolean | null;
+  adaptiveTriggersRetained?: boolean | null;
 }
 
 export interface ProfileSummary {

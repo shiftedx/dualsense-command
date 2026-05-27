@@ -374,7 +374,18 @@ export const mockAppSnapshot: AppSnapshot = {
       charging: false,
       permission: 'granted',
       diagnosticState: 'ok',
-      capabilities: ['adaptive triggers', 'lightbar', 'player leds', 'rumble']
+      capabilities: ['adaptive triggers', 'lightbar', 'player leds', 'rumble'],
+      powerDiagnostics: {
+        writtenReports: 1264,
+        outputWriteRateHz: 27.8,
+        outputCadenceMs: 36,
+        suppressedRedundantReports: 1842,
+        keepaliveIntervalMs: 750,
+        lastWriteAgeMs: 18,
+        lastSuppressedAgeMs: 7,
+        nativeRumblePassthrough: true,
+        adaptiveTriggersRetained: true
+      }
     }
   ],
   profiles: mockProfiles,
