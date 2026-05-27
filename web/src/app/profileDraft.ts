@@ -89,7 +89,7 @@ export const defaultButtonAssignments = (edge = false): EditableControllerConfig
 
 const canonicalButtonKey = (key: string) => {
   const trimmed = key.trim();
-  const legacy: Record<string, string> = {
+  const canonicalAliases: Record<string, string> = {
     cross: 'Cross',
     circle: 'Circle',
     square: 'Square',
@@ -114,7 +114,7 @@ const canonicalButtonKey = (key: string) => {
     edgeFnLeft: 'Fn Left',
     edgeFnRight: 'Fn Right'
   };
-  return legacy[trimmed] ?? trimmed;
+  return canonicalAliases[trimmed] ?? trimmed;
 };
 
 export const normalizeButtonAssignments = (

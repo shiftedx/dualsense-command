@@ -1573,7 +1573,7 @@ fn base_feel_test_uses_live_trigger_position_and_curve_math() {
 }
 
 #[test]
-fn legacy_trigger_config_deserializes_points_from_saved_curves() {
+fn trigger_config_derives_point_arrays_from_ratio_curves() {
     let trigger: TriggerConfig = serde_json::from_value(serde_json::json!({
         "sameRange": false,
         "l2From": 20,
@@ -1587,7 +1587,7 @@ fn legacy_trigger_config_deserializes_points_from_saved_curves() {
         "vibration": "Medium",
         "vibrationMode": "Balanced"
     }))
-    .expect("legacy trigger config without point arrays should deserialize");
+    .expect("trigger config with ratio curves should deserialize");
 
     let trigger = trigger.normalized();
 

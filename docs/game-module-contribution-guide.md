@@ -50,6 +50,40 @@ auto-load. It does not add telemetry support.
 Do not inspect or derive packet layouts, tuning values, comments, or code from
 incompatible implementations.
 
+## Contributor Map
+
+Use this map before opening files. A small game-support PR should usually touch
+only one row unless it is adding a brand-new telemetry source.
+
+| Task | Files |
+| --- | --- |
+| Add a game that reuses existing telemetry | `crates/dscc-agent/src/game_modules.rs`, `crates/dscc-agent/src/profiles.rs`, route/profile tests |
+| Add local-app-only profile support | `crates/dscc-agent/src/game_detection/local_apps.rs`, profile tests |
+| Add new Steam discovery/art behavior | `crates/dscc-agent/src/game_detection/steam.rs`, Steam/game detection tests |
+| Add a UDP telemetry parser | `crates/dscc-adapters/src/lib.rs`, parser tests, `PROVENANCE.md` |
+| Add a shared-memory telemetry source | `crates/dscc-agent/src/assetto_shared_memory.rs` or a new runtime module, platform-gated tests, `PROVENANCE.md` |
+| Add haptic/profile defaults | `crates/dscc-agent/src/profiles.rs`, `crates/dscc-agent/src/effects/`, effect tests |
+
+Keep game modules declarative: id, display name, process names, store ids,
+adapter id, default profile, and detection presentation. Put parsing,
+filesystem writes, and runtime state in adapter/runtime modules, not in the game
+catalog.
+
+## Built-In Game Module Fields
+
+Each `GameModule` entry should answer these questions clearly:
+
+- `id`: stable lowercase id used by profile resolution and API responses.
+- `display_name`: UI label.
+- `adapter_id`: telemetry adapter id, such as `forza-data-out`.
+- `default_profile_id`: profile loaded when the game is detected.
+- `process_names`: process-name detection only. No injection, hooks, or memory
+  scanning.
+- `steam_app_ids` and `steam_install_dirs`: optional Steam catalog/art matching.
+- `profile_templates`: labels shown in the module catalog.
+- `detection_lightbar_*`: lightbar-only detection feedback before telemetry is
+  fresh.
+
 ## Assetto Corsa Rally Example
 
 Assetto Corsa Rally is the built-in shared-memory reference module:

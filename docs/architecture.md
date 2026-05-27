@@ -32,10 +32,17 @@ Forza telemetry listens on `127.0.0.1:5300`.
 Useful entry points:
 
 - `crates/dscc-agent/src/main.rs`: agent binary.
-- `crates/dscc-agent/src/lib.rs`: router, state, routes, runtimes, and tests.
+- `crates/dscc-agent/src/lib.rs`: state construction, runtime coordination, and
+  module wiring.
+- `crates/dscc-agent/src/routes.rs`: API/static route table.
+- `crates/dscc-agent/src/api/`: focused route handlers.
+- `crates/dscc-agent/src/effects/`: effect materialization, runtime profile
+  output, output-frame enhancement, and manual effect-test helpers.
 - `crates/dscc-agent/src/bind_addr.rs`: loopback/LAN binding policy.
 - `crates/dscc-agent/src/env_policy.rs`: hardware output env policy.
 - `crates/dscc-agent/src/game_modules.rs`: built-in supported games.
+- `crates/dscc-agent/src/game_detection/`: Steam, local app, process scan, and
+  catalog detection helpers.
 - `crates/dscc-agent/src/forza_glyphs.rs`: guarded Forza Horizon 6 glyph install/restore.
 - `crates/dscc-agent/src/http_security.rs`: same-origin mutation guard.
 
@@ -73,15 +80,17 @@ The UI is Svelte 5 + Vite, not SvelteKit.
 | `web/src/App.svelte` | App shell, hash routing, snapshot lifecycle, and shared state. |
 | `web/src/lib/api.ts` | API calls, DTO normalization, WebSocket setup, fallback polling. |
 | `web/src/lib/types.ts` | UI-side DTOs and shared types. |
+| `web/src/app/` | Navigation, runtime, selection, profile-draft, polling, and support-bundle helpers. |
 | `web/src/lib/features/haptics/HapticsView.svelte` | Adaptive triggers and haptics view. |
 | `web/src/lib/features/buttonMapping` | Steam Input mirror view and p95-tested helpers. |
 | `web/src/components/ControllerCard.svelte` | Games page controller panel. |
-| `web/src/components/AddGameDialog.svelte` | Custom Steam game registration. |
+| `web/src/lib/features/games/AddGameDialog.svelte` | Steam and local-app registration. |
 | `web/src/lib/mock` | Dev-only mock API. Production builds ignore mock toggles. |
 
 Primary routes:
 
 - `#/games`
+- `#/controllers`
 - `#/adaptive-triggers-haptics`
 - `#/button-mapping`
 
