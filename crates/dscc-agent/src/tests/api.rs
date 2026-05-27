@@ -277,6 +277,61 @@ async fn cross_origin_mutations_are_rejected() {
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
+#[tokio::test]
+async fn sensitive_mutation_routes_reject_cross_origin_requests() {
+    let routes = [
+        (Method::PUT, "/api/app-settings"),
+        (Method::PUT, "/api/controllers/controller-0001"),
+        (Method::PUT, "/api/controllers/controller-0001/config"),
+        (
+            Method::PUT,
+            "/api/controllers/controller-0001/edge-profiles/fn_triangle",
+        ),
+        (Method::POST, "/api/controllers/controller-0001/test-effect"),
+        (Method::POST, "/api/controllers/current/test-effect"),
+        (Method::POST, "/api/profiles"),
+        (Method::POST, "/api/profiles/import"),
+        (Method::PUT, "/api/profiles/global/config"),
+        (Method::POST, "/api/profiles/global/activate"),
+        (Method::PUT, "/api/adapters/forza-data-out"),
+        (Method::POST, "/api/steam-input/bindings"),
+        (Method::POST, "/api/steam-input/paddle-preset"),
+        (Method::POST, "/api/input-bridge/bindings"),
+        (
+            Method::POST,
+            "/api/input-bridge/sessions/controller-0001/start",
+        ),
+        (
+            Method::POST,
+            "/api/input-bridge/sessions/controller-0001/stop",
+        ),
+        (Method::POST, "/api/games/local/validate"),
+        (Method::POST, "/api/games/local"),
+        (Method::POST, "/api/games/custom"),
+        (Method::DELETE, "/api/games/custom/custom-game"),
+        (Method::PUT, "/api/profile-resolution/override"),
+        (Method::DELETE, "/api/profile-resolution/override"),
+    ];
+
+    for (method, uri) in routes {
+        let response = app(AgentState::mock())
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header("host", "127.0.0.1:43473")
+                    .header("origin", "http://evil.example")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{uri}");
+    }
+}
+
 #[test]
 fn cross_origin_websocket_origin_guard_rejects_host_mismatch() {
     let mut headers = HeaderMap::new();
@@ -284,6 +339,14 @@ fn cross_origin_websocket_origin_guard_rejects_host_mismatch() {
     headers.insert(header::ORIGIN, "http://evil.example".parse().unwrap());
 
     assert!(!request_origin_matches_host(&headers));
+}
+
+#[test]
+fn absent_origin_is_allowed_for_loopback_local_tools() {
+    let mut headers = HeaderMap::new();
+    headers.insert(header::HOST, "127.0.0.1:43473".parse().unwrap());
+
+    assert!(request_origin_matches_host(&headers));
 }
 
 #[tokio::test(flavor = "current_thread")]

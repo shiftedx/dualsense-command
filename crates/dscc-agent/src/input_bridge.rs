@@ -392,7 +392,7 @@ fn public_virtual_output_error(error: &VirtualOutputError) -> String {
     }
 }
 
-fn virtual_state_from_input(
+pub(crate) fn virtual_state_from_input(
     input: &ControllerInputState,
     config: &InputBridgeConfig,
 ) -> VirtualGamepadState {
