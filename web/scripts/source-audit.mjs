@@ -59,6 +59,11 @@ const rules = [
     name: 'stub production surface',
     pattern: /\b(TODO: ship|STUB|stubbed|placeholder implementation)\b/i,
     allow: [selfAuditScript]
+  },
+  {
+    name: 'legacy production surface',
+    pattern: /\blegacy\b/i,
+    allow: [selfAuditScript]
   }
 ];
 

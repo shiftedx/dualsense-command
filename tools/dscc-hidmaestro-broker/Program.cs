@@ -472,7 +472,6 @@ sealed record BrokerRequest(
     string? ControllerId,
     string? SessionId,
     string? Kind,
-    VirtualGamepadStateDto? State,
     int? Lx,
     int? Ly,
     int? Rx,
@@ -501,16 +500,6 @@ sealed record BrokerResponse(
         new(id, false, false, message, null, []);
 }
 
-sealed record VirtualGamepadStateDto(
-    VirtualStickDto? LeftStick,
-    VirtualStickDto? RightStick,
-    VirtualTriggerDto? Triggers,
-    VirtualButtonDto? Buttons);
-
-sealed record VirtualStickDto(double X, double Y);
-sealed record VirtualTriggerDto(double L2, double R2);
-sealed record VirtualButtonDto(Dictionary<string, bool> Buttons);
-
 readonly record struct VirtualGamepadFrame(
     float LeftX,
     float LeftY,
@@ -530,11 +519,6 @@ readonly record struct VirtualGamepadFrame(
         if (HasCompactUpdateFields(request))
         {
             return TryFromCompact(request, out frame);
-        }
-        if (request.State is not null)
-        {
-            frame = FromLegacy(request.State);
-            return true;
         }
         frame = Neutral;
         return false;
@@ -557,15 +541,6 @@ readonly record struct VirtualGamepadFrame(
         frame = new(lx, ly, rx, ry, lt, rt, buttons);
         return true;
     }
-
-    private static VirtualGamepadFrame FromLegacy(VirtualGamepadStateDto state) => new(
-        Signed(state.LeftStick?.X),
-        Signed(state.LeftStick?.Y),
-        Signed(state.RightStick?.X),
-        Signed(state.RightStick?.Y),
-        Unit(state.Triggers?.L2),
-        Unit(state.Triggers?.R2),
-        ButtonMask(state.Buttons?.Buttons));
 
     private static bool HasCompactUpdateFields(BrokerRequest request) =>
         request.Lx.HasValue
@@ -591,29 +566,6 @@ readonly record struct VirtualGamepadFrame(
         trigger = value.Value / TriggerWireMax;
         return true;
     }
-
-    private static float Signed(double? value)
-    {
-        if (value is not { } number || double.IsNaN(number) || double.IsInfinity(number)) return 0;
-        return (float)Math.Clamp(number, -1.0, 1.0);
-    }
-
-    private static float Unit(double? value)
-    {
-        if (value is not { } number || double.IsNaN(number) || double.IsInfinity(number)) return 0;
-        return (float)Math.Clamp(number, 0.0, 1.0);
-    }
-
-    private static uint ButtonMask(Dictionary<string, bool>? buttons)
-    {
-        uint mask = 0;
-        if (buttons is null) return mask;
-        foreach (var (button, pressed) in buttons)
-        {
-            if (pressed) mask |= VirtualButtonBits.FromId(button);
-        }
-        return mask;
-    }
 }
 
 static class VirtualButtonBits
@@ -638,27 +590,6 @@ static class VirtualButtonBits
     public const uint KnownMask = A | B | X | Y | DpadUp | DpadRight | DpadDown | DpadLeft
         | LeftShoulder | RightShoulder | LeftThumb | RightThumb | Back | Start | Guide | Touchpad | Share;
 
-    public static uint FromId(string button) => button switch
-    {
-        "a" => A,
-        "b" => B,
-        "x" => X,
-        "y" => Y,
-        "dpad_up" => DpadUp,
-        "dpad_right" => DpadRight,
-        "dpad_down" => DpadDown,
-        "dpad_left" => DpadLeft,
-        "left_shoulder" => LeftShoulder,
-        "right_shoulder" => RightShoulder,
-        "left_thumb" => LeftThumb,
-        "right_thumb" => RightThumb,
-        "back" => Back,
-        "start" => Start,
-        "guide" => Guide,
-        "touchpad" => Touchpad,
-        "share" => Share,
-        _ => 0
-    };
 }
 
 static class JsonOptions

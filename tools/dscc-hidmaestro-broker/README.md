@@ -143,3 +143,8 @@ $env:DSCC_HIDMAESTRO_BROKER="C:\path\to\dscc-hidmaestro-broker.exe"
 HIDMaestro controller creation requires administrator privileges. In a
 non-elevated process the broker reports provider status as unavailable and
 refuses session creation without attempting any driver or device mutation.
+
+Update frames are compact and typed: `lx`, `ly`, `rx`, `ry`, `lt`, `rt`, and a
+validated button bitmask. Nested gamepad-state payloads are intentionally not
+accepted, which keeps the 8 ms bridge path small and avoids parallel protocol
+shapes.
