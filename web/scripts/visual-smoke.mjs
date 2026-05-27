@@ -51,6 +51,7 @@ function startServer() {
   const child = spawn(command, args, {
     cwd: webRoot,
     stdio: ['ignore', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',
     env: { ...process.env, BROWSER: 'none' }
   });
   let output = '';
@@ -134,17 +135,39 @@ async function main() {
     if (failures.length) throw new Error(`Visual smoke failed:\n- ${failures.join('\n- ')}`);
     console.log(`visual smoke passed for ${routeChecks.length} routes across ${viewports.length} viewports`);
   } finally {
-    stopServer(server.child);
+    await stopServer(server.child);
   }
 }
 
-function stopServer(child) {
+async function stopServer(child) {
   if (!child.pid || child.killed) return;
   if (process.platform === 'win32') {
     spawnSync('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' });
     return;
   }
-  child.kill('SIGTERM');
+  const exited = new Promise((resolve) => {
+    child.once('exit', resolve);
+  });
+  try {
+    process.kill(-child.pid, 'SIGTERM');
+  } catch {
+    child.kill('SIGTERM');
+  }
+  const timeout = await Promise.race([
+    exited.then(() => 'exited'),
+    new Promise((resolve) => setTimeout(() => resolve('timeout'), 2_000))
+  ]);
+  if (timeout === 'timeout') {
+    try {
+      process.kill(-child.pid, 'SIGKILL');
+    } catch {
+      child.kill('SIGKILL');
+    }
+    await Promise.race([
+      exited,
+      new Promise((resolve) => setTimeout(resolve, 1_000))
+    ]);
+  }
 }
 
 main().catch((error) => {
