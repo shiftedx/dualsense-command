@@ -18,7 +18,7 @@ export const MOCK_APP_ID = 'mock-fh6';
 export const MOCK_PROFILE_ID = 'forza-horizon-mock-track';
 export const MOCK_LOCAL_GAME_ID = 'local-night-drive-lab-6b7c8d9e';
 export const MOCK_LAYOUT_SOURCE = 'mock://steam/userdata/sanitized/config/controller_fh6_edge.vdf';
-export const MOCK_EXPORT_SCHEMA = 'dscc.profile.v1';
+export const MOCK_EXPORT_SCHEMA = 'dev.dscc.profile.v1';
 
 export type MockEditableControllerConfig = Omit<ControllerConfiguration, 'controllerId' | 'model'>;
 

@@ -1,0 +1,345 @@
+.dm-controller-map-panel {
+  overflow: hidden;
+}
+
+.dm-controller-stage {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.62fr) minmax(440px, 1.2fr) minmax(170px, 0.62fr);
+  align-items: stretch;
+  gap: clamp(12px, 1.4vw, 22px);
+  min-height: 400px;
+  padding: clamp(10px, 1vw, 14px) 0 clamp(6px, 0.8vw, 10px);
+}
+
+.dm-controller-canvas {
+  position: relative;
+  align-self: center;
+  width: 100%;
+  min-width: 0;
+  aspect-ratio: 1.5;
+  isolation: isolate;
+  background:
+    radial-gradient(ellipse at 50% 52%, rgba(0, 112, 204, 0.22), rgba(0, 112, 204, 0.04) 38%, transparent 62%),
+    radial-gradient(ellipse at 50% 100%, rgba(0, 112, 204, 0.12), transparent 55%),
+    linear-gradient(180deg, rgba(8, 8, 10, 0.72), rgba(10, 10, 14, 0.92));
+  box-shadow:
+    inset 0 0 0 1px rgba(226, 232, 240, 0.06),
+    inset 0 1px 0 rgba(226, 232, 240, 0.06),
+    0 12px 36px rgba(0, 0, 0, 0.42);
+}
+
+.dm-controller-canvas::before,
+.dm-controller-canvas::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.dm-controller-canvas::before {
+  inset: 0;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(ellipse at 50% 50%, rgba(0, 0, 0, 0.9), rgba(0, 0, 0, 0.05) 78%);
+  opacity: 0.5;
+}
+
+.dm-controller-canvas::after {
+  inset: 6%;
+  background: radial-gradient(ellipse at 50% 50%, rgba(0, 112, 204, 0.22), transparent 60%);
+  filter: blur(28px);
+  opacity: 0.55;
+  z-index: 0;
+}
+
+.dm-controller-glow {
+  position: absolute;
+  inset: 8% 4% 4%;
+  background: radial-gradient(ellipse at 50% 48%, rgba(0, 112, 204, 0.22), transparent 55%);
+  filter: blur(34px);
+  opacity: 0.7;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.dm-controller-base,
+.dm-controller-focus {
+  position: absolute;
+  inset: 4% 4% 6%;
+  width: 92%;
+  height: 90%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.dm-controller-base {
+  z-index: 2;
+  opacity: 0.36;
+  filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.55));
+  transition: opacity 220ms ease-out;
+}
+
+.dm-controller-canvas:hover .dm-controller-base {
+  opacity: 0.46;
+}
+
+.dm-controller-focus {
+  z-index: 3;
+  opacity: 0;
+  filter:
+    drop-shadow(0 0 6px rgba(0, 112, 204, 0.55))
+    drop-shadow(0 0 18px rgba(0, 112, 204, 0.4));
+  transition: opacity 200ms ease-out, filter 220ms ease-out;
+}
+
+.dm-controller-focus.visible {
+  opacity: 1;
+}
+
+.dm-controller-focus-card {
+  position: absolute;
+  left: 50%;
+  bottom: clamp(8px, 1.2vw, 14px);
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-width: min(82%, 320px);
+  max-width: 88%;
+  padding: 10px 14px;
+  background: rgba(10, 10, 12, 0.78);
+  backdrop-filter: blur(8px);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 112, 204, 0.34),
+    0 10px 28px rgba(0, 0, 0, 0.4);
+  z-index: 5;
+  pointer-events: none;
+}
+
+.dm-controller-focus-card > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.dm-controller-focus-card span {
+  color: var(--tungsten);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.dm-controller-focus-card strong {
+  overflow: hidden;
+  color: #FFFFFF;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dm-controller-focus-card .dm-controller-focus-hint {
+  color: var(--tungsten);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.dm-key-icon {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  object-fit: contain;
+  filter:
+    brightness(1.05)
+    drop-shadow(0 0 6px rgba(0, 112, 204, 0.32));
+  opacity: 0.92;
+  transition: filter 160ms ease-out, opacity 160ms ease-out, transform 160ms ease-out;
+}
+
+.dm-key-icon.lg {
+  width: 32px;
+  height: 32px;
+  filter:
+    brightness(1.08)
+    drop-shadow(0 0 10px rgba(0, 112, 204, 0.55));
+}
+
+.dm-key-icon.lg.placeholder {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  color: var(--actuation);
+  background: rgba(0, 112, 204, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(0, 112, 204, 0.4);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.dm-map-callouts {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  align-self: stretch;
+}
+
+.dm-map-callouts.left {
+  text-align: right;
+}
+
+.dm-callout-cluster {
+  display: grid;
+  gap: 8px;
+}
+
+.dm-callout-cluster-title {
+  display: block;
+  color: var(--tungsten);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.dm-map-callouts.left .dm-callout-cluster-title {
+  padding-right: 2px;
+}
+
+.dm-map-callouts.right .dm-callout-cluster-title {
+  padding-left: 2px;
+}
+
+.dm-map-callout,
+.dm-map-source-row,
+.dm-steam-binding-row {
+  min-width: 0;
+  border: 0;
+  color: var(--haptic);
+  background: rgba(10, 10, 12, 0.5);
+  box-shadow:
+    inset 0 0 0 1px rgba(226, 232, 240, 0.055),
+    inset 0 -1px 0 rgba(0, 112, 204, 0.08);
+  text-align: inherit;
+  transition:
+    background 150ms ease-out,
+    box-shadow 150ms ease-out,
+    transform 150ms ease-out;
+}
+
+.dm-map-callout {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.dm-callout-head,
+.dm-source-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dm-map-callouts.left .dm-callout-head {
+  flex-direction: row-reverse;
+}
+
+.dm-callout-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dm-map-callout:hover,
+.dm-map-source-row:hover,
+.dm-steam-binding-row:hover {
+  background: rgba(18, 18, 20, 0.88);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 112, 204, 0.34),
+    0 10px 28px rgba(0, 0, 0, 0.22);
+}
+
+.dm-map-callout:hover .dm-key-icon,
+.dm-map-source-row:hover .dm-key-icon {
+  opacity: 1;
+  filter:
+    brightness(1.18)
+    drop-shadow(0 0 10px rgba(0, 112, 204, 0.55));
+  transform: translateY(-1px);
+}
+
+.dm-map-callout.focused:not(.active),
+.dm-map-source-row.focused:not(.active) {
+  background: rgba(0, 112, 204, 0.08);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 112, 204, 0.36),
+    0 6px 18px rgba(0, 0, 0, 0.2);
+}
+
+.dm-map-callout.active,
+.dm-map-source-row.active,
+.dm-steam-binding-row.active {
+  background: rgba(0, 112, 204, 0.16);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 112, 204, 0.68),
+    0 0 22px rgba(0, 112, 204, 0.18);
+}
+
+.dm-map-callout.active .dm-key-icon,
+.dm-map-source-row.active .dm-key-icon {
+  opacity: 1;
+  filter:
+    brightness(1.25)
+    drop-shadow(0 0 12px rgba(0, 112, 204, 0.7));
+}
+
+.dm-map-callout.edge {
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 112, 204, 0.22),
+    inset 3px 0 0 rgba(0, 112, 204, 0.66);
+}
+
+.dm-map-callouts.right .dm-map-callout.edge {
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 112, 204, 0.22),
+    inset -3px 0 0 rgba(0, 112, 204, 0.66);
+}
+
+.dm-map-callout span,
+.dm-map-source-section > span,
+.dm-map-source-row span,
+.dm-steam-binding-row code,
+.dm-map-quick-grid span,
+.dm-steam-binding-empty span {
+  color: var(--tungsten);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.dm-map-callout strong,
+.dm-map-source-row strong,
+.dm-map-quick-grid strong {
+  overflow: hidden;
+  color: #FFFFFF;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.18;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -178,6 +178,13 @@ Run the button mapping guard when changing this area:
 npm.cmd --prefix web run test:button-map
 ```
 
+Run the source audit when changing API routes, diagnostics, support bundles,
+installer packaging, or bridge/provider copy:
+
+```powershell
+npm.cmd --prefix web run test:source-audit
+```
+
 ## Validation
 
 For docs-only changes, inspect the diff. For code changes, run the smallest
@@ -190,3 +197,8 @@ npm.cmd run check
 ```
 
 For UI changes, also open the local app and verify the affected screen.
+Layout-affecting changes should run the mock visual smoke guard:
+
+```powershell
+npm.cmd --prefix web run test:visual-smoke
+```

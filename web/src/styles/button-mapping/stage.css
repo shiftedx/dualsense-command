@@ -1,0 +1,311 @@
+.dm-mapping-stage {
+  position: relative;
+  align-self: center;
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: 1400px;
+  aspect-ratio: 2 / 1;
+  contain: layout paint;
+  isolation: isolate;
+}
+
+.dm-mapping-stage::before {
+  content: "";
+  position: absolute;
+  inset: 6% 8%;
+  background:
+    radial-gradient(ellipse at 50% 56%, rgba(0, 112, 204, 0.18), rgba(0, 112, 204, 0.02) 50%, transparent 70%);
+  filter: blur(36px);
+  opacity: 0.85;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* The SVG fills the stage and draws leader lines. */
+.dm-mapping-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+  overflow: visible;
+}
+
+.dm-mapping-lines line {
+  stroke: rgba(226, 232, 240, 0.22);
+  stroke-width: 0.16;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  transition: stroke 180ms ease-out, stroke-width 180ms ease-out, filter 220ms ease-out;
+}
+
+.dm-mapping-lines line.focused {
+  stroke: rgba(0, 112, 204, 0.85);
+  stroke-width: 0.32;
+  filter: drop-shadow(0 0 4px rgba(0, 112, 204, 0.55));
+}
+
+.dm-mapping-lines line.active {
+  stroke: rgba(0, 112, 204, 1);
+  stroke-width: 0.4;
+  filter: drop-shadow(0 0 6px rgba(0, 112, 204, 0.85));
+}
+
+/* === Centered controller artwork (the centerpiece) ================ */
+.dm-mapping-figure {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  /* 54% of stage width — anchor coords in mappingChipLayout assume this. */
+  width: 54%;
+  aspect-ratio: 1.5;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.dm-mapping-figure .dm-controller-glow {
+  position: absolute;
+  inset: 4% 2% 0%;
+  background: radial-gradient(ellipse at 50% 50%, rgba(0, 112, 204, 0.28), transparent 60%);
+  filter: blur(44px);
+  opacity: 0.85;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.dm-mapping-figure .dm-controller-base,
+.dm-mapping-figure .dm-controller-focus {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.dm-mapping-figure .dm-controller-base {
+  z-index: 1;
+  opacity: 0.5;
+  filter: drop-shadow(0 18px 38px rgba(0, 0, 0, 0.55));
+}
+
+.dm-mapping-figure .dm-controller-focus {
+  z-index: 2;
+  opacity: 0;
+  filter:
+    drop-shadow(0 0 6px rgba(0, 112, 204, 0.65))
+    drop-shadow(0 0 22px rgba(0, 112, 204, 0.45));
+  transition: opacity 220ms ease-out;
+}
+
+.dm-mapping-figure .dm-controller-focus.visible {
+  opacity: 1;
+}
+
+
+/* === Pill chips at the stage edges ================================= */
+/* The icon is a 38px disc; --chip-half-icon centers it on chip-x/y. */
+.dm-mapping-chip {
+  --chip-icon: 38px;
+  --chip-half-icon: 19px;
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  color: var(--haptic);
+  background: transparent;
+  z-index: 3;
+  transition: transform 180ms ease-out, filter 180ms ease-out;
+}
+
+/* Left/right chips: icon center sits at chip-x, text flows toward the
+   page edge (away from the controller). */
+.dm-mapping-chip.left {
+  right: calc(100% - var(--chip-x) - var(--chip-half-icon));
+  top: var(--chip-y);
+  flex-direction: row-reverse;
+  text-align: right;
+  transform: translateY(-50%);
+}
+
+.dm-mapping-chip.right {
+  left: calc(var(--chip-x) - var(--chip-half-icon));
+  top: var(--chip-y);
+  flex-direction: row;
+  text-align: left;
+  transform: translateY(-50%);
+}
+
+/* Top/bottom chips: icon center sits at chip-y, text flows toward the
+   nearest page edge. */
+.dm-mapping-chip.top {
+  left: var(--chip-x);
+  bottom: calc(100% - var(--chip-y) - var(--chip-half-icon));
+  flex-direction: column-reverse;
+  text-align: center;
+  transform: translateX(-50%);
+  gap: 4px;
+}
+
+.dm-mapping-chip.bottom {
+  left: var(--chip-x);
+  top: calc(var(--chip-y) - var(--chip-half-icon));
+  flex-direction: column;
+  text-align: center;
+  transform: translateX(-50%);
+  gap: 4px;
+}
+
+.dm-mapping-chip-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 50% 35%, rgba(40, 40, 48, 0.92), rgba(14, 14, 18, 0.92)),
+    rgba(10, 10, 12, 0.92);
+  box-shadow:
+    inset 0 0 0 1px rgba(226, 232, 240, 0.16),
+    0 6px 18px rgba(0, 0, 0, 0.5);
+  transition:
+    background 180ms ease-out,
+    box-shadow 220ms ease-out,
+    transform 180ms ease-out;
+}
+
+.dm-mapping-chip-icon img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  filter: brightness(1.05) drop-shadow(0 0 4px rgba(0, 112, 204, 0.28));
+  opacity: 0.92;
+  transition: filter 180ms ease-out, opacity 180ms ease-out;
+}
+
+.dm-mapping-chip-glyph {
+  color: #FFFFFF;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.dm-mapping-chip-text {
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  min-width: 0;
+  /* Reserve enough room for typical binding labels ("Right Bumper",
+     "Left Trigger") without truncation; cap so a stray long label wraps
+     instead of stretching the rail into the controller. */
+  width: clamp(86px, 9vw, 132px);
+  padding: 2px 4px;
+}
+
+.dm-mapping-chip.left .dm-mapping-chip-text {
+  text-align: right;
+}
+
+.dm-mapping-chip.right .dm-mapping-chip-text {
+  text-align: left;
+}
+
+.dm-mapping-chip.top .dm-mapping-chip-text,
+.dm-mapping-chip.bottom .dm-mapping-chip-text {
+  /* 6 trackpad chips share the top row; keep text narrow but wide enough
+     for "Unassigned" to sit on a single line. */
+  width: clamp(64px, 6.4vw, 92px);
+  text-align: center;
+}
+
+/* Top/bottom chips always render binding on a single line — vertical room is
+   scarce above and below the controller and a wrap would push neighbouring
+   chips into the figure. */
+.dm-mapping-chip.top .dm-mapping-chip-binding,
+.dm-mapping-chip.bottom .dm-mapping-chip-binding {
+  -webkit-line-clamp: 1;
+  white-space: nowrap;
+  word-break: normal;
+  hyphens: none;
+}
+
+.dm-mapping-chip-binding {
+  /* Allow 2-line wrap before clipping with ellipsis. */
+  display: -webkit-box;
+  overflow: hidden;
+  color: #FFFFFF;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  word-break: break-word;
+  hyphens: auto;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  text-overflow: ellipsis;
+}
+
+.dm-mapping-chip:hover,
+.dm-mapping-chip:focus-visible {
+  outline: none;
+}
+
+.dm-mapping-chip:hover .dm-mapping-chip-icon,
+.dm-mapping-chip:focus-visible .dm-mapping-chip-icon {
+  background:
+    radial-gradient(circle at 50% 35%, rgba(0, 112, 204, 0.34), rgba(8, 30, 56, 0.92)),
+    rgba(10, 10, 12, 0.92);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 112, 204, 0.72),
+    0 0 18px rgba(0, 112, 204, 0.35),
+    0 8px 22px rgba(0, 0, 0, 0.5);
+}
+
+.dm-mapping-chip:hover .dm-mapping-chip-icon img,
+.dm-mapping-chip:focus-visible .dm-mapping-chip-icon img {
+  opacity: 1;
+  filter: brightness(1.18) drop-shadow(0 0 8px rgba(0, 112, 204, 0.65));
+}
+
+.dm-mapping-chip.focused .dm-mapping-chip-icon {
+  background:
+    radial-gradient(circle at 50% 35%, rgba(0, 112, 204, 0.34), rgba(8, 30, 56, 0.92)),
+    rgba(10, 10, 12, 0.92);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 112, 204, 0.72),
+    0 0 22px rgba(0, 112, 204, 0.35);
+}
+
+.dm-mapping-chip.active .dm-mapping-chip-icon {
+  background:
+    radial-gradient(circle at 50% 35%, rgba(0, 112, 204, 0.52), rgba(0, 60, 124, 0.92)),
+    rgba(10, 10, 12, 0.96);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 112, 204, 1),
+    0 0 24px rgba(0, 112, 204, 0.55),
+    0 10px 28px rgba(0, 0, 0, 0.55);
+}
+
+.dm-mapping-chip.active .dm-mapping-chip-icon img {
+  opacity: 1;
+  filter: brightness(1.25) drop-shadow(0 0 10px rgba(0, 112, 204, 0.85));
+}
+
+.dm-mapping-chip.active .dm-mapping-chip-binding {
+  color: var(--actuation);
+}
+
+.dm-mapping-chip.edge .dm-mapping-chip-icon {
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 112, 204, 0.38),
+    0 6px 18px rgba(0, 0, 0, 0.5);
+}
+
+/* === Tray (bottom inline editor) — no card, just controls ========= */
