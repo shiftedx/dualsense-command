@@ -157,6 +157,7 @@ fn read_f32_array_abs(packet: &[u8], offset: usize, count: usize) -> Option<Vec<
         .collect()
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn signal_scaled_value(value: f64, input_min: f64, input_max: f64) -> f64 {
     if input_min >= input_max {
         return 0.0;
@@ -203,6 +204,7 @@ fn read_le_f32_f64(packet: &[u8], offset: usize) -> Option<f64> {
     Some(finite_f64(f64::from(read_le_f32(packet, offset)?)))
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn sequenced_signal_update(
     name: &str,
     value: impl Into<SignalValue>,
