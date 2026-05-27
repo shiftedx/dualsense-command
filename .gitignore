@@ -75,6 +75,8 @@ pnpm-debug.log*
 /docs/*validation*.md
 /docs/*handoff*.md
 !/docs/production-readiness-plan.md
+!/docs/provenance-policy.md
+!/docs/hardware-validation-template.md
 
 # Release/signing artifacts
 /release/

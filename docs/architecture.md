@@ -24,7 +24,7 @@ Forza telemetry listens on `127.0.0.1:5300`.
 | `dscc-adapters` | Built-in adapter catalog and telemetry parsers, including Forza Data Out. |
 | `dscc-device` | HID discovery, diagnostics, output encoding, input reads, and guarded device writes. |
 | `dscc-agent` | Local API, persistence, profile resolution, game detection, Steam Input, telemetry runtimes, and hardware output loops. |
-| `dscc-tray` | Windows tray launcher. |
+| `dscc-tray` | Windows tray launcher. The binary entrypoint is `src/main.rs`; the Windows implementation lives in `src/windows_tray.rs` with focused `health`, `menu`, `painting`, and test submodules. |
 | `dscc-cli` | Diagnostics and local helper commands. |
 
 ## Agent Modules
@@ -36,6 +36,12 @@ Useful entry points:
   module wiring.
 - `crates/dscc-agent/src/routes.rs`: API/static route table.
 - `crates/dscc-agent/src/api/`: focused route handlers.
+- `crates/dscc-agent/src/runtime_constants.rs`: loop timing, cache TTLs,
+  trigger-force constants, and timestamp helpers.
+- `crates/dscc-agent/src/built_in_presets.rs`: built-in racing profile
+  presets and default trigger curves.
+- `crates/dscc-agent/src/runtime_paths.rs`: tracing setup and OS app
+  config/data/log path discovery.
 - `crates/dscc-agent/src/effects/`: effect materialization, runtime profile
   output, output-frame enhancement, and manual effect-test helpers.
 - `crates/dscc-agent/src/bind_addr.rs`: loopback/LAN binding policy.
@@ -45,6 +51,15 @@ Useful entry points:
   catalog detection helpers.
 - `crates/dscc-agent/src/forza_glyphs.rs`: guarded Forza Horizon 6 glyph install/restore.
 - `crates/dscc-agent/src/http_security.rs`: same-origin mutation guard.
+
+## Device Boundary
+
+- `crates/dscc-device/src/output.rs`: output-manager sessions, guarded writes,
+  input reads, and Edge onboard profile dispatch.
+- `crates/dscc-device/src/output/input.rs`: normalized DualSense input report
+  parsing for sticks, triggers, and buttons.
+- `crates/dscc-device/src/output/encoding.rs`: typed DualSense USB/Bluetooth
+  output report construction and CRC.
 
 Important routes include status, snapshots, controllers, controller input,
 profiles, Edge onboard profiles, adapters, Steam Input, Steam library/custom
@@ -80,7 +95,7 @@ The UI is Svelte 5 + Vite, not SvelteKit.
 | `web/src/App.svelte` | App shell, hash routing, snapshot lifecycle, and shared state. |
 | `web/src/lib/api.ts` | API calls, DTO normalization, WebSocket setup, fallback polling. |
 | `web/src/lib/types.ts` | UI-side DTOs and shared types. |
-| `web/src/app/` | Navigation, runtime, selection, profile-draft, polling, and support-bundle helpers. |
+| `web/src/app/` | Navigation, runtime, selection, profile-draft, haptics-state, polling, update-state, toast, onboarding, partial-error, and support-bundle helpers. |
 | `web/src/lib/features/haptics/HapticsView.svelte` | Adaptive triggers and haptics view. |
 | `web/src/lib/features/buttonMapping` | Steam Input mirror view and p95-tested helpers. |
 | `web/src/components/ControllerCard.svelte` | Games page controller panel. |

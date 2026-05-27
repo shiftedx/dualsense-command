@@ -16,6 +16,9 @@ git status --short --ignored
 - If you touch HID reports, telemetry packet layouts, controller assets, Sony
   tooling, Steam Input, or protocol constants, document the public source or
   original experiment in the PR.
+- Use `docs/provenance-policy.md` before adding protocol constants, packet
+  fields, HID offsets, Steam Input assumptions, or provider behavior.
+- Use `docs/game-module-template.md` for game, parser, or profile-pack PRs.
 
 ## Setup
 
@@ -31,6 +34,7 @@ Useful root commands:
 ```powershell
 npm.cmd run dev
 npm.cmd run check
+npm.cmd run check:perf
 npm.cmd run check:web
 npm.cmd run check:rust
 ```

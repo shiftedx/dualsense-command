@@ -199,6 +199,10 @@ Contributor docs:
 - [Architecture](docs/architecture.md)
 - [Contributing](docs/contributing.md)
 - [Game module guide](docs/game-module-contribution-guide.md)
+- [Game module PR template](docs/game-module-template.md)
+- [Provenance policy](docs/provenance-policy.md)
+- [Release trust](docs/release-trust.md)
+- [Hardware validation template](docs/hardware-validation-template.md)
 - [Module manifest draft](docs/module-manifest-format.md)
 
 DSCC is a clean-room project. Do not copy code, packet layouts, constants, or

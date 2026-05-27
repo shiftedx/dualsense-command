@@ -1,4 +1,5 @@
 use super::*;
+use directories::ProjectDirs;
 
 #[derive(Debug, Clone)]
 pub(crate) struct PersistenceStore {

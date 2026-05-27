@@ -23,7 +23,6 @@ use axum::{
     routing::{delete, get, post, put},
     Json, Router,
 };
-use directories::ProjectDirs;
 use dscc_adapters::{
     built_in_adapters, built_in_udp_adapters, initial_detection, parse_udp_telemetry_packet,
     AdapterProtocol, UdpTelemetryAdapter,
@@ -64,6 +63,7 @@ mod agent_types;
 mod api;
 mod assetto_shared_memory;
 mod bind_addr;
+mod built_in_presets;
 mod config_model;
 mod controller_registry;
 mod edge_profiles;
@@ -77,6 +77,8 @@ mod input_bridge;
 mod persistence;
 mod profiles;
 mod routes;
+mod runtime_constants;
+mod runtime_paths;
 mod steam_input;
 mod support_bundle;
 mod telemetry_runtime;
@@ -108,6 +110,7 @@ pub(crate) use assetto_shared_memory::{
 pub(crate) use bind_addr::{
     default_agent_bind_addr, desired_agent_bind_addr, lan_api_enabled, resolve_forza_bind_addr,
 };
+pub(crate) use built_in_presets::*;
 pub(crate) use config_model::*;
 #[cfg(any(test, debug_assertions, feature = "test-mocks"))]
 pub(crate) use controller_registry::mock_device_manager;
@@ -167,7 +170,7 @@ use game_modules::{
     built_in_game_modules, detect_running_game_from_processes_with_user_games,
     game_executable_exists, game_module_summaries, no_game_detection, supported_game_summary,
     GameModule, ASSETTO_CORSA_RALLY_PROFILE_ID, ASSETTO_SHARED_MEMORY_ADAPTER_ID,
-    FORZA_DATA_OUT_ADAPTER_ID, FORZA_HORIZON_IMMERSIVE_PROFILE_ID, FORZA_HORIZON_PROFILE_ID,
+    FORZA_DATA_OUT_ADAPTER_ID, FORZA_HORIZON_PROFILE_ID,
 };
 pub(crate) use http_security::{reject_cross_origin_mutations, request_origin_matches_host};
 pub(crate) use input_bridge::{
@@ -193,6 +196,8 @@ pub use routes::app;
 pub(crate) use routes::{configured_web_dist_dir, web_dist_dir};
 #[cfg(test)]
 pub(crate) use routes::{web_dist_candidates, web_dist_dir_from_parts};
+pub(crate) use runtime_constants::*;
+pub use runtime_paths::{app_paths, init_tracing};
 pub(crate) use steam_input::{
     discover_steam_input_status_async, pending_steam_input_status, steam_input_discovery_pending,
     steam_root_candidates, write_steam_input_binding, write_steam_input_paddle_preset,
@@ -225,282 +230,6 @@ pub(crate) use update_check::{
     compare_release_versions, update_check_from_release, GithubReleaseResponse, VersionOrdering,
 };
 pub(crate) use update_check::{fetch_latest_release_update_check, unavailable_update_check};
-
-const GLOBAL_PROFILE_ID: &str = "global";
-const DEFAULT_PROFILE_ID: &str = GLOBAL_PROFILE_ID;
-const IMMERSIVE_PROFILE_ID: &str = FORZA_HORIZON_IMMERSIVE_PROFILE_ID;
-
-fn current_timestamp() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-}
-
-fn current_timestamp_millis() -> u64 {
-    chrono::Utc::now().timestamp_millis().max(0) as u64
-}
-
-const HARDWARE_OUTPUT_INTERVAL: Duration = Duration::from_millis(33);
-const INPUT_BRIDGE_PROCESS_INTERVAL: Duration = Duration::from_millis(8);
-const INPUT_BRIDGE_CONFIG_REFRESH_INTERVAL: Duration = Duration::from_millis(100);
-const INPUT_BRIDGE_STALE_AFTER: Duration = Duration::from_millis(250);
-const CONTROLLER_INPUT_UI_CACHE_TTL: Duration = Duration::from_millis(75);
-const HARDWARE_OUTPUT_KEEPALIVE_INTERVAL: Duration = Duration::from_millis(750);
-const MANUAL_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
-const BASE_FEEL_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_millis(33);
-const HARDWARE_GAME_DETECTION_INTERVAL: Duration = Duration::from_millis(500);
-const DEFAULT_EFFECT_TEST_DURATION_MS: u64 = 650;
-const MAX_EFFECT_TEST_DURATION_MS: u64 = 1_500;
-const DEFAULT_BASE_FEEL_TEST_DURATION_MS: u64 = 30_000;
-const MAX_BASE_FEEL_TEST_DURATION_MS: u64 = 60_000;
-const UDP_TELEMETRY_PROCESS_INTERVAL: Duration = Duration::from_millis(33);
-#[cfg(target_os = "windows")]
-const SHARED_MEMORY_TELEMETRY_PROCESS_INTERVAL: Duration = Duration::from_millis(33);
-const FORZA_SHIFT_EVENT_HOLD: Duration = Duration::from_millis(190);
-const FORZA_SUSPENSION_IMPACT_HOLD: Duration = Duration::from_millis(170);
-const GAME_DETECTION_CACHE_TTL: Duration = Duration::from_secs(5);
-const STEAM_INPUT_CACHE_TTL: Duration = Duration::from_secs(30);
-const STEAM_GAME_CATALOG_CACHE_TTL: Duration = Duration::from_secs(300);
-const UPDATE_CHECK_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
-const TELEMETRY_WS_INVALIDATION_INTERVAL: Duration = Duration::from_millis(500);
-const FORZA_BRAKE_FULL_FORCE_AT: f64 = 246.0 / 255.0;
-const FORZA_THROTTLE_FULL_FORCE_AT: f64 = 252.0 / 255.0;
-const FORZA_BRAKE_BASELINE_FORCE: f64 = 42.0 / 255.0;
-const FORZA_BRAKE_NORMAL_FORCE: f64 = 164.0 / 255.0;
-const FORZA_BRAKE_ENDSTOP_FORCE: f64 = 238.0 / 255.0;
-const FORZA_THROTTLE_BASELINE_FORCE: f64 = 3.0 / 255.0;
-const FORZA_THROTTLE_NORMAL_FORCE: f64 = 28.0 / 255.0;
-const FORZA_THROTTLE_ENDSTOP_FORCE: f64 = 106.0 / 255.0;
-const FORZA_HANDBRAKE_FORCE: f64 = 25.0 / 255.0;
-const FORZA_ABS_RANGE_START_RATIO: f64 = 0.30;
-const FORZA_ABS_MIN_SPEED_KMH: f64 = 15.0;
-const FORZA_ABS_SLIP_THRESHOLD: f64 = 1.0;
-const FORZA_ABS_PULSE_AMPLITUDE: f64 = 20.0 / 63.0;
-const FORZA_ABS_PULSE_FREQUENCY_HZ: f64 = 10.0;
-const FORZA_BRAKE_CURVE: f64 = 1.35;
-const FORZA_THROTTLE_CURVE: f64 = 2.25;
-const FORZA_ENDSTOP_WALL_OFFSET: f64 = 0.03;
-const FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET: f64 = 0.28;
-const FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION: f64 = 0.70;
-const FORZA_BRAKE_OVERTRAVEL_RAMP_WIDTH: f64 = 0.16;
-const FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE: f64 = 2.0;
-const FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION: f64 = 0.80;
-const FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION: f64 = 0.80;
-const FORZA_BRAKE_ENDSTOP_FORCE_BOOST: f64 = 1.25;
-const FORZA_THROTTLE_ENDSTOP_FORCE_BOOST: f64 = 3.0;
-const FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH: f64 = 0.20;
-const FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE: f64 = 2.4;
-const FORZA_SHIFT_THUMP_DEFAULT_INTENSITY: u8 = 255;
-const TRIGGER_CURVE_SCALE: f64 = 100.0;
-const TRIGGER_CURVE_MIN: u16 = 50;
-const TRIGGER_CURVE_MAX: u16 = 350;
-const TRIGGER_CURVE_POINT_MIN: usize = 4;
-const TRIGGER_CURVE_POINT_MAX: usize = 8;
-const FORZA_REV_LIMIT_RATIO: f64 = 0.93;
-const FORZA_REV_LIMITER_PULSE_AMPLITUDE: f64 = 18.0 / 63.0;
-const FORZA_REV_LIMITER_FREQUENCY_HZ: f64 = 42.0;
-const FORZA_REV_LIMITER_WALL_FORM_THROTTLE_AT: f64 = 0.60;
-const FORZA_REV_LIMITER_WALL_ZONES: f64 = 4.0;
-const FORZA_SHIFT_WALL_FORM_AT: f64 = 0.15;
-const FORZA_SHIFT_FREQUENCY_HZ: f64 = 34.0;
-const FORZA_SHIFT_WALL_ZONES: f64 = 4.0;
-const FORZA_SUSPENSION_IMPACT_TRIGGER_AT: f64 = 0.42;
-const FORZA_SUSPENSION_IMPACT_RESET_AT: f64 = 0.22;
-
-/// Built-in Forza preset designed from first principles to be immersive
-/// without draining battery. The product owner directive is:
-///
-/// - Adaptive triggers do the heavy lifting (the DualSense's adaptive
-///   triggers are passive solenoid loads — they only draw current while a
-///   trigger is being squeezed, so they are essentially free at idle).
-/// - Continuous low-amplitude body rumble (the rotating-mass actuators) is
-///   the dominant battery drain on a DualSense. Road texture is enabled as
-///   the default surface cue, while heavier continuous effects such as
-///   rumble strip, suspension impact, tire slip, and puddle drag stay off.
-///   Event-driven thumps (gear-shift, handbrake) stay enabled because they
-///   only fire for a fraction of a second at a time.
-/// - Intensities for the enabled effects are tuned conservatively against
-///   the existing first-principles baseline forces in this file
-///   (`FORZA_BRAKE_*`, `FORZA_THROTTLE_*`, etc.). All values come from the
-///   public DualSense HID spec (trigger force 0..=255, body rumble 0..=255)
-///   and physics intuition (real-car ABS modulates ~10-15 Hz, comfortable
-///   pulse haptics are 20-50 Hz). No values were taken from any external
-///   implementation.
-///
-/// The preset is written into a controller's saved `ForzaTelemetryConfig`
-/// at profile-activation time, so changing profiles immediately rewrites
-/// the controller config and the UI re-reads the new values.
-fn forza_preset_for_profile(profile_id: &str) -> Option<ForzaTelemetryConfig> {
-    match profile_id {
-        FORZA_HORIZON_PROFILE_ID => Some(forza_horizon_preset()),
-        IMMERSIVE_PROFILE_ID => Some(forza_horizon_immersive_preset()),
-        ASSETTO_CORSA_RALLY_PROFILE_ID => Some(assetto_corsa_rally_preset()),
-        _ => None,
-    }
-}
-
-/// Battery-conscious "Base" preset. Adaptive triggers do most of the work,
-/// with road texture enabled as the default surface cue.
-fn forza_horizon_preset() -> ForzaTelemetryConfig {
-    // (id, enabled, intensity 0..=255, route)
-    //
-    // Routes follow the natural side of each effect:
-    //   - Brake / ABS  -> L2 adaptive trigger (left).
-    //   - Throttle / rev limiter -> R2 adaptive trigger (right).
-    //   - Handbrake -> L2 (driver actuates it from the left side).
-    //   - Shift thump -> R2 + reduced body thump (short event, no sustained rumble).
-    //
-    // Road texture is the stock surface cue. Heavier continuous-rumble
-    // effects (rumble strip, suspension impact, tire slip, puddle drag)
-    // stay disabled by default; users can opt in via the tuning UI.
-    let entries: &[(&str, bool, u8, &str)] = &[
-        ("brake_resistance", true, 100, "l2"),
-        ("throttle_resistance", true, 100, "r2"),
-        ("abs_slip_pulse", true, 100, "l2"),
-        ("handbrake_wall", true, 100, "l2"),
-        ("rev_limiter_buzz", true, 85, "r2"),
-        (
-            "gear_shift_thump",
-            true,
-            FORZA_SHIFT_THUMP_DEFAULT_INTENSITY,
-            "r2_and_body",
-        ),
-        ("road_texture", true, 40, "body_both"),
-        ("rumble_strip", false, 55, "body_both"),
-        ("tire_slip", false, 65, "body_right"),
-        ("puddle_drag", false, 50, "body_left"),
-        ("suspension_impact", false, 70, "body_both"),
-        ("rpm_leds", false, 100, "light_led"),
-    ];
-
-    let effects = entries
-        .iter()
-        .map(|(id, enabled, intensity, route)| ForzaEffectConfig {
-            id: (*id).to_string(),
-            enabled: *enabled,
-            intensity: *intensity,
-            route: (*route).to_string(),
-        })
-        .collect();
-
-    ForzaTelemetryConfig {
-        body_rumble_mode: default_forza_body_rumble_mode(),
-        effects,
-    }
-    .normalized()
-}
-
-/// Richer "Immersive" preset. This keeps the same trigger language as the stock
-/// preset, then adds low-to-mid body layers for slip, curbs, puddles, and
-/// suspension. Sustained tire slip stays restrained so it does not blur the
-/// controller, while suspension impact is treated as a stronger event cue for
-/// landing thumps. Gear LEDs and the RPM bar stay off unless the user opts in.
-fn forza_horizon_immersive_preset() -> ForzaTelemetryConfig {
-    // (id, enabled, intensity 0..=255, route)
-    //
-    // Body routing is intentionally spatial:
-    //   - Tire slip -> right grip, so traction loss lives on the throttle side.
-    //   - Puddle drag -> left grip, so water feels different from throttle load.
-    //   - Suspension -> both grips with enough headroom to stand out on landings.
-    //   - Rumble strips -> both grips, but below shift and impact events.
-    //   - RPM LEDs -> disabled; visual gear/RPM overlays should be opt-in.
-    let entries: &[(&str, bool, u8, &str)] = &[
-        ("brake_resistance", true, 100, "l2"),
-        ("throttle_resistance", true, 100, "r2"),
-        ("abs_slip_pulse", true, 100, "l2"),
-        ("handbrake_wall", true, 100, "l2"),
-        ("rev_limiter_buzz", true, 95, "r2"),
-        (
-            "gear_shift_thump",
-            true,
-            FORZA_SHIFT_THUMP_DEFAULT_INTENSITY,
-            "r2_and_body",
-        ),
-        ("road_texture", true, 35, "body_both"),
-        ("rumble_strip", true, 38, "body_both"),
-        ("tire_slip", true, 30, "body_right"),
-        ("puddle_drag", true, 32, "body_left"),
-        ("suspension_impact", true, 82, "body_both"),
-        ("rpm_leds", false, 100, "light_led"),
-    ];
-
-    let effects = entries
-        .iter()
-        .map(|(id, enabled, intensity, route)| ForzaEffectConfig {
-            id: (*id).to_string(),
-            enabled: *enabled,
-            intensity: *intensity,
-            route: (*route).to_string(),
-        })
-        .collect();
-
-    ForzaTelemetryConfig {
-        body_rumble_mode: default_forza_body_rumble_mode(),
-        effects,
-    }
-    .normalized()
-}
-
-/// Rally preset for Assetto Corsa Rally. It reuses DSCC's normalized racing
-/// signal names, but tunes the surface and shift layers for a looser road feel.
-fn assetto_corsa_rally_preset() -> ForzaTelemetryConfig {
-    let entries: &[(&str, bool, u8, &str)] = &[
-        ("brake_resistance", true, 100, "l2"),
-        ("throttle_resistance", true, 92, "r2"),
-        ("abs_slip_pulse", true, 95, "l2"),
-        ("handbrake_wall", true, 115, "l2"),
-        ("rev_limiter_buzz", true, 90, "r2"),
-        (
-            "gear_shift_thump",
-            true,
-            FORZA_SHIFT_THUMP_DEFAULT_INTENSITY.saturating_add(22),
-            "r2_and_body",
-        ),
-        ("road_texture", true, 46, "body_both"),
-        ("rumble_strip", true, 35, "body_both"),
-        ("tire_slip", true, 62, "body_right"),
-        ("puddle_drag", false, 28, "body_left"),
-        ("suspension_impact", true, 64, "body_both"),
-        ("rpm_leds", false, 100, "light_led"),
-    ];
-
-    let effects = entries
-        .iter()
-        .map(|(id, enabled, intensity, route)| ForzaEffectConfig {
-            id: (*id).to_string(),
-            enabled: *enabled,
-            intensity: *intensity,
-            route: (*route).to_string(),
-        })
-        .collect();
-
-    ForzaTelemetryConfig {
-        body_rumble_mode: default_forza_body_rumble_mode(),
-        effects,
-    }
-    .normalized()
-}
-
-fn forza_horizon_trigger_preset() -> TriggerConfig {
-    TriggerConfig {
-        same_range: false,
-        l2_from: 0,
-        l2_to: 100,
-        r2_from: 4,
-        r2_to: 100,
-        l2_curve: TriggerCurve::from_ratio(FORZA_BRAKE_CURVE),
-        r2_curve: TriggerCurve::from_ratio(FORZA_THROTTLE_CURVE),
-        l2_curve_points: trigger_curve_points_from_curve(TriggerCurve::from_ratio(
-            FORZA_BRAKE_CURVE,
-        )),
-        r2_curve_points: trigger_curve_points_from_curve(TriggerCurve::from_ratio(
-            FORZA_THROTTLE_CURVE,
-        )),
-        effect: "Adaptive resistance".to_string(),
-        intensity: "Strong (Standard)".to_string(),
-        vibration: "Medium".to_string(),
-        vibration_mode: "Balanced".to_string(),
-    }
-    .normalized()
-}
 
 #[derive(Clone)]
 pub struct AgentState {
@@ -2231,23 +1960,6 @@ async fn hardware_output_loop(state: AgentState, interval_duration: Duration) {
                 .await;
         }
     }
-}
-
-pub fn init_tracing() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "dscc_agent=info,tower_http=info".into()),
-        )
-        .try_init();
-}
-
-pub fn app_paths() -> Option<AppPaths> {
-    ProjectDirs::from("dev", "DualSenseCommand", "DualSenseCommandCenter").map(|dirs| AppPaths {
-        config_dir: dirs.config_dir().display().to_string(),
-        data_dir: dirs.data_dir().display().to_string(),
-        log_dir: dirs.cache_dir().join("logs").display().to_string(),
-    })
 }
 
 #[cfg(test)]

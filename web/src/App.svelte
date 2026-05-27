@@ -38,6 +38,7 @@
     selectCurrentController,
     summarizeProfileTargets
   } from './app/controllerSelection';
+  import { markOnboardingDismissed, shouldOpenOnboarding } from './app/onboardingState';
   import {
     baseForzaTriggerDefaults,
     buildBuiltInProfileConfig,
@@ -57,7 +58,18 @@
     createQueuedThrottleTask,
     createTriggerInputPoller
   } from './app/runtimePolling';
+  import { uniquePartialErrorAreas } from './app/partialErrors';
   import { buildUiSupportBundle, downloadSupportBundleText } from './app/supportBundle';
+  import { toastDurationMs, toastToneForMessage, type ToastMessage, type ToastTone } from './app/toastState';
+  import {
+    UPDATE_RELEASE_PAGE_URL,
+    normalizeVersion,
+    readDismissedUpdateVersion,
+    type UpdateCheckState,
+    updateCheckErrorState,
+    updateCheckStateFromResult,
+    writeDismissedUpdateVersion
+  } from './app/updateState';
   import ControllersView from './lib/features/controllers/ControllersView.svelte';
   import HapticsAside from './lib/features/haptics/HapticsAside.svelte';
   import HapticsView from './lib/features/haptics/HapticsView.svelte';
@@ -104,7 +116,6 @@
     FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION,
     FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET,
     FORZA_ENDSTOP_WALL_OFFSET,
-    FORZA_SHIFT_THUMP_DEFAULT_INTENSITY,
     FORZA_THROTTLE_BASELINE_FORCE,
     FORZA_THROTTLE_ENDSTOP_FORCE,
     FORZA_THROTTLE_ENDSTOP_FORCE_BOOST,
@@ -124,6 +135,16 @@
     vibrationModeHelp,
     vibrationModeOptions
   } from './lib/features/haptics/hapticsOptions';
+  import {
+    clamp,
+    clampForzaIntensity,
+    defaultForzaEffects,
+    forzaIntensityFromPercent,
+    forzaIntensityPercent,
+    forzaPresetEffects,
+    normalizeEffectId,
+    normalizeForzaEffects
+  } from './app/hapticsState';
   import {
     achievementText,
     formatLastPlayed,
@@ -200,7 +221,6 @@
     ExportedProfile,
     ForzaBodyRumbleMode,
     ForzaEffectConfiguration,
-    ForzaEffectRoute,
     ProfileSummary,
     SteamInputBinding,
     SteamInputLayout,
@@ -212,20 +232,7 @@
   } from './lib/types';
 
   type TuningScope = 'none' | 'global' | 'game';
-  type ToastTone = 'success' | 'info' | 'error';
-  type ToastMessage = {
-    id: number;
-    tone: ToastTone;
-    message: string;
-  };
   type SupportBundleBusy = 'copy' | 'download' | '';
-  type UpdateCheckState = {
-    state: 'idle' | 'checking' | 'current' | 'available' | 'error';
-    currentVersion?: string;
-    latestVersion?: string;
-    releaseUrl?: string;
-    message?: string;
-  };
   $: activeBindingTargetGroups = bindingTargetGroupsForProvider(
     preparedSteamBindingTargetGroups,
     bridgeContextActive ? 'bridge' : 'steam'
@@ -245,10 +252,6 @@
   const BASE_FEEL_TEST_REFRESH_INTERVAL_MS = 35;
   const SNAPSHOT_INVALIDATION_DEBOUNCE_MS = 500;
   const LIVE_CONFIG_SYNC_DEBOUNCE_MS = 120;
-  const UPDATE_RELEASE_PAGE_URL = 'https://github.com/shiftedx/dualsense-command/releases/latest';
-  const UPDATE_DISMISSED_VERSION_KEY = 'dscc-update-dismissed-version';
-  const ONBOARDING_DISMISSED_KEY = 'dscc-onboarding-v1-dismissed';
-
   let snapshot: AppSnapshot | null = null;
   let loading = true;
   let error = '';
@@ -350,7 +353,6 @@
   let rightStickDeadzone = 0;
 
   let forzaEffects: ForzaEffectConfiguration[] = defaultForzaEffects();
-  const DEFAULT_FORZA_EFFECT_BY_ID = new Map(defaultForzaEffects().map((effect) => [effect.id, effect]));
   $: enabledForzaEffectCount = forzaEffects.filter((effect) => effect.enabled).length;
   $: allForzaEffectsEnabled = enabledForzaEffectCount === forzaEffectMetas.length;
   // Reactive lookup map so {@const tuning = ...} inside {#each} re-evaluates
@@ -728,49 +730,6 @@
       profiles[0].id;
   }
 
-  function defaultForzaEffects(): ForzaEffectConfiguration[] {
-    return forzaEffectMetas.map((effect) => ({
-      id: effect.id,
-      enabled: true,
-      intensity: effect.defaultIntensity,
-      route: effect.defaultRoute
-    }));
-  }
-
-  const forzaPresetEffects = (preset: 'base' | 'immersive'): ForzaEffectConfiguration[] => {
-    const entries: Array<[string, boolean, number, ForzaEffectRoute]> =
-      preset === 'immersive'
-        ? [
-            ['brake_resistance', true, 100, 'l2'],
-            ['throttle_resistance', true, 100, 'r2'],
-            ['abs_slip_pulse', true, 100, 'l2'],
-            ['handbrake_wall', true, 100, 'l2'],
-            ['rev_limiter_buzz', true, 62, 'r2'],
-            ['gear_shift_thump', true, FORZA_SHIFT_THUMP_DEFAULT_INTENSITY, 'r2_and_body'],
-            ['road_texture', true, 35, 'body_both'],
-            ['rumble_strip', true, 38, 'body_both'],
-            ['tire_slip', true, 30, 'body_right'],
-            ['puddle_drag', true, 32, 'body_left'],
-            ['suspension_impact', true, 82, 'body_both'],
-            ['rpm_leds', false, 100, 'light_led']
-          ]
-        : [
-            ['brake_resistance', true, 100, 'l2'],
-            ['throttle_resistance', true, 100, 'r2'],
-            ['abs_slip_pulse', true, 100, 'l2'],
-            ['handbrake_wall', true, 100, 'l2'],
-            ['rev_limiter_buzz', true, 55, 'r2'],
-            ['gear_shift_thump', true, FORZA_SHIFT_THUMP_DEFAULT_INTENSITY, 'r2_and_body'],
-            ['road_texture', true, 40, 'body_both'],
-            ['rumble_strip', false, 55, 'body_both'],
-            ['tire_slip', false, 65, 'body_right'],
-            ['puddle_drag', false, 50, 'body_left'],
-            ['suspension_impact', false, 70, 'body_both'],
-            ['rpm_leds', false, 100, 'light_led']
-          ];
-    return normalizeForzaEffects(entries.map(([id, enabled, intensity, route]) => ({ id, enabled, intensity, route })));
-  };
-
   const trackEffectActivity = (effect: CurrentEffectState) => {
     const now = Date.now();
     const nextActivity = { ...effectActivityUntil };
@@ -812,9 +771,7 @@
 
   $: partialErrors = snapshot?.partialErrors ?? [];
   $: showPartialErrorBanner = partialErrors.length > 0 && !partialErrorsDismissed;
-  $: partialErrorAreas = partialErrors
-    .map((entry) => partialErrorArea(entry.endpoint))
-    .filter((area, index, areas) => areas.indexOf(area) === index);
+  $: partialErrorAreas = uniquePartialErrorAreas(partialErrors.map((entry) => entry.endpoint));
   $: showUpdateBanner =
     updateCheck.state === 'available' &&
     Boolean(updateCheck.latestVersion) &&
@@ -827,47 +784,22 @@
     partialErrorsDismissed = true;
   };
 
-  function partialErrorArea(endpoint: string) {
-    if (endpoint.includes('controllers')) return 'controller diagnostics';
-    if (endpoint.includes('steam-input')) return 'Steam Input layouts';
-    if (endpoint.includes('input-bridge')) return 'DSCC Input Bridge';
-    if (endpoint.includes('profiles')) return 'profiles';
-    if (endpoint.includes('games') || endpoint.includes('steam-library')) return 'game library';
-    if (endpoint.includes('support')) return 'support bundle';
-    return 'agent data';
-  }
-
-  const normalizeVersion = (value: string | undefined | null) => (value ?? '').trim().replace(/^v/i, '');
-
   const loadDismissedUpdateVersion = () => {
     if (typeof window === 'undefined' || updateDismissalLoaded) return;
     updateDismissalLoaded = true;
-    try {
-      updateDismissedVersion = window.localStorage.getItem(UPDATE_DISMISSED_VERSION_KEY) ?? '';
-    } catch {
-      updateDismissedVersion = '';
-    }
+    updateDismissedVersion = readDismissedUpdateVersion();
   };
 
   const dismissUpdateBanner = () => {
     const version = updateCheck.latestVersion ?? '';
     updateDismissedVersion = version;
-    if (typeof window === 'undefined' || !version) return;
-    try {
-      window.localStorage.setItem(UPDATE_DISMISSED_VERSION_KEY, version);
-    } catch {
-      // Dismissal is convenience state; failing to persist it should not block use.
-    }
+    writeDismissedUpdateVersion(version);
   };
 
   const loadOnboardingPreference = () => {
     if (typeof window === 'undefined' || onboardingLoaded) return;
     onboardingLoaded = true;
-    try {
-      onboardingOpen = window.localStorage.getItem(ONBOARDING_DISMISSED_KEY) !== '1';
-    } catch {
-      onboardingOpen = false;
-    }
+    onboardingOpen = shouldOpenOnboarding();
   };
 
   const openOnboarding = () => {
@@ -876,12 +808,7 @@
 
   const dismissOnboarding = () => {
     onboardingOpen = false;
-    if (typeof window === 'undefined') return;
-    try {
-      window.localStorage.setItem(ONBOARDING_DISMISSED_KEY, '1');
-    } catch {
-      // First-run help is optional convenience state.
-    }
+    markOnboardingDismissed();
   };
 
   const checkForAppUpdate = async (currentVersionRaw: string) => {
@@ -893,37 +820,13 @@
     updateCheck = { state: 'checking', currentVersion };
     try {
       const result = await getAppUpdateCheck(currentVersion);
-      updateCheck = result.updateAvailable
-        ? {
-            state: 'available',
-            currentVersion: result.currentVersion,
-            latestVersion: result.latestVersion,
-            releaseUrl: result.releaseUrl
-          }
-        : {
-            state: 'current',
-            currentVersion: result.currentVersion,
-            latestVersion: result.latestVersion,
-            releaseUrl: result.releaseUrl
-          };
+      updateCheck = updateCheckStateFromResult(result);
     } catch (caught) {
-      updateCheck = {
-        state: 'error',
-        currentVersion,
-        message: caught instanceof Error ? caught.message : 'Update check failed'
-      };
+      updateCheck = updateCheckErrorState(currentVersion, caught);
       console.warn('DSCC update check failed', caught);
     }
   };
 
-  const clamp = (value: number, min = 0, max = 100) => Math.max(min, Math.min(max, value));
-  const clampForzaIntensity = (value: number) => Math.round(clamp(Number(value) || 0, 0, 255));
-  const clampForzaPercent = (value: number | string) => {
-    const numeric = typeof value === 'number' ? value : Number(value);
-    return Math.round(clamp(Number.isFinite(numeric) ? numeric : 0, 0, 100));
-  };
-  const forzaIntensityPercent = (intensity: number) => Math.round((clampForzaIntensity(intensity) / 255) * 100);
-  const forzaIntensityFromPercent = (percent: number | string) => Math.round(clampForzaPercent(percent) * 2.55);
   type TriggerRangeEdge = 'from' | 'to';
   const appViewFromHash = (): AppView => {
     if (typeof window === 'undefined') return 'games';
@@ -948,16 +851,6 @@
     setViewHash(view);
   };
 
-  const toastToneForMessage = (message: string, fallback: ToastTone = 'success'): ToastTone => {
-    if (/(unable|failed|error|blocked|denied|unavailable|not found|cannot|could not|requires|invalid|refusing)/i.test(message)) {
-      return 'error';
-    }
-    if (/(saving|validating|loading|testing|waiting|restart)/i.test(message)) {
-      return 'info';
-    }
-    return fallback;
-  };
-
   const dismissToast = (id: number) => {
     toastMessages = toastMessages.filter((toast) => toast.id !== id);
   };
@@ -970,7 +863,7 @@
       ...toastMessages.filter((toast) => toast.message !== text),
       { id, tone, message: text }
     ].slice(-4);
-    window.setTimeout(() => dismissToast(id), tone === 'error' ? 6500 : 4200);
+    window.setTimeout(() => dismissToast(id), toastDurationMs(tone));
   };
 
   const normalizedSteamControllerType = (controllerLike: string | null | undefined) => {
@@ -1299,7 +1192,6 @@
     scheduleBaseFeelTestRefresh();
     scheduleLiveControllerConfigSync();
   };
-  const normalizeEffectId = (id: string) => id.replaceAll('-', '_');
   const selectedProfileTargetIds = () =>
     resolveSelectedProfileTargetIds({
       profileTargetControllerIds,
@@ -1564,19 +1456,6 @@
     }
   };
 
-  const normalizeForzaEffects = (effects: ForzaEffectConfiguration[] | undefined): ForzaEffectConfiguration[] => {
-    const source = new Map((effects ?? []).map((effect) => [effect.id, effect]));
-    return forzaEffectMetas.map((meta) => {
-      const effect = source.get(meta.id);
-      const route = effect?.route && forzaRoutes.some((item) => item.value === effect.route) ? effect.route : meta.defaultRoute;
-      return {
-        id: meta.id,
-        enabled: effect?.enabled ?? true,
-        intensity: clampForzaIntensity(effect?.intensity ?? meta.defaultIntensity),
-        route
-      };
-    });
-  };
   const isEdgeController = () => controller?.family === 'DualSense Edge';
 
   const editableConfigFromController = (config: ControllerConfiguration): EditableControllerConfig =>
