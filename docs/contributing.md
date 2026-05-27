@@ -107,6 +107,17 @@ Global Profile is controller-only tuning. Do not show telemetry streams, RPM
 controls, adapter packet status, or game-signal routing until a supported game
 profile is selected.
 
+## Documentation Prose
+
+Use direct release and support copy:
+
+- State the fact first. Skip setup phrases.
+- Name the actor when describing security, install, or hardware behavior.
+- Use active voice.
+- Cut filler, softeners, and broad claims.
+- Prefer two precise bullets over three vague ones.
+- Avoid long dash punctuation in committed docs.
+
 ## Backend/API Changes
 
 - Add typed request/response structs.

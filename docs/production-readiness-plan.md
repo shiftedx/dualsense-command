@@ -2,8 +2,8 @@
 
 Last updated: 2026-05-26
 
-DSCC `0.3.1` is a public unsigned Windows beta. It is ready for testers, but it
-should not be called broadly production-ready yet.
+DSCC `0.3.2` is a public unsigned Windows beta. Testers can use it now. Do not
+call it production-ready until the hardware matrix is complete.
 
 ## Current Status
 
@@ -87,12 +87,14 @@ Run this before public releases unless the change is docs-only:
 
 ```powershell
 cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
-cargo +stable-x86_64-pc-windows-gnu test --workspace
+cargo +stable-x86_64-pc-windows-gnu test --workspace --all-features
 cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warnings
 npm.cmd --prefix web run typecheck
+npm.cmd --prefix web run test:source-audit
 npm.cmd --prefix web run build
 npm.cmd --prefix web run test:button-map
 npm.cmd --prefix web run test:release-size
+npm.cmd --prefix web run test:visual-smoke
 ```
 
 Also confirm:
@@ -107,8 +109,8 @@ Also confirm:
   are uploaded.
 - The final MSI installs, launches, upgrades, and uninstalls cleanly.
   Use `packaging\windows-installer-smoke.ps1` for the repeatable Windows smoke.
-- Hardware-matrix entries used in release notes are marked Verified or clearly
-  described as pending physical validation.
+- Hardware-matrix entries used in release notes are marked Verified or listed
+  as pending physical validation.
 
 ## Security Checklist
 

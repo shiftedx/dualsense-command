@@ -101,7 +101,7 @@ Current API mapping:
   structure from incompatible implementations.
 - Do not bundle Sony, game, or third-party assets unless redistribution rights
   are documented.
-- Target explicit game ids. Do not merge separate games into one module just
+- Target explicit game ids. Do not merge separate games into one module only
   because they share an adapter.
 
 For a complete built-in example, see [Game Module Guide](game-module-contribution-guide.md).

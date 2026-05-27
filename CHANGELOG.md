@@ -1,3 +1,53 @@
+# DualSense Command Center 0.3.2
+
+Release date: 2026-05-27
+
+0.3.2 tightens the repo, bridge path, and release checks. It keeps the public
+API stable.
+
+## Security And Privacy
+
+- Source audit now checks tracked and local source files, including the
+  HIDMaestro broker, for banned raw-HID, driver-payload, private-path, and
+  leftover development surfaces.
+- Sensitive mutation routes have broader same-origin regression coverage.
+- Ignored local research, handoff, validation, build, broker, and web artifacts
+  remain outside Git.
+
+## Performance And Structure
+
+- The HIDMaestro broker accepts only the compact typed update frame for bridge
+  sessions. The nested state fallback was removed from the 8 ms bridge path.
+- `dscc-agent` API handlers and effect runtime helpers are split into focused
+  modules.
+- Button Mapping and Haptics CSS now live in feature-owned files with no
+  production `legacy` style bucket.
+- App helpers for support bundles, game presentation, profile selection, and
+  haptics presentation moved out of `App.svelte`.
+
+## Contributor Workflow
+
+- The game module guide now maps common tasks to the files contributors should
+  edit when adding supported games, local-app profiles, Steam discovery, UDP
+  parsers, shared-memory sources, or haptic defaults.
+- Architecture docs now match the route, effect, game-detection, and web app
+  module boundaries.
+- CI and release checks include source audit, button-map p95, release-size
+  budget, and Playwright visual smoke across app routes.
+
+## Validation Gate
+
+This release was cut after a clean run of:
+
+```powershell
+npm.cmd run check
+cargo +stable-x86_64-pc-windows-gnu build -p dscc-agent -p dscc-tray -p dscc-cli --release --target x86_64-pc-windows-gnu
+```
+
+Windows users should choose the `standard` MSI unless they need DSCC Input
+Bridge for local non-Steam app profiles. Verify downloads with the matching
+SHA256 file.
+
 # DualSense Command Center 0.3.1
 
 Latest release notes are listed first. For install steps, start with the
