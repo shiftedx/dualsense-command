@@ -1,11 +1,16 @@
 <script lang="ts">
-  import { Cable, CircleHelp, ClipboardCopy, CopyPlus, Download, ExternalLink, LifeBuoy, Minus, Plus, RefreshCw, RotateCcw, Save } from '@lucide/svelte';
+  import { Cable, CircleHelp, ExternalLink, LifeBuoy, RefreshCw } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import Tooltip from './components/Tooltip.svelte';
-  import InitialBadge from './components/InitialBadge.svelte';
-  import AddGameDialog from './components/AddGameDialog.svelte';
+  import ContextRibbon from './components/ContextRibbon.svelte';
+  import AddGameDialog from './lib/features/games/AddGameDialog.svelte';
+  import GamesView from './lib/features/games/GamesView.svelte';
   import OnboardingTutorial from './components/OnboardingTutorial.svelte';
-  import { createAppRuntime } from './lib/appRuntime';
+  import ViewNav from './components/ViewNav.svelte';
+  import SupportPanel from './components/SupportPanel.svelte';
+  import ToastStack from './components/ToastStack.svelte';
+  import { appViews, guardView, hashForView, viewFromHash, viewTooltips } from './app/navigation';
+  import { createAppRuntime } from './app/runtime';
   import {
     ButtonMappingView,
     assembleSteamBindingRaw,
@@ -18,9 +23,32 @@
     steamBindingTargetPart,
     steamSlotGlyphs
   } from './lib/features/buttonMapping';
+  import {
+    bindingTargetGroupsForProvider,
+    prepareBindingTargetGroups
+  } from './lib/features/buttonMapping/buttonMappingState';
   import ControllersView from './lib/features/controllers/ControllersView.svelte';
+  import HapticsAside from './lib/features/haptics/HapticsAside.svelte';
   import HapticsView from './lib/features/haptics/HapticsView.svelte';
+  import TriggerCurvesPanel from './lib/features/haptics/TriggerCurvesPanel.svelte';
+  import {
+    TRIGGER_CURVE_POINT_MAX,
+    TRIGGER_CURVE_POINT_MIN,
+    TRIGGER_CURVE_SAMPLE_POSITIONS,
+    clampUnit,
+    defaultTriggerCurve,
+    type ForzaEffectMeta,
+    type LightbarColorTarget,
+    normalizeStickDeadzone,
+    normalizeTriggerCurve,
+    normalizeTriggerCurvePoints,
+    normalizeTriggerPercent,
+    triggerCurvePointOutput,
+    triggerCurvePointsFromCurve
+  } from './lib/features/haptics/hapticsModel';
+  import type { AppView } from './app/navigation';
   import type { SteamBindingSlot, SteamMirrorGroup } from './lib/features/buttonMapping';
+  import type { PreparedSteamBindingTargetGroup } from './lib/features/buttonMapping/buttonMappingState';
   import {
     activateProfile,
     addCustomGame,
@@ -86,17 +114,6 @@
     ValidateLocalAppRequest
   } from './lib/types';
 
-  type ForzaEffectMeta = {
-    id: string;
-    label: string;
-    signal: string;
-    group: 'Trigger' | 'Body' | 'Cue' | 'Light';
-    defaultIntensity: number;
-    defaultRoute: ForzaEffectRoute;
-    help: string;
-  };
-  type ColorPickerTarget = 'lightbar' | 'rpm';
-  type AppView = 'games' | 'controllers' | 'haptics' | 'buttonMapping';
   type TuningScope = 'none' | 'global' | 'game';
   type ToastTone = 'success' | 'info' | 'error';
   type ToastMessage = {
@@ -118,18 +135,6 @@
     options: Array<{ label: string; raw: string }>;
   };
 
-  const appViews: Array<{ id: AppView; label: string; hash: string }> = [
-    { id: 'games', label: 'Profiles', hash: '#/games' },
-    { id: 'controllers', label: 'Controllers', hash: '#/controllers' },
-    { id: 'haptics', label: 'Adaptive Triggers & Haptics', hash: '#/adaptive-triggers-haptics' },
-    { id: 'buttonMapping', label: 'Button Mapping', hash: '#/button-mapping' }
-  ];
-  const viewTooltips: Record<AppView, string> = {
-    games: 'Choose Global Profile or a supported game scope for tuning.',
-    controllers: 'View controller details, live inputs, calibration readings, and DualSense Edge onboard slots.',
-    haptics: 'Tune L2/R2 curves, manual trigger tests, body haptics, lightbar colors, and telemetry routes.',
-    buttonMapping: 'Mirror and edit Steam Input assignments for the selected game/controller layout.'
-  };
   const EMPTY_STEAM_INPUT_BINDINGS: SteamInputBinding[] = [];
   const EMPTY_STEAM_BINDING_MAP = new Map<string, SteamInputBinding>();
   const EMPTY_STEAM_MIRROR_GROUPS: SteamMirrorGroup[] = [];
@@ -303,11 +308,6 @@
     }
   ];
 
-  type PreparedSteamBindingTargetGroup = {
-    label: string;
-    options: Array<{ label: string; raw: string; targetKey: string; searchText: string }>;
-  };
-
   const defaultButtonAssignments = (edge = false): EditableControllerConfig['buttons'] => [
     { key: 'Cross', label: 'Cross' },
     { key: 'Circle', label: 'Circle' },
@@ -383,25 +383,11 @@
     const extras = [...byKey.values()].filter((button) => !defaultKeys.has(button.key)).slice(0, Math.max(0, 24 - ordered.length));
     return [...ordered, ...extras];
   };
-  const preparedSteamBindingTargetGroups: PreparedSteamBindingTargetGroup[] = steamBindingTargetGroups.map((group) => ({
-    label: group.label,
-    options: group.options.map((option) => ({
-      ...option,
-      targetKey: steamBindingTargetPart(option.raw),
-      searchText: `${group.label} ${option.label} ${option.raw}`.toLowerCase()
-    }))
-  }));
-  $: activeBindingTargetGroups = bridgeContextActive
-    ? preparedSteamBindingTargetGroups
-      .map((group) => ({
-        ...group,
-        options: group.options.filter((option) => {
-          const raw = option.raw.trim().toLowerCase();
-          return raw.startsWith('xinput_button ') && !raw.includes('touchpad');
-        })
-      }))
-      .filter((group) => group.options.length > 0)
-    : preparedSteamBindingTargetGroups;
+  const preparedSteamBindingTargetGroups: PreparedSteamBindingTargetGroup[] = prepareBindingTargetGroups(steamBindingTargetGroups);
+  $: activeBindingTargetGroups = bindingTargetGroupsForProvider(
+    preparedSteamBindingTargetGroups,
+    bridgeContextActive ? 'bridge' : 'steam'
+  );
 
   const resetSteamBindingDraft = () => {
     if (selectedSteamBinding) {
@@ -659,15 +645,6 @@
   let addGameEntries: SteamLibraryEntry[] = [];
   let addGameError = '';
   let addGameBusyAppId = '';
-  let scopePickerOpen = false;
-  let profilePickerOpen = false;
-  let controllerPickerOpen = false;
-  let scopeTriggerEl: HTMLButtonElement | null = null;
-  let profileTriggerEl: HTMLButtonElement | null = null;
-  let controllerTriggerEl: HTMLButtonElement | null = null;
-  let scopeMenuPos = { left: 0, top: 0, minWidth: 240 };
-  let profileMenuPos = { left: 0, top: 0, minWidth: 240 };
-  let controllerMenuPos = { left: 0, top: 0, minWidth: 240 };
   let applyMessage = '';
   let appSettingsMessage = '';
   let appSettingsBusy = false;
@@ -710,8 +687,6 @@
   let saveAsProfileName = '';
   let profileSaveAsBusy = false;
   let profileFileBusy = false;
-  let profileImportInput: HTMLInputElement | undefined;
-  let profilePanelEl: HTMLDivElement | undefined;
   let appRuntime: ReturnType<typeof createAppRuntime> | undefined;
   let liveConfigSyncTimer: number | undefined;
   let liveConfigSyncInFlight = false;
@@ -767,165 +742,6 @@
   let leftStickDeadzone = 0;
   let rightStickDeadzone = 0;
 
-  // Theme-styled color picker (replaces the native OS color dialog).
-  const colorPresets = [
-    '#3BAEFF', // PS5 vibrant blue (theme accent)
-    '#003791', // PlayStation classic blue
-    '#4cc9f0', // Cyan
-    '#ffffff', // White
-    '#ec4899', // Pink
-    '#a855f7', // Purple
-    '#fb923c', // Orange
-    '#ef4444', // Red
-    '#4ade80', // Green
-    '#facc15'  // Yellow
-  ];
-  let pickerOpen = false;
-  let pickerTarget: ColorPickerTarget = 'lightbar';
-  let pickerHue = 195;
-  let pickerSat = 0.7;
-  let pickerVal = 0.94;
-  let pickerHex = lightbarColor;
-  let pickerColor = lightbarColor;
-  let pickerEl: HTMLDivElement | undefined;
-  let lightbarPillEl: HTMLButtonElement | undefined;
-  let rpmPillEl: HTMLButtonElement | undefined;
-
-  // Keep the displayed hex in sync with external color changes (profile load).
-  $: pickerColor = pickerTarget === 'rpm' ? rpmColor : lightbarColor;
-  $: if (!pickerOpen) pickerHex = pickerColor;
-
-  function hsvToHex(h: number, s: number, v: number): string {
-    const hh = (((h % 360) + 360) % 360) / 60;
-    const c = v * s;
-    const x = c * (1 - Math.abs((hh % 2) - 1));
-    const m = v - c;
-    let r = 0, g = 0, b = 0;
-    if (hh < 1) { r = c; g = x; }
-    else if (hh < 2) { r = x; g = c; }
-    else if (hh < 3) { g = c; b = x; }
-    else if (hh < 4) { g = x; b = c; }
-    else if (hh < 5) { r = x; b = c; }
-    else { r = c; b = x; }
-    const toHex = (n: number) => Math.round((n + m) * 255).toString(16).padStart(2, '0');
-    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-  }
-  function hexToHsv(hex: string): { h: number; s: number; v: number } | null {
-    const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
-    if (!m) return null;
-    const r = parseInt(m[1].slice(0, 2), 16) / 255;
-    const g = parseInt(m[1].slice(2, 4), 16) / 255;
-    const b = parseInt(m[1].slice(4, 6), 16) / 255;
-    const max = Math.max(r, g, b);
-    const d = max - Math.min(r, g, b);
-    let h = 0;
-    if (d !== 0) {
-      if (max === r) h = ((g - b) / d) % 6;
-      else if (max === g) h = (b - r) / d + 2;
-      else h = (r - g) / d + 4;
-      h *= 60;
-      if (h < 0) h += 360;
-    }
-    return { h, s: max === 0 ? 0 : d / max, v: max };
-  }
-
-  function setPickerColor(hex: string) {
-    if (pickerTarget === 'rpm') {
-      rpmColor = hex;
-    } else {
-      lightbarColor = hex;
-    }
-    pickerHex = hex;
-    scheduleLiveControllerConfigSync();
-  }
-  function pickerFallback(target: ColorPickerTarget) {
-    return target === 'rpm' ? { h: 4, s: 0.82, v: 1 } : { h: 195, s: 0.7, v: 0.94 };
-  }
-  function openPicker(target: ColorPickerTarget = 'lightbar') {
-    if (!lightbarEnabled) return;
-    pickerTarget = target;
-    const color = target === 'rpm' ? rpmColor : lightbarColor;
-    const hsv = hexToHsv(color) ?? pickerFallback(target);
-    pickerHue = hsv.h;
-    pickerSat = hsv.s;
-    pickerVal = hsv.v;
-    pickerHex = color;
-    pickerOpen = true;
-  }
-  function closePicker() { pickerOpen = false; }
-  function togglePicker(target: ColorPickerTarget = 'lightbar') {
-    pickerOpen && pickerTarget === target ? closePicker() : openPicker(target);
-  }
-
-  function commitHsv() {
-    const hex = hsvToHex(pickerHue, pickerSat, pickerVal);
-    setPickerColor(hex);
-  }
-  function commitPreset(hex: string) {
-    setPickerColor(hex);
-    const hsv = hexToHsv(hex) ?? { h: 0, s: 0, v: 0 };
-    pickerHue = hsv.h;
-    pickerSat = hsv.s;
-    pickerVal = hsv.v;
-  }
-  function commitHex() {
-    const m = /^#?([0-9a-f]{6})$/i.exec(pickerHex.trim());
-    if (!m) { pickerHex = pickerColor; return; }
-    const hex = '#' + m[1].toLowerCase();
-    setPickerColor(hex);
-    const hsv = hexToHsv(hex) ?? { h: 0, s: 0, v: 0 };
-    pickerHue = hsv.h;
-    pickerSat = hsv.s;
-    pickerVal = hsv.v;
-  }
-  function handleHueInput(event: Event) {
-    pickerHue = +(event.target as HTMLInputElement).value;
-    commitHsv();
-  }
-  function clampUnit(value: number) {
-    return Math.max(0, Math.min(1, value));
-  }
-  function handleSvPointer(event: PointerEvent) {
-    const target = event.currentTarget as HTMLElement;
-    target.setPointerCapture(event.pointerId);
-    const apply = (e: PointerEvent) => {
-      const rect = target.getBoundingClientRect();
-      pickerSat = clampUnit((e.clientX - rect.left) / rect.width);
-      pickerVal = 1 - clampUnit((e.clientY - rect.top) / rect.height);
-      commitHsv();
-    };
-    apply(event);
-    const move = (e: PointerEvent) => apply(e);
-    const up = (e: PointerEvent) => {
-      try { target.releasePointerCapture(e.pointerId); } catch {}
-      target.removeEventListener('pointermove', move);
-      target.removeEventListener('pointerup', up);
-      target.removeEventListener('pointercancel', up);
-    };
-    target.addEventListener('pointermove', move);
-    target.addEventListener('pointerup', up);
-    target.addEventListener('pointercancel', up);
-  }
-  function handleSvKeydown(event: KeyboardEvent) {
-    const step = event.shiftKey ? 0.1 : 0.01;
-    if (event.key === 'ArrowLeft') pickerSat = clampUnit(pickerSat - step);
-    else if (event.key === 'ArrowRight') pickerSat = clampUnit(pickerSat + step);
-    else if (event.key === 'ArrowDown') pickerVal = clampUnit(pickerVal - step);
-    else if (event.key === 'ArrowUp') pickerVal = clampUnit(pickerVal + step);
-    else return;
-
-    event.preventDefault();
-    commitHsv();
-  }
-  function handleColorDocClick(event: MouseEvent) {
-    if (!pickerOpen) return;
-    const t = event.target as Node;
-    if (pickerEl?.contains(t) || lightbarPillEl?.contains(t) || rpmPillEl?.contains(t)) return;
-    closePicker();
-  }
-  function handleColorKey(event: KeyboardEvent) {
-    if (event.key === 'Escape' && pickerOpen) closePicker();
-  }
   let forzaEffects: ForzaEffectConfiguration[] = defaultForzaEffects();
   const DEFAULT_FORZA_EFFECT_BY_ID = new Map(defaultForzaEffects().map((effect) => [effect.id, effect]));
   $: enabledForzaEffectCount = forzaEffects.filter((effect) => effect.enabled).length;
@@ -936,12 +752,14 @@
   $: forzaEffectsById = new Map(forzaEffects.map((effect) => [effect.id, effect]));
 
   $: controllers = snapshot?.controllers ?? [];
-  $: if (controllers.length > 0 && !controllers.some((item) => item.id === selectedControllerId)) {
-    selectedControllerId = controllers[0].id;
-  }
-  $: controller = controllers.find((item) => item.id === selectedControllerId) ?? controllers[0];
   $: connectedControllers = controllers.filter((item) => item.connected);
   $: connectedControllerIds = connectedControllers.map((item) => item.id);
+  $: if (connectedControllers.length > 0 && !connectedControllers.some((item) => item.id === selectedControllerId)) {
+    selectedControllerId = connectedControllers[0].id;
+  } else if (connectedControllers.length === 0 && controllers.length > 0 && !controllers.some((item) => item.id === selectedControllerId)) {
+    selectedControllerId = controllers[0].id;
+  }
+  $: controller = connectedControllers.find((item) => item.id === selectedControllerId) ?? connectedControllers[0] ?? null;
   $: {
     const validTargets = profileTargetControllerIds.filter((id) => connectedControllerIds.includes(id));
     const fallbackTarget =
@@ -1029,11 +847,13 @@
     selectedTuningGameId = '';
   }
   $: tuningReady = Boolean(controller && (selectedTuningScope === 'global' || selectedTuningGame));
-  $: buttonMappingReady = Boolean(controller && (selectedTuningGame || selectedTuningScope === 'global'));
-  $: if (!tuningReady && activeView !== 'games' && activeView !== 'controllers') {
-    activeView = 'games';
-  } else if (activeView === 'buttonMapping' && !buttonMappingReady) {
-    activeView = 'haptics';
+  $: buttonMappingReady = Boolean(controller && selectedTuningScope === 'game' && selectedTuningGame);
+  $: {
+    const guardedView = guardView(activeView, { tuningReady, buttonMappingReady });
+    if (guardedView !== activeView) {
+      activeView = guardedView;
+      setViewHash(guardedView);
+    }
   }
   $: profileContextGame = selectedTuningScope === 'game' ? selectedTuningGame : null;
   $: profileContextGameId = profileContextGame?.gameId ?? null;
@@ -1076,6 +896,11 @@
     gameArtwork(steamContextGame, 'banner') ??
     gameArtwork(steamContextGame, 'icon') ??
     '';
+  $: steamContextBackdropArt =
+    gameArtwork(steamContextGame, 'banner') ??
+    gameArtwork(steamContextGame, 'hero') ??
+    gameArtwork(steamContextGame, 'capsule') ??
+    '';
   $: steamContextMeta = steamContextGame
     ? [
         gameProviderMeta(steamContextGame),
@@ -1100,7 +925,8 @@
       : activeProfileHeader.scope === 'Game'
         ? `Custom / ${steamContextGame?.name ?? 'game'}`
         : 'Custom / Global';
-    return activeProfileHeader.id === activeProfileId ? `${scope} / live` : `${scope} / editing`;
+    const mode = activeProfileHeader.id === activeProfileId ? 'Live profile' : 'Editing profile';
+    return profileConfigDirty ? `${scope} / ${mode} / unsaved changes` : `${scope} / ${mode}`;
   })();
   $: buttonMappingActive = activeView === 'buttonMapping';
   $: steamInputStatus = snapshot?.steamInput;
@@ -1357,6 +1183,9 @@
 
   $: partialErrors = snapshot?.partialErrors ?? [];
   $: showPartialErrorBanner = partialErrors.length > 0 && !partialErrorsDismissed;
+  $: partialErrorAreas = partialErrors
+    .map((entry) => partialErrorArea(entry.endpoint))
+    .filter((area, index, areas) => areas.indexOf(area) === index);
   $: showUpdateBanner =
     updateCheck.state === 'available' &&
     Boolean(updateCheck.latestVersion) &&
@@ -1368,6 +1197,16 @@
   const dismissPartialErrors = () => {
     partialErrorsDismissed = true;
   };
+
+  function partialErrorArea(endpoint: string) {
+    if (endpoint.includes('controllers')) return 'controller diagnostics';
+    if (endpoint.includes('steam-input')) return 'Steam Input layouts';
+    if (endpoint.includes('input-bridge')) return 'DSCC Input Bridge';
+    if (endpoint.includes('profiles')) return 'profiles';
+    if (endpoint.includes('games') || endpoint.includes('steam-library')) return 'game library';
+    if (endpoint.includes('support')) return 'support bundle';
+    return 'agent data';
+  }
 
   const normalizeVersion = (value: string | undefined | null) => (value ?? '').trim().replace(/^v/i, '');
 
@@ -1470,86 +1309,27 @@
     endstopForce: number;
     points: TriggerCurvePoint[];
   };
-  const defaultTriggerCurve = (side: TriggerSide) => (side === 'l2' ? 1.35 : 2.25);
-  const TRIGGER_CURVE_POINT_MIN = 4;
-  const TRIGGER_CURVE_POINT_MAX = 8;
-  const TRIGGER_CURVE_SAMPLE_POSITIONS = Array.from({ length: 101 }, (_, index) => index / 100);
-
   const appViewFromHash = (): AppView => {
     if (typeof window === 'undefined') return 'games';
-    if (window.location.hash === '#/controllers') return 'controllers';
-    if (window.location.hash === '#/button-mapping') return buttonMappingReady ? 'buttonMapping' : tuningReady ? 'haptics' : 'games';
-    if (window.location.hash === '#/adaptive-triggers-haptics') return tuningReady ? 'haptics' : 'games';
-    return 'games';
+    return viewFromHash(window.location.hash, { tuningReady, buttonMappingReady });
   };
 
   const setViewHash = (view: AppView) => {
     if (typeof window === 'undefined') return;
-    const nextHash = appViews.find((item) => item.id === view)?.hash ?? appViews[0].hash;
+    const nextHash = hashForView(view);
     if (window.location.hash !== nextHash) window.location.hash = nextHash;
   };
 
-  const navigateToView = (view: AppView) => {
-    if (view !== 'games' && view !== 'controllers' && !tuningReady) view = 'games';
-    if (view === 'buttonMapping' && !buttonMappingReady) view = tuningReady ? 'haptics' : 'games';
+  const syncViewFromHash = () => {
+    const view = appViewFromHash();
     activeView = view;
     setViewHash(view);
   };
 
-  const normalizeTriggerPercent = (value: number | string) => {
-    const numeric = typeof value === 'number' ? value : Number(value);
-    return Math.round(clamp(Number.isFinite(numeric) ? numeric : 0, 0, 100));
-  };
-
-  const normalizeTriggerCurve = (value: number | string | undefined, fallback = 1.35) => {
-    const numeric = typeof value === 'number' ? value : Number(value);
-    const safe = Number.isFinite(numeric) ? numeric : fallback;
-    return Math.round(clamp(safe, 0.5, 3.5) * 100) / 100;
-  };
-
-  const triggerCurvePointsFromCurve = (curve: number): TriggerCurvePoint[] =>
-    [0, 25, 50, 75, 100].map((input) => ({
-      input,
-      output: normalizeTriggerPercent(Math.pow(input / 100, curve) * 100)
-    }));
-
-  const normalizeTriggerCurvePoints = (
-    points: TriggerCurvePoint[] | undefined,
-    fallbackCurve = 1.35
-  ): TriggerCurvePoint[] => {
-    if (!points || points.length < TRIGGER_CURVE_POINT_MIN) {
-      return triggerCurvePointsFromCurve(fallbackCurve);
-    }
-
-    const deduped = new Map<number, TriggerCurvePoint>();
-    for (const point of points) {
-      const input = normalizeTriggerPercent(point?.input ?? 0);
-      const output = normalizeTriggerPercent(point?.output ?? 0);
-      deduped.set(input, { input, output });
-    }
-    deduped.set(0, { input: 0, output: 0 });
-    deduped.set(100, { input: 100, output: 100 });
-    const sorted = [...deduped.values()].sort((a, b) => a.input - b.input);
-    if (sorted.length < TRIGGER_CURVE_POINT_MIN) return triggerCurvePointsFromCurve(fallbackCurve);
-    if (sorted.length <= TRIGGER_CURVE_POINT_MAX) return sorted;
-    return [sorted[0], ...sorted.slice(1, TRIGGER_CURVE_POINT_MAX - 1), sorted[sorted.length - 1]];
-  };
-
-  const triggerCurvePointOutput = (points: TriggerCurvePoint[], active: number) => {
-    const normalized = normalizeTriggerCurvePoints(points, 1);
-    const x = clampUnit(active);
-    for (let index = 0; index < normalized.length - 1; index += 1) {
-      const left = normalized[index];
-      const right = normalized[index + 1];
-      const leftInput = left.input / 100;
-      const rightInput = right.input / 100;
-      if (x >= leftInput && x <= rightInput) {
-        if (rightInput <= leftInput) return right.output / 100;
-        const ratio = (x - leftInput) / (rightInput - leftInput);
-        return (left.output + (right.output - left.output) * ratio) / 100;
-      }
-    }
-    return (normalized[normalized.length - 1]?.output ?? 0) / 100;
+  const navigateToView = (view: AppView) => {
+    view = guardView(view, { tuningReady, buttonMappingReady });
+    activeView = view;
+    setViewHash(view);
   };
 
   const toastToneForMessage = (message: string, fallback: ToastTone = 'success'): ToastTone => {
@@ -1594,7 +1374,8 @@
     const appId = game?.appId ?? null;
     const controllerType = normalizedSteamControllerType(controllerFamily);
     const sameApp = appId ? layouts.filter((layout) => layout.appId === appId) : [];
-    const candidates = sameApp.length ? sameApp : layouts;
+    if (!appId || !sameApp.length) return null;
+    const candidates = sameApp;
     return (
       candidates.find((layout) => layout.controllerType === controllerType) ??
       candidates.find((layout) => layout.controllerType === 'controller_ps5_edge') ??
@@ -1602,6 +1383,25 @@
       candidates[0] ??
       null
     );
+  };
+
+  const inputBridgeBindingProfileId = () => {
+    if (!profileContextGameId) return null;
+    const selectedProfileId = selectedOverrideProfileId || profileContextDefaultProfileId;
+    const selectedProfile = profiles.find((profile) => profile.id === selectedProfileId);
+    if (
+      selectedProfile &&
+      !selectedProfile.builtIn &&
+      selectedProfile.scope === 'Game' &&
+      selectedProfile.gameId === profileContextGameId
+    ) {
+      return selectedProfile.id;
+    }
+    return profiles.find((profile) =>
+      !profile.builtIn &&
+      profile.scope === 'Game' &&
+      profile.gameId === profileContextGameId
+    )?.id ?? null;
   };
 
   // Update steamBindingDraft when one of the structured fields (target / label)
@@ -1711,7 +1511,7 @@
       try {
         const response = await writeInputBridgeBinding({
           controllerId: controller.id,
-          profileId: activeProfileId || null,
+          profileId: inputBridgeBindingProfileId(),
           inputId: bindingToSave.inputId,
           target: rawBinding,
           dryRun
@@ -2117,110 +1917,12 @@
     setApplyMessage(`Added ${response.game.name}. DSCC Bridge mapping is available for this local app.`);
   };
 
-  const updateRibbonMenuPositions = () => {
-    if (scopeTriggerEl) {
-      const rect = scopeTriggerEl.getBoundingClientRect();
-      scopeMenuPos = {
-        left: rect.left,
-        top: rect.bottom + 6,
-        minWidth: Math.max(240, rect.width)
-      };
-    }
-    if (profileTriggerEl) {
-      const rect = profileTriggerEl.getBoundingClientRect();
-      profileMenuPos = {
-        left: rect.left,
-        top: rect.bottom + 6,
-        minWidth: Math.max(260, rect.width)
-      };
-    }
-    if (controllerTriggerEl) {
-      const rect = controllerTriggerEl.getBoundingClientRect();
-      controllerMenuPos = {
-        left: rect.left,
-        top: rect.bottom + 6,
-        minWidth: Math.max(260, rect.width)
-      };
-    }
-  };
-
-  const toggleScopePicker = () => {
-    if (!scopePickerOpen) updateRibbonMenuPositions();
-    scopePickerOpen = !scopePickerOpen;
-    if (scopePickerOpen) {
-      profilePickerOpen = false;
-      controllerPickerOpen = false;
-    }
-  };
-
-  const toggleProfilePicker = () => {
-    if (!profilePickerOpen) updateRibbonMenuPositions();
-    profilePickerOpen = !profilePickerOpen;
-    if (profilePickerOpen) {
-      scopePickerOpen = false;
-      controllerPickerOpen = false;
-    }
-  };
-
-  const toggleControllerPicker = () => {
-    if (!controllerPickerOpen) updateRibbonMenuPositions();
-    controllerPickerOpen = !controllerPickerOpen;
-    if (controllerPickerOpen) {
-      scopePickerOpen = false;
-      profilePickerOpen = false;
-    }
-  };
-
-  const closeRibbonPickers = () => {
-    scopePickerOpen = false;
-    profilePickerOpen = false;
-    controllerPickerOpen = false;
-  };
-
-  const handleRibbonPickerWindowChange = () => {
-    if (scopePickerOpen || profilePickerOpen || controllerPickerOpen) updateRibbonMenuPositions();
-  };
-
-  const handleRibbonPickerKeydown = (event: KeyboardEvent) => {
-    if (event.key === 'Escape' && (scopePickerOpen || profilePickerOpen || controllerPickerOpen)) {
-      event.preventDefault();
-      closeRibbonPickers();
-    }
-  };
-
-  const handleRibbonPickerDocumentClick = (event: MouseEvent) => {
-    if (!scopePickerOpen && !profilePickerOpen && !controllerPickerOpen) return;
-    const target = event.target;
-    if (!(target instanceof Element)) return;
-    if (target.closest('.dm-ribbon-picker-host')) return;
-    closeRibbonPickers();
-  };
-
-  const pickScopeGlobal = async () => {
-    closeRibbonPickers();
-    if (selectedTuningScope !== 'global') await selectGlobalTuning();
-  };
-
-  const pickScopeGame = async (game: SupportedGame) => {
-    closeRibbonPickers();
-    if (selectedTuningScope === 'game' && selectedTuningGameId === game.gameId) return;
-    await selectTuningGame(game);
-  };
-
-  const pickProfile = async (profileId: string) => {
-    closeRibbonPickers();
-    if (!profileId || profileId === selectedOverrideProfileId) return;
-    await selectProfileForScope(profileId);
-  };
-
   const pickAllControllers = () => {
     setAllProfileTargets();
-    closeRibbonPickers();
   };
 
   const pickControllerTarget = (controllerId: string) => {
     setSingleProfileTargetController(controllerId);
-    closeRibbonPickers();
   };
 
   const beginControllerRename = (item: ControllerStatus) => {
@@ -3419,9 +3121,8 @@
     scheduleLiveControllerConfigSync();
   };
 
-  const normalizeStickDeadzone = (value: number | string | undefined | null) => {
-    const number = typeof value === 'number' ? value : Number(value ?? 0);
-    return Math.max(0, Math.min(40, Math.round(Number.isFinite(number) ? number : 0)));
+  const handleLightbarColorChange = (_target: LightbarColorTarget, _color: string) => {
+    scheduleLiveControllerConfigSync();
   };
 
   const setStickDeadzone = (side: 'left' | 'right', value: number | string) => {
@@ -3981,15 +3682,7 @@
     profiles.filter((profile) => profile.scope === 'Game' && profile.gameId === game.gameId).length;
 
   const SCOPE_ACCENT_BUILT_IN = '#3BA0FF';
-  const SCOPE_ACCENT_GAME = '#5DD68C';
-  const SCOPE_ACCENT_GLOBAL = '#C18BEF';
   const SCOPE_ACCENT_CUSTOM = '#E0B341';
-
-  const profileAccentColor = (scope: ProfileSummary['scope']): string => {
-    if (scope === 'Built-in') return SCOPE_ACCENT_BUILT_IN;
-    if (scope === 'Game') return SCOPE_ACCENT_GAME;
-    return SCOPE_ACCENT_GLOBAL;
-  };
 
   const gameAccentColor = (game: SupportedGame | null | undefined): string =>
     game?.supportLevel === 'custom' ? SCOPE_ACCENT_CUSTOM : SCOPE_ACCENT_BUILT_IN;
@@ -4066,10 +3759,6 @@
     } finally {
       profileFileBusy = false;
     }
-  };
-
-  const requestProfileImport = () => {
-    if (!profileFileBusy) profileImportInput?.click();
   };
 
   const handleProfileImport = async (event: Event) => {
@@ -4416,17 +4105,15 @@
       onStart: () => {
         loadDismissedUpdateVersion();
         loadOnboardingPreference();
-        activeView = appViewFromHash();
+        syncViewFromHash();
         syncTriggerInputPolling();
       },
       onVisible: syncTriggerInputPolling,
       onHidden: syncTriggerInputPolling,
       onHashChange: () => {
-        activeView = appViewFromHash();
+        syncViewFromHash();
         syncTriggerInputPolling();
       },
-      onDocumentMouseDown: handleColorDocClick,
-      onDocumentKeyDown: handleColorKey,
       onStop: () => {
         if (liveConfigSyncTimer !== undefined) window.clearTimeout(liveConfigSyncTimer);
         liveConfigSyncTimer = undefined;
@@ -4470,13 +4157,6 @@
   }
 </script>
 
-<svelte:window
-  onkeydown={handleRibbonPickerKeydown}
-  onclick={handleRibbonPickerDocumentClick}
-  onresize={handleRibbonPickerWindowChange}
-  onscroll={handleRibbonPickerWindowChange}
-/>
-
 <main class="ops-shell">
   {#if loading}
     <section class="ops-state">
@@ -4501,21 +4181,14 @@
         </div>
       </div>
 
-      <nav class="dm-view-nav" aria-label="Command center views">
-        {#each appViews as view}
-          <Tooltip text={viewTooltips[view.id]} side="bottom" align="center">
-            <button
-              class:active={activeView === view.id}
-              disabled={(view.id === 'haptics' && !tuningReady) || (view.id === 'buttonMapping' && !buttonMappingReady)}
-              type="button"
-              aria-current={activeView === view.id ? 'page' : undefined}
-              onclick={() => navigateToView(view.id)}
-            >
-              {view.label}
-            </button>
-          </Tooltip>
-        {/each}
-      </nav>
+      <ViewNav
+        views={appViews}
+        {activeView}
+        tooltips={viewTooltips}
+        {tuningReady}
+        {buttonMappingReady}
+        onNavigate={navigateToView}
+      />
 
       <div class="dm-system-cluster">
         <div class="dm-system-readout" title={selectedTuningScope === 'global' ? systemReadoutDetail : adapter?.setupHint ?? telemetryRateDetail}>
@@ -4552,7 +4225,7 @@
 
     {#if showPartialErrorBanner}
       <aside class="ops-warning dm-warning" role="status" aria-live="polite">
-        <span>Partial agent data: {partialErrors.map((entry) => entry.endpoint).join(', ')} unavailable.</span>
+        <span>Some areas are temporarily unavailable: {partialErrorAreas.join(', ')}.</span>
         <button type="button" aria-label="Dismiss partial agent data notice" onclick={dismissPartialErrors}>dismiss</button>
       </aside>
     {/if}
@@ -4570,24 +4243,13 @@
     {/if}
 
     {#if supportPanelOpen}
-      <aside id="support-bundle-panel" class="dm-support-panel" aria-label="Support diagnostics bundle">
-        <div class="dm-support-copy">
-          <span>Support Diagnostics</span>
-          <strong>Sanitized support bundle</strong>
-          <p>No raw HID paths, raw hardware IDs, serial numbers, or Bluetooth addresses are included.</p>
-        </div>
-        <div class="dm-support-actions">
-          <button class="dm-mini-button" type="button" disabled={Boolean(supportBundleBusy)} onclick={() => void copySupportBundle()}>
-            <ClipboardCopy size={13} /> {supportBundleBusy === 'copy' ? 'Copying' : 'Copy JSON'}
-          </button>
-          <button class="dm-mini-button" type="button" disabled={Boolean(supportBundleBusy)} onclick={() => void exportSupportBundle()}>
-            <Download size={13} /> {supportBundleBusy === 'download' ? 'Exporting' : 'Export JSON'}
-          </button>
-        </div>
-        {#if supportBundleMessage}
-          <p class:error={supportBundleTone === 'error'} class:success={supportBundleTone === 'success'} class="dm-support-message">{supportBundleMessage}</p>
-        {/if}
-      </aside>
+      <SupportPanel
+        busy={supportBundleBusy}
+        message={supportBundleMessage}
+        tone={supportBundleTone}
+        onCopy={copySupportBundle}
+        onExport={exportSupportBundle}
+      />
     {/if}
 
     <OnboardingTutorial
@@ -4597,337 +4259,62 @@
     />
 
     {#if activeView === 'games' || (!tuningReady && activeView !== 'controllers')}
-      <section class="dm-games-page" aria-label="Profiles and supported games">
-        <div class="dm-games-column wide">
-          <div class="dm-games-head">
-            <span>Profiles</span>
-            <h2>Games</h2>
-          </div>
-          <div class="dm-scope-strip">
-            <Tooltip
-              text="Per-game profiles auto-load when the game launches via Steam. Global tunes the controller when nothing is detected or an unsupported game is running."
-              side="bottom"
-              align="start"
-            >
-              <button
-                type="button"
-                class:active={selectedTuningScope === 'global'}
-                disabled={!controller}
-                onclick={() => void selectGlobalTuning()}
-              >
-                <span class="dm-controller-glyph small" aria-hidden="true"></span>
-                <span class="dm-scope-chip">
-                  <span class="dm-scope-chip-label">Profile Scope</span>
-                  <strong class="dm-scope-chip-value">Global</strong>
-                  <small class="dm-scope-chip-detail">{globalProfilePreview?.name ?? 'Base'} · Controller-only tuning</small>
-                </span>
-              </button>
-            </Tooltip>
-          </div>
-          {#if discoveredGames.length}
-            <div class="dm-game-grid">
-              {#each discoveredGames as game (game.gameId)}
-                {@const heroArt = gameArtwork(game, 'hero') ?? gameArtwork(game, 'banner')}
-                {@const tileArt = gameArtwork(game, 'banner') ?? gameArtwork(game, 'capsule') ?? gameArtwork(game, 'icon')}
-                {@const details = gameMediaDetails(game)}
-                {@const scopedProfiles = profileScopeCount(game)}
-                <button
-                  type="button"
-                  class="dm-game-card"
-                  class:active={selectedTuningScope === 'game' && game.gameId === selectedTuningGameId}
-                  class:running={game.running}
-                  class:custom={game.supportLevel === 'custom'}
-                  disabled={!controller}
-                  aria-pressed={selectedTuningScope === 'game' && game.gameId === selectedTuningGameId}
-                  style={heroArt ? `--game-hero: url("${heroArt}")` : ''}
-                  onclick={() => void selectTuningGame(game)}
-                >
-                  <span class="dm-game-card-media">
-                    {#if tileArt}
-                      <img
-                        src={tileArt}
-                        alt=""
-                        loading="lazy"
-                        aria-hidden="true"
-                        onerror={(event) => {
-                          const img = event.currentTarget;
-                          if (img instanceof HTMLImageElement) img.style.display = 'none';
-                        }}
-                      />
-                    {/if}
-                    <span class="dm-game-art-fallback" aria-hidden="true">
-                      <InitialBadge label={game.name} accent={gameAccentColor(game)} />
-                    </span>
-                    <code>{game.running ? 'LIVE' : game.supportLevel === 'custom' ? 'CUSTOM' : game.installed ? 'READY' : 'SUPPORTED'}</code>
-                  </span>
-                  <span class="dm-game-copy">
-                    <strong>{game.name}</strong>
-                    <span class="dm-game-meta">
-                      {#each details as detail}
-                        <em>{detail}</em>
-                      {/each}
-                    </span>
-                    <small>{scopedProfiles ? `${scopedProfiles} game profile${scopedProfiles === 1 ? '' : 's'}` : game.supportLevel === 'custom' ? 'custom / no telemetry adapter' : `${gameTileStatus(game)} / telemetry`}</small>
-                  </span>
-                </button>
-              {/each}
-              <button
-                type="button"
-                class="dm-game-card dm-game-card-add"
-                disabled={!controller}
-                aria-label="Add a custom game from your Steam library"
-                onclick={() => void openAddGameDialog()}
-              >
-                <span class="dm-add-game-icon" aria-hidden="true">+</span>
-                <span class="dm-game-copy">
-                  <strong>Add a Game</strong>
-                  <small>Pick from your installed Steam library &mdash; DSCC will save a profile per game and auto-load it on launch.</small>
-                </span>
-              </button>
-            </div>
-          {:else}
-            <div class="dm-empty-choice wide">
-              <strong>No supported games discovered</strong>
-              <span>{detectionSignalText || 'Steam library data unavailable'}</span>
-              <button
-                type="button"
-                class="dm-mini-button"
-                style="margin-top: 8px;"
-                disabled={!controller}
-                onclick={() => void openAddGameDialog()}
-              >Add a game manually</button>
-            </div>
-          {/if}
-        </div>
-      </section>
+      <GamesView
+        {controller}
+        {connectedControllers}
+        {selectedTuningScope}
+        {selectedTuningGameId}
+        {globalProfilePreview}
+        {profileTargetsAllConnected}
+        {profileTargetControllerIds}
+        {discoveredGames}
+        {detectionSignalText}
+        {gameArtwork}
+        {gameMediaDetails}
+        {profileScopeCount}
+        {gameAccentColor}
+        {gameTileStatus}
+        onSelectGlobal={selectGlobalTuning}
+        onSelectGame={selectTuningGame}
+        onOpenAddGame={openAddGameDialog}
+        onPickAllControllers={pickAllControllers}
+        onPickControllerTarget={pickControllerTarget}
+      />
     {:else}
-      <section class="dm-tuning-ribbon" aria-label="Selected game context and production controls">
-        <div class="dm-steam-identity">
-          {#if steamContextArt}
-            <img src={steamContextArt} alt="" loading="lazy" aria-hidden="true" />
-          {:else}
-            <span class="dm-controller-glyph small" aria-hidden="true"></span>
-          {/if}
-          <div class="dm-ribbon-picker-host">
-            <button
-              bind:this={controllerTriggerEl}
-              type="button"
-              class="dm-steam-identity-cell dm-ribbon-picker-trigger"
-              class:open={controllerPickerOpen}
-              aria-haspopup="listbox"
-              aria-expanded={controllerPickerOpen}
-              disabled={!connectedControllerIds.length}
-              onclick={toggleControllerPicker}
-            >
-              <span>Target Controller</span>
-              <strong>{profileTargetsAllConnected ? 'All Connected' : profileTargetSummary()}</strong>
-              <p>{profileTargetsAllConnected ? `${connectedControllerIds.length} controller${connectedControllerIds.length === 1 ? '' : 's'}` : controllerConnectionText(controller)}</p>
-              <span class="dm-ribbon-picker-caret" aria-hidden="true">▾</span>
-            </button>
-            {#if controllerPickerOpen}
-              <div
-                class="dm-ribbon-picker-menu"
-                role="listbox"
-                aria-label="Select target controller"
-                style:left="{controllerMenuPos.left}px"
-                style:top="{controllerMenuPos.top}px"
-                style:min-width="{controllerMenuPos.minWidth}px"
-              >
-                <button
-                  type="button"
-                  class="dm-ribbon-picker-item"
-                  class:active={profileTargetsAllConnected}
-                  disabled={connectedControllerIds.length <= 1}
-                  role="option"
-                  aria-selected={profileTargetsAllConnected}
-                  onclick={pickAllControllers}
-                >
-                  <span class="dm-ribbon-picker-thumb art" aria-hidden="true">
-                    <InitialBadge label="A" accent={SCOPE_ACCENT_GLOBAL} />
-                  </span>
-                  <span class="dm-ribbon-picker-copy">
-                    <strong>All Connected</strong>
-                    <small>{connectedControllerIds.length} controller{connectedControllerIds.length === 1 ? '' : 's'}</small>
-                  </span>
-                </button>
-                <div class="dm-ribbon-picker-divider" role="separator"></div>
-                {#each connectedControllers as item (item.id)}
-                  <button
-                    type="button"
-                    class="dm-ribbon-picker-item"
-                    class:active={!profileTargetsAllConnected && profileTargetControllerIds.includes(item.id)}
-                    role="option"
-                    aria-selected={!profileTargetsAllConnected && profileTargetControllerIds.includes(item.id)}
-                    onclick={() => pickControllerTarget(item.id)}
-                  >
-                    <span class="dm-ribbon-picker-thumb art" aria-hidden="true">
-                      <span class="dm-controller-glyph small" aria-hidden="true"></span>
-                    </span>
-                    <span class="dm-ribbon-picker-copy">
-                      <strong>{item.name || controllerModelText(item)}</strong>
-                      <small>{controllerConnectionText(item)}</small>
-                    </span>
-                  </button>
-                {/each}
-              </div>
-            {/if}
-          </div>
-          <div class="dm-ribbon-picker-host">
-            <button
-              bind:this={scopeTriggerEl}
-              type="button"
-              class="dm-steam-identity-cell dm-ribbon-picker-trigger"
-              class:open={scopePickerOpen}
-              aria-haspopup="listbox"
-              aria-expanded={scopePickerOpen}
-              onclick={toggleScopePicker}
-            >
-              <span>{selectedTuningScope === 'global' ? 'Selected Scope' : 'Selected Game'}</span>
-              <strong>{selectedTuningScope === 'global' ? 'Global Profile' : steamContextGame?.name ?? 'No supported game selected'}</strong>
-              <p>{steamContextMeta}</p>
-              <span class="dm-ribbon-picker-caret" aria-hidden="true">▾</span>
-            </button>
-            {#if scopePickerOpen}
-              <div
-                class="dm-ribbon-picker-menu"
-                role="listbox"
-                aria-label="Select tuning scope"
-                style:left="{scopeMenuPos.left}px"
-                style:top="{scopeMenuPos.top}px"
-                style:min-width="{scopeMenuPos.minWidth}px"
-              >
-                <button
-                  type="button"
-                  class="dm-ribbon-picker-item"
-                  class:active={selectedTuningScope === 'global'}
-                  role="option"
-                  aria-selected={selectedTuningScope === 'global'}
-                  onclick={() => void pickScopeGlobal()}
-                >
-                  <span class="dm-ribbon-picker-thumb art" aria-hidden="true">
-                    <InitialBadge label="G" accent={SCOPE_ACCENT_GLOBAL} />
-                  </span>
-                  <span class="dm-ribbon-picker-copy">
-                    <strong>Global Profile</strong>
-                    <small>Controller-only tuning</small>
-                  </span>
-                </button>
-                {#if discoveredGames.length}
-                  <div class="dm-ribbon-picker-divider" role="separator"></div>
-                  {#each discoveredGames as game (game.gameId)}
-                    {@const gameArt = gameArtwork(game, 'capsule') ?? gameArtwork(game, 'banner') ?? gameArtwork(game, 'icon')}
-                    <button
-                      type="button"
-                      class="dm-ribbon-picker-item"
-                      class:active={selectedTuningScope === 'game' && game.gameId === selectedTuningGameId}
-                      role="option"
-                      aria-selected={selectedTuningScope === 'game' && game.gameId === selectedTuningGameId}
-                      onclick={() => void pickScopeGame(game)}
-                    >
-                      <span class="dm-ribbon-picker-thumb art" aria-hidden="true">
-                        {#if gameArt}
-                          <img src={gameArt} alt="" loading="lazy" />
-                        {:else}
-                          <InitialBadge label={game.name} accent={gameAccentColor(game)} />
-                        {/if}
-                      </span>
-                      <span class="dm-ribbon-picker-copy">
-                        <strong>{game.name}</strong>
-                        <small>{game.supportLevel === 'custom' ? 'custom game' : game.running ? 'running' : game.installed ? 'installed' : 'discovered'}</small>
-                      </span>
-                    </button>
-                  {/each}
-                {/if}
-              </div>
-            {/if}
-          </div>
-          <div class="dm-ribbon-picker-host">
-            <button
-              bind:this={profileTriggerEl}
-              type="button"
-              class="dm-steam-identity-cell dm-active-profile-cell dm-ribbon-picker-trigger"
-              class:open={profilePickerOpen}
-              aria-haspopup="listbox"
-              aria-expanded={profilePickerOpen}
-              aria-live="polite"
-              disabled={profileContextProfiles.length === 0}
-              onclick={toggleProfilePicker}
-            >
-              <span>Active Profile</span>
-              <strong>{activeProfileHeaderName}</strong>
-              <p>{activeProfileHeaderMeta}</p>
-              <span class="dm-ribbon-picker-caret" aria-hidden="true">▾</span>
-            </button>
-            {#if profilePickerOpen && profileContextProfiles.length}
-              <div
-                class="dm-ribbon-picker-menu profile"
-                role="listbox"
-                aria-label="Select active profile"
-                style:left="{profileMenuPos.left}px"
-                style:top="{profileMenuPos.top}px"
-                style:min-width="{profileMenuPos.minWidth}px"
-              >
-                {#each profileContextProfiles as profile (profile.id)}
-                  <button
-                    type="button"
-                    class="dm-ribbon-picker-item"
-                    class:active={profile.id === (selectedOverrideProfileId || activeProfileId)}
-                    role="option"
-                    aria-selected={profile.id === (selectedOverrideProfileId || activeProfileId)}
-                    onclick={() => void pickProfile(profile.id)}
-                  >
-                    <span class="dm-ribbon-picker-thumb art" aria-hidden="true">
-                      <InitialBadge label={profile.name} accent={profileAccentColor(profile.scope)} />
-                    </span>
-                    <span class="dm-ribbon-picker-copy">
-                      <strong>{profile.name}</strong>
-                      <small>{profile.builtIn ? (profile.scope === 'Global' ? 'Stock / Global' : 'Built-in template') : profile.scope === 'Game' ? `Custom / ${steamContextGame?.name ?? 'game'}` : 'Custom / Global'}{profile.id === activeProfileId ? ' · live' : ''}</small>
-                    </span>
-                  </button>
-                {/each}
-              </div>
-            {/if}
-          </div>
-        </div>
-
-        <div class="dm-system-toggles" aria-label="Production system controls">
-          <Tooltip block text="Local keeps the web UI bound to this PC. LAN exposes it on your network so you can tune from another device; a restart may be required after changing the bind address." side="bottom" align="end">
-            <div class="dm-location-line">
-              <label>
-                <span>Web UI Location</span>
-                <select
-                  value={listenOnAllInterfaces ? 'lan' : 'local'}
-                  disabled={appSettingsBusy}
-                  aria-label="Web UI location"
-                  onchange={(event) => void updateLanAccess(event.currentTarget.value === 'lan')}
-                >
-                  <option value="local">Local Only</option>
-                  <option value="lan">LAN Access</option>
-                </select>
-                <small>{lanRestartRequired ? `restart -> ${appSettings?.desiredBindAddress}` : status?.bindAddress}</small>
-              </label>
-            </div>
-          </Tooltip>
-          <Tooltip block text="Installs or restores PlayStation-style button glyphs for supported games. DSCC keeps backups so the game can be returned to its default glyph files." side="bottom" align="end">
-            <div class="dm-switch-line dm-glyph-switch">
-              <div>
-                <span>Controller Glyphs</span>
-                <strong>{glyphOverrideEnabled ? 'PlayStation Icons' : 'Game Default'}</strong>
-                <small>{forzaGlyphs?.lastStatus ?? glyphInstallPath}</small>
-              </div>
-              <button
-                class:active={glyphOverrideEnabled}
-                class="dm-toggle"
-                type="button"
-                disabled={appSettingsBusy}
-                aria-label="Toggle PlayStation controller button glyphs"
-                aria-pressed={glyphOverrideEnabled}
-                onclick={updateForzaGlyphOverride}
-              ><span></span></button>
-            </div>
-          </Tooltip>
-        </div>
-      </section>
+      <ContextRibbon
+        {controller}
+        {connectedControllers}
+        {connectedControllerIds}
+        {profileTargetsAllConnected}
+        {profileTargetControllerIds}
+        {selectedTuningScope}
+        {selectedTuningGameId}
+        {steamContextGame}
+        {steamContextArt}
+        {steamContextBackdropArt}
+        {steamContextMeta}
+        {discoveredGames}
+        {profileContextProfiles}
+        {selectedOverrideProfileId}
+        {activeProfileId}
+        {activeProfileHeaderName}
+        {activeProfileHeaderMeta}
+        {listenOnAllInterfaces}
+        {appSettingsBusy}
+        {lanRestartRequired}
+        desiredBindAddress={appSettings?.desiredBindAddress}
+        currentBindAddress={status?.bindAddress}
+        {glyphOverrideEnabled}
+        glyphStatus={forzaGlyphs?.lastStatus ?? glyphInstallPath}
+        {gameAccentColor}
+        onPickGlobal={selectGlobalTuning}
+        onPickGame={selectTuningGame}
+        onPickProfile={selectProfileForScope}
+        onPickAllControllers={pickAllControllers}
+        onPickController={pickControllerTarget}
+        onUpdateLanAccess={updateLanAccess}
+        onUpdateGlyphOverride={updateForzaGlyphOverride}
+      />
 
       {#if activeView === 'controllers'}
         <ControllersView
@@ -4971,642 +4358,130 @@
 
       {#if activeView === 'haptics'}
       <HapticsView active>
-      <section class="dm-physics" aria-label="Actuation curve tuning">
-        <div class="dm-section-head">
-          <div>
-            <span>Actuation Engine</span>
-            <h2>Trigger Curves</h2>
-          </div>
-          <div class="dm-section-actions">
-            <Tooltip text="Restores L2/R2 range, curve, base force, and body feel to the active profile defaults. Custom profiles reset to the Base curve." side="top" align="end">
-              <button
-                class="dm-test-button"
-                type="button"
-                disabled={!snapshot}
-                onclick={resetTriggerCurvesToProfileDefaults}
-              >
-                <RotateCcw size={14} /> Reset
-              </button>
-            </Tooltip>
-            <Tooltip text="Holds the current L2 and R2 base resistance on the controller without needing a game." side="top" align="end">
-              <button
-                class:active={baseFeelTestActive}
-                class="dm-test-button"
-                type="button"
-                aria-pressed={baseFeelTestActive}
-                disabled={baseFeelTestBusy || !snapshot}
-                onclick={() => void toggleBaseFeelTest()}
-              >
-                {baseFeelTestActive ? 'Testing Actuation' : 'Test Actuation'}
-              </button>
-            </Tooltip>
-          </div>
-        </div>
-
-        <div class="dm-curve-stack">
-          <article class="dm-curve-module" aria-label="L2 brake actuation curve">
-            <div class="dm-module-title">
-              <div>
-                <span>L2</span>
-                <strong>Brake Pressure</strong>
-              </div>
-              <code>{triggerPressLabel(l2LivePress)}</code>
-            </div>
-            <div
-              class="dm-curve-frame"
-              role="img"
-              aria-label="L2 actuation response curve with live input crosshair"
-              onpointerdown={(event) => handleCurvePointer(event, 'l2')}
-              onpointermove={(event) => updateCurveHover(event, 'l2')}
-              onpointerleave={() => clearCurveHover('l2')}
-            >
-              <svg class="dm-trigger-curve" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                <defs>
-                  <filter id="dm-blue-glow" x="-20%" y="-20%" width="140%" height="140%">
-                    <feGaussianBlur stdDeviation="1.1" result="blur" />
-                    <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-                  </filter>
-                </defs>
-                <path class="curve-grid" d="M 0 75 H 100 M 0 50 H 100 M 0 25 H 100 M 25 0 V 100 M 50 0 V 100 M 75 0 V 100" />
-                <path class="curve-linear" d="M 0 100 L 100 0" />
-                <rect class="curve-range-fill" x={l2CurveShape.rangeStart} y="96" width={l2CurveShape.rangeWidth} height="2.5" rx="1.25" />
-                <line class="curve-range-edge" x1={l2CurveShape.rangeStart} y1="0" x2={l2CurveShape.rangeStart} y2="100" />
-                <line class="curve-range-edge" x1={l2CurveShape.rangeEnd} y1="0" x2={l2CurveShape.rangeEnd} y2="100" />
-                <path class="curve-force" d={l2CurveShape.path} />
-                {#if curveHover?.side === 'l2'}
-                  <line class="curve-crosshair" x1={curveHover.left.toFixed(2)} y1="0" x2={curveHover.left.toFixed(2)} y2="100" />
-                {/if}
-                {#if showTriggerPress('l2', l2LivePress)}
-                  <line class="curve-live" x1={l2CurveLive.liveX} y1="0" x2={l2CurveLive.liveX} y2="100" />
-                  <circle class="curve-live-dot" cx={l2CurveLive.liveX} cy={l2CurveLive.liveY} r="1.75" />
-                {/if}
-              </svg>
-              {#each l2CurveShape.curvePoints as point}
-                <button
-                  class:active={curveDragPoint?.side === 'l2' && curveDragPoint.index === point.index}
-                  class:locked={point.locked}
-                  class="dm-curve-control-handle"
-                  style="--point-x:{point.x}%;--point-y:{point.y}%;"
-                  type="button"
-                  aria-label="L2 curve control point"
-                  aria-disabled={point.locked}
-                  onpointerdown={(event) => point.locked ? (event.preventDefault(), event.stopPropagation()) : handleCurvePointPointer(event, 'l2', point.index)}
-                ></button>
-              {/each}
-              {#if curveHover?.side === 'l2'}
-                <div class="dm-curve-tooltip" style="left:{curveHover.left}%;top:{curveHover.top}%;">
-                  <code>IN {Math.round(curveHover.x * 100).toString().padStart(3, '0')}</code>
-                  <code>OUT {Math.round(curveHover.y * 100).toString().padStart(3, '0')}</code>
-                </div>
-              {/if}
-            </div>
-            <div class="dm-slider-bank">
-              <Tooltip block text={triggerRangeTooltip('L2', 'from', l2From)} side="top" align="start">
-                <label class="dm-slider-row">
-                  <span>Start</span>
-                  <input class="dm-range" style="--value:{l2From}%" value={l2From} max={l2To} min="0" type="range" oninput={(event) => setTriggerRangeValue('l2', 'from', event.currentTarget.valueAsNumber)} />
-                  <code>{l2From.toString().padStart(3, '0')}</code>
-                </label>
-              </Tooltip>
-              <Tooltip block text={triggerRangeTooltip('L2', 'to', l2To)} side="top" align="start">
-                <label class="dm-slider-row">
-                  <span>End</span>
-                  <input class="dm-range" style="--value:{l2To}%" value={l2To} max="100" min={l2From} type="range" oninput={(event) => setTriggerRangeValue('l2', 'to', event.currentTarget.valueAsNumber)} />
-                  <code>{l2To.toString().padStart(3, '0')}</code>
-                </label>
-              </Tooltip>
-              <Tooltip block text={triggerCurveTooltip('L2', l2Curve)} side="top" align="start">
-                <label class="dm-slider-row">
-                  <span>Curve</span>
-                  <input class="dm-range" style="--value:{((l2Curve - 0.5) / 3) * 100}%" value={l2Curve} max="3.5" min="0.5" step="0.05" type="range" oninput={(event) => setTriggerCurveValue('l2', event.currentTarget.valueAsNumber)} />
-                  <code>{l2Curve.toFixed(2)}</code>
-                </label>
-              </Tooltip>
-              <div class="dm-curve-point-row">
-                <span>Points</span>
-                <div class="dm-curve-point-actions">
-                  <Tooltip text="Remove the least dramatic editable control point." side="top" align="center">
-                    <button class="dm-icon-button" type="button" aria-label="Remove L2 curve point" disabled={l2CurvePoints.length <= TRIGGER_CURVE_POINT_MIN} onclick={() => removeCurvePoint('l2')}>
-                      <Minus size={14} />
-                    </button>
-                  </Tooltip>
-                  <code>{l2CurvePoints.length}</code>
-                  <Tooltip text="Add an editable control point to the widest curve segment." side="top" align="center">
-                    <button class="dm-icon-button" type="button" aria-label="Add L2 curve point" disabled={l2CurvePoints.length >= TRIGGER_CURVE_POINT_MAX} onclick={() => addCurvePoint('l2')}>
-                      <Plus size={14} />
-                    </button>
-                  </Tooltip>
-                </div>
-              </div>
-            </div>
-          </article>
-
-          <article class="dm-curve-module" aria-label="R2 throttle actuation curve">
-            <div class="dm-module-title">
-              <div>
-                <span>R2</span>
-                <strong>Throttle Load</strong>
-              </div>
-              <code>{triggerPressLabel(r2LivePress)}</code>
-            </div>
-            <div
-              class="dm-curve-frame"
-              role="img"
-              aria-label="R2 actuation response curve with live input crosshair"
-              onpointerdown={(event) => handleCurvePointer(event, 'r2')}
-              onpointermove={(event) => updateCurveHover(event, 'r2')}
-              onpointerleave={() => clearCurveHover('r2')}
-            >
-              <svg class="dm-trigger-curve" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                <path class="curve-grid" d="M 0 75 H 100 M 0 50 H 100 M 0 25 H 100 M 25 0 V 100 M 50 0 V 100 M 75 0 V 100" />
-                <path class="curve-linear" d="M 0 100 L 100 0" />
-                <rect class="curve-range-fill" x={r2CurveShape.rangeStart} y="96" width={r2CurveShape.rangeWidth} height="2.5" rx="1.25" />
-                <line class="curve-range-edge" x1={r2CurveShape.rangeStart} y1="0" x2={r2CurveShape.rangeStart} y2="100" />
-                <line class="curve-range-edge" x1={r2CurveShape.rangeEnd} y1="0" x2={r2CurveShape.rangeEnd} y2="100" />
-                <path class="curve-force" d={r2CurveShape.path} />
-                {#if curveHover?.side === 'r2'}
-                  <line class="curve-crosshair" x1={curveHover.left.toFixed(2)} y1="0" x2={curveHover.left.toFixed(2)} y2="100" />
-                {/if}
-                {#if showTriggerPress('r2', r2LivePress)}
-                  <line class="curve-live" x1={r2CurveLive.liveX} y1="0" x2={r2CurveLive.liveX} y2="100" />
-                  <circle class="curve-live-dot" cx={r2CurveLive.liveX} cy={r2CurveLive.liveY} r="1.75" />
-                {/if}
-              </svg>
-              {#each r2CurveShape.curvePoints as point}
-                <button
-                  class:active={curveDragPoint?.side === 'r2' && curveDragPoint.index === point.index}
-                  class:locked={point.locked}
-                  class="dm-curve-control-handle"
-                  style="--point-x:{point.x}%;--point-y:{point.y}%;"
-                  type="button"
-                  aria-label="R2 curve control point"
-                  aria-disabled={point.locked}
-                  onpointerdown={(event) => point.locked ? (event.preventDefault(), event.stopPropagation()) : handleCurvePointPointer(event, 'r2', point.index)}
-                ></button>
-              {/each}
-              {#if curveHover?.side === 'r2'}
-                <div class="dm-curve-tooltip" style="left:{curveHover.left}%;top:{curveHover.top}%;">
-                  <code>IN {Math.round(curveHover.x * 100).toString().padStart(3, '0')}</code>
-                  <code>OUT {Math.round(curveHover.y * 100).toString().padStart(3, '0')}</code>
-                </div>
-              {/if}
-            </div>
-            <div class="dm-slider-bank">
-              <Tooltip block text={triggerRangeTooltip('R2', 'from', r2From)} side="top" align="start">
-                <label class="dm-slider-row">
-                  <span>Start</span>
-                  <input class="dm-range" style="--value:{r2From}%" value={r2From} max={r2To} min="0" type="range" oninput={(event) => setTriggerRangeValue('r2', 'from', event.currentTarget.valueAsNumber)} />
-                  <code>{r2From.toString().padStart(3, '0')}</code>
-                </label>
-              </Tooltip>
-              <Tooltip block text={triggerRangeTooltip('R2', 'to', r2To)} side="top" align="start">
-                <label class="dm-slider-row">
-                  <span>End</span>
-                  <input class="dm-range" style="--value:{r2To}%" value={r2To} max="100" min={r2From} type="range" oninput={(event) => setTriggerRangeValue('r2', 'to', event.currentTarget.valueAsNumber)} />
-                  <code>{r2To.toString().padStart(3, '0')}</code>
-                </label>
-              </Tooltip>
-              <Tooltip block text={triggerCurveTooltip('R2', r2Curve)} side="top" align="start">
-                <label class="dm-slider-row">
-                  <span>Curve</span>
-                  <input class="dm-range" style="--value:{((r2Curve - 0.5) / 3) * 100}%" value={r2Curve} max="3.5" min="0.5" step="0.05" type="range" oninput={(event) => setTriggerCurveValue('r2', event.currentTarget.valueAsNumber)} />
-                  <code>{r2Curve.toFixed(2)}</code>
-                </label>
-              </Tooltip>
-              <div class="dm-curve-point-row">
-                <span>Points</span>
-                <div class="dm-curve-point-actions">
-                  <Tooltip text="Remove the least dramatic editable control point." side="top" align="center">
-                    <button class="dm-icon-button" type="button" aria-label="Remove R2 curve point" disabled={r2CurvePoints.length <= TRIGGER_CURVE_POINT_MIN} onclick={() => removeCurvePoint('r2')}>
-                      <Minus size={14} />
-                    </button>
-                  </Tooltip>
-                  <code>{r2CurvePoints.length}</code>
-                  <Tooltip text="Add an editable control point to the widest curve segment." side="top" align="center">
-                    <button class="dm-icon-button" type="button" aria-label="Add R2 curve point" disabled={r2CurvePoints.length >= TRIGGER_CURVE_POINT_MAX} onclick={() => addCurvePoint('r2')}>
-                      <Plus size={14} />
-                    </button>
-                  </Tooltip>
-                </div>
-              </div>
-            </div>
-          </article>
-        </div>
-
-        <div class="dm-parameter-strip" aria-label="Base force and light routing">
-          <Tooltip block text={triggerEffectHelp[triggerEffect] ?? 'Selects the base adaptive trigger behavior.'} side="top" align="start">
-            <label>
-              <span>Mode</span>
-              <select value={triggerEffect} onchange={(event) => setTriggerEffect(event.currentTarget.value)}>
-                {#each triggerEffectOptions as option}
-                  <option>{option.label}</option>
-                {/each}
-              </select>
-            </label>
-          </Tooltip>
-          <Tooltip block text={triggerStrengthHelp[triggerIntensity] ?? 'Controls the base trigger force multiplier.'} side="top" align="start">
-            <label>
-              <span>Force</span>
-              <select value={triggerIntensity} onchange={(event) => setTriggerIntensity(event.currentTarget.value)}>
-                <option>Off</option><option>Weak</option><option>Medium</option><option>Strong (Standard)</option>
-              </select>
-            </label>
-          </Tooltip>
-          <Tooltip block text={vibrationHelp[vibrationIntensity] ?? 'Controls the body rumble multiplier.'} side="top" align="start">
-            <label>
-              <span>Body</span>
-              <select value={vibrationIntensity} onchange={(event) => setVibrationIntensity(event.currentTarget.value)}>
-                <option>Off</option><option>Low</option><option>Medium</option><option>High</option>
-              </select>
-            </label>
-          </Tooltip>
-          <Tooltip block text={vibrationModeHelp[vibrationMode] ?? 'Controls the body haptic motor blend.'} side="top" align="start">
-            <label>
-              <span>Feel</span>
-              <select value={vibrationMode} onchange={(event) => setVibrationMode(event.currentTarget.value)}>
-                {#each vibrationModeOptions as option}
-                  <option>{option.label}</option>
-                {/each}
-              </select>
-            </label>
-          </Tooltip>
-        </div>
-      </section>
-
-      <aside class:dm-global-feel={selectedTuningScope === 'global'} class="dm-routing" aria-label={selectedTuningScope === 'global' ? 'Controller haptic tuning' : 'Telemetry haptic routing'}>
-        {#if selectedTuningScope === 'global'}
-          <div class="dm-section-head compact">
-            <div>
-              <span>Controller Feel</span>
-              <h2>Base Haptics</h2>
-            </div>
-          </div>
-          <div class="dm-global-feel-panel">
-            <article>
-              <div class="dm-global-feel-heading">
-                <strong>Trigger pattern</strong>
-                <code>{triggerIntensity}</code>
-              </div>
-              <span>L2 and R2 use the selected hardware pattern with the curves configured on the left.</span>
-              <div class="dm-pattern-grid" aria-label="Trigger haptic pattern">
-                {#each triggerEffectOptions as option}
-                  <Tooltip block text={triggerEffectHelp[option.label] ?? 'Selects the base adaptive trigger behavior.'} side="bottom" align="start">
-                    <button
-                      class:active={triggerEffect === option.label}
-                      class="dm-pattern-option"
-                      type="button"
-                      aria-pressed={triggerEffect === option.label}
-                      onclick={() => setTriggerEffect(option.label)}
-                    >
-                      <strong>{option.label}</strong>
-                      <span>{option.badge}</span>
-                    </button>
-                  </Tooltip>
-                {/each}
-              </div>
-              <button class:active={baseFeelTestActive} class="dm-test-button" type="button" disabled={baseFeelTestBusy || !snapshot} onclick={() => void toggleBaseFeelTest()}>
-                {baseFeelTestActive ? 'Stop Preview' : 'Preview Triggers'}
-              </button>
-            </article>
-            <article>
-              <div class="dm-global-feel-heading">
-                <strong>Body haptics</strong>
-                <code>{vibrationMode}</code>
-              </div>
-              <span>Global profiles keep game telemetry off while storing controller-level body strength and motor blend.</span>
-              <div class="dm-global-feel-controls">
-                <label>
-                  <span>Strength</span>
-                  <select value={vibrationIntensity} onchange={(event) => setVibrationIntensity(event.currentTarget.value)}>
-                    <option>Off</option><option>Low</option><option>Medium</option><option>High</option>
-                  </select>
-                </label>
-                <label>
-                  <span>Motor blend</span>
-                  <select value={vibrationMode} onchange={(event) => setVibrationMode(event.currentTarget.value)}>
-                    {#each vibrationModeOptions as option}
-                      <option>{option.label}</option>
-                    {/each}
-                  </select>
-                </label>
-              </div>
-              <div class="dm-vibration-mode-grid" aria-label="Body haptic character">
-                {#each vibrationModeOptions as option}
-                  <Tooltip block text={vibrationModeHelp[option.label] ?? 'Controls the body haptic motor blend.'} side="bottom" align="start">
-                    <button
-                      class:active={vibrationMode === option.label}
-                      class="dm-pattern-option"
-                      type="button"
-                      aria-pressed={vibrationMode === option.label}
-                      onclick={() => setVibrationMode(option.label)}
-                    >
-                      <strong>{option.label}</strong>
-                      <span>{option.badge}</span>
-                    </button>
-                  </Tooltip>
-                {/each}
-              </div>
-              <button class="dm-test-button" type="button" disabled={!snapshot || vibrationIntensity === 'Off'} onclick={() => void previewBodyHaptics()}>
-                Preview Body
-              </button>
-            </article>
-          </div>
-        {:else}
-          <div class="dm-section-head compact">
-            <div>
-              <span>Haptic Routing</span>
-              <h2>Telemetry Stream</h2>
-            </div>
-            <div class="dm-effects-count">
-              <code>{enabledForzaEffectCount}/{forzaEffectMetas.length}</code>
-              <button class:active={allForzaEffectsEnabled} class="dm-toggle" type="button" aria-label="Toggle all effects" aria-pressed={allForzaEffectsEnabled} onclick={toggleAllForzaEffects}><span></span></button>
-            </div>
-          </div>
-
-          <div class="dm-body-mode-panel" aria-label="Body rumble source">
-            <div class="dm-body-mode-title">
-              <span>Body Source</span>
-              <code>{forzaBodyRumbleMode === 'native_passthrough' ? 'Native' : 'DSCC'}</code>
-            </div>
-            <div class="dm-body-mode-toggle" role="radiogroup" aria-label="Forza body rumble mode">
-              {#each bodyRumbleModeOptions as option}
-                <Tooltip block text={option.help} side="bottom" align="start">
-                  <button
-                    class:active={forzaBodyRumbleMode === option.value}
-                    class="dm-body-mode-option"
-                    type="button"
-                    role="radio"
-                    aria-checked={forzaBodyRumbleMode === option.value}
-                    onclick={() => setForzaBodyRumbleMode(option.value)}
-                  >
-                    <strong>{option.label}</strong>
-                    <span>{option.badge}</span>
-                  </button>
-                </Tooltip>
-              {/each}
-            </div>
-          </div>
-
-          <div class="dm-channel-list">
-            {#each forzaEffectMetas as meta (meta.id)}
-              {@const tuning = forzaEffectsById.get(meta.id) ?? forzaEffect(meta.id)}
-              {@const status = effectStatusById.get(meta.id)}
-              <article
-                class:active={tuning.enabled && status?.state === 'active'}
-                class:disabled={!tuning.enabled}
-                class="dm-channel-strip"
-              >
-                <Tooltip text={(tuning.enabled ? 'Disable ' : 'Enable ') + meta.label + '.'} side="right" align="start">
-                  <button
-                    class:active={tuning.enabled}
-                    class="dm-toggle"
-                    type="button"
-                    aria-label={meta.label + ' enabled'}
-                    aria-pressed={tuning.enabled}
-                    onclick={() => updateForzaEffect(meta.id, { enabled: !tuning.enabled })}
-                  ><span></span></button>
-                </Tooltip>
-                <Tooltip block text={meta.help} side="bottom" align="start">
-                  <div class="dm-channel-name">
-                    <strong>{meta.label}</strong>
-                  </div>
-                </Tooltip>
-                <Tooltip block text={intensityTooltip(meta, tuning.intensity)} side="bottom" align="center">
-                  <label class="dm-fader">
-                    <input
-                      class="dm-range"
-                      style="--value:{forzaIntensityPercent(tuning.intensity)}%"
-                      aria-label={meta.label + ' intensity slider'}
-                      max="100"
-                      min="0"
-                      type="range"
-                      value={forzaIntensityPercent(tuning.intensity)}
-                      oninput={(event) => updateForzaEffect(meta.id, { intensity: forzaIntensityFromPercent(event.currentTarget.valueAsNumber) })}
-                    />
-                    <input
-                      class="dm-fader-value"
-                      aria-label={meta.label + ' intensity value'}
-                      max="100"
-                      min="0"
-                      step="1"
-                      type="number"
-                      value={forzaIntensityPercent(tuning.intensity)}
-                      oninput={(event) => updateForzaEffect(meta.id, { intensity: forzaIntensityFromPercent(event.currentTarget.value) })}
-                    />
-                  </label>
-                </Tooltip>
-                <Tooltip block text={routeTooltip(tuning.route)} side="bottom" align="end">
-                  <label class="dm-route-select-wrap">
-                    <span>Route</span>
-                    <select
-                      class="dm-route-select"
-                      aria-label={meta.label + ' route'}
-                      value={tuning.route}
-                      onchange={(event) => updateForzaEffect(meta.id, { route: event.currentTarget.value as ForzaEffectRoute })}
-                    >
-                      {#each forzaRoutes as route}
-                        <option value={route.value}>{route.label}</option>
-                      {/each}
-                    </select>
-                  </label>
-                </Tooltip>
-              </article>
-            {/each}
-          </div>
-        {/if}
-
-        <div class="dm-rgb-console" aria-label="RGB output controls">
-          <div class="dm-console-title">
-            <span>RGB Controls</span>
-            <strong>{selectedTuningScope === 'global' ? 'Lightbar' : 'Lightbar & RPM'}</strong>
-          </div>
-          <div class="dm-led-controls">
-            <div class="dm-led-row">
-              <span>LED</span>
-              <div class="ops-lightbar-popover-wrap">
-                <button
-                  bind:this={lightbarPillEl}
-                  type="button"
-                  class="dm-color-pill ops-lightbar-preview"
-                  class:on={lightbarEnabled}
-                  class:disabled={!lightbarEnabled}
-                  class:open={pickerOpen && pickerTarget === 'lightbar'}
-                  aria-label="Lightbar color"
-                  aria-expanded={pickerOpen && pickerTarget === 'lightbar'}
-                  aria-haspopup="dialog"
-                  style="--lb-color: {lightbarColor}; --lb-alpha: {lightbarEnabled ? lightbarBrightness / 100 : 0};"
-                  onclick={() => togglePicker('lightbar')}
-                ><span class="ops-lightbar-glow" aria-hidden="true"></span></button>
-                {#if pickerOpen && pickerTarget === 'lightbar'}
-                  <div bind:this={pickerEl} class="ops-color-popover" role="dialog" aria-label="Lightbar color picker">
-                    <div class="ops-color-sv" style="background-color: hsl({pickerHue}, 100%, 50%);" role="slider" tabindex="0" aria-label="Saturation and brightness" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(pickerVal * 100)} aria-valuetext="Saturation {Math.round(pickerSat * 100)}%, brightness {Math.round(pickerVal * 100)}%" onpointerdown={handleSvPointer} onkeydown={handleSvKeydown}>
-                      <div class="ops-color-sv-overlay"></div>
-                      <div class="ops-color-sv-cursor" style="left: {pickerSat * 100}%; top: {(1 - pickerVal) * 100}%; background: {pickerHex};"></div>
-                    </div>
-                    <input type="range" min="0" max="360" value={pickerHue} oninput={handleHueInput} class="ops-color-hue" aria-label="Hue" />
-                    <div class="ops-color-row">
-                      <span class="ops-color-row-swatch" style="background: {pickerHex};"></span>
-                      <input type="text" bind:value={pickerHex} onchange={commitHex} onkeydown={(e) => { if (e.key === 'Enter') { commitHex(); closePicker(); } }} maxlength="7" class="ops-color-hex" aria-label="Hex color" spellcheck="false" />
-                    </div>
-                    <div class="ops-color-presets" role="group" aria-label="Color presets">
-                      {#each colorPresets as preset (preset)}
-                        <button type="button" class="ops-color-preset" class:selected={pickerHex.toLowerCase() === preset.toLowerCase()} style="background: {preset};" title={preset} aria-label="Preset {preset}" onclick={() => commitPreset(preset)}></button>
-                      {/each}
-                    </div>
-                  </div>
-                {/if}
-              </div>
-              <input class="dm-mini-range" style="--value:{lightbarBrightness}%" value={lightbarBrightness} disabled={!lightbarEnabled} max="100" min="0" type="range" aria-label="Lightbar brightness" oninput={(event) => setLightbarBrightness(event.currentTarget.valueAsNumber)} />
-              <code>{normalizeTriggerPercent(lightbarBrightness).toString().padStart(3, '0')}</code>
-              <button class:active={lightbarEnabled} class="dm-toggle" type="button" aria-label="Toggle lightbar" aria-pressed={lightbarEnabled} onclick={() => setLightbarEnabled(!lightbarEnabled)}><span></span></button>
-              <button class="dm-mini-button" type="button" onclick={previewLightbar}>Preview</button>
-            </div>
-            {#if selectedTuningScope === 'game'}
-              <div class="dm-led-row">
-                <span>Max RPM</span>
-                <div class="ops-lightbar-popover-wrap">
-                  <button
-                    bind:this={rpmPillEl}
-                    type="button"
-                    class="dm-color-pill ops-lightbar-preview"
-                    class:on={lightbarEnabled}
-                    class:disabled={!lightbarEnabled}
-                    class:open={pickerOpen && pickerTarget === 'rpm'}
-                    disabled={!lightbarEnabled}
-                    aria-label="Max RPM indicator color"
-                    aria-expanded={pickerOpen && pickerTarget === 'rpm'}
-                    aria-haspopup="dialog"
-                    style="--lb-color: {rpmColor}; --lb-alpha: {lightbarEnabled ? lightbarBrightness / 100 : 0};"
-                    onclick={() => togglePicker('rpm')}
-                  ><span class="ops-lightbar-glow" aria-hidden="true"></span></button>
-                  {#if pickerOpen && pickerTarget === 'rpm'}
-                    <div bind:this={pickerEl} class="ops-color-popover" role="dialog" aria-label="Max RPM color picker">
-                      <div class="ops-color-sv" style="background-color: hsl({pickerHue}, 100%, 50%);" role="slider" tabindex="0" aria-label="Saturation and brightness" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(pickerVal * 100)} aria-valuetext="Saturation {Math.round(pickerSat * 100)}%, brightness {Math.round(pickerVal * 100)}%" onpointerdown={handleSvPointer} onkeydown={handleSvKeydown}>
-                        <div class="ops-color-sv-overlay"></div>
-                        <div class="ops-color-sv-cursor" style="left: {pickerSat * 100}%; top: {(1 - pickerVal) * 100}%; background: {pickerHex};"></div>
-                      </div>
-                      <input type="range" min="0" max="360" value={pickerHue} oninput={handleHueInput} class="ops-color-hue" aria-label="Hue" />
-                      <div class="ops-color-row">
-                        <span class="ops-color-row-swatch" style="background: {pickerHex};"></span>
-                        <input type="text" bind:value={pickerHex} onchange={commitHex} onkeydown={(e) => { if (e.key === 'Enter') { commitHex(); closePicker(); } }} maxlength="7" class="ops-color-hex" aria-label="Hex color" spellcheck="false" />
-                      </div>
-                      <div class="ops-color-presets" role="group" aria-label="Color presets">
-                        {#each colorPresets as preset (preset)}
-                          <button type="button" class="ops-color-preset" class:selected={pickerHex.toLowerCase() === preset.toLowerCase()} style="background: {preset};" title={preset} aria-label="Preset {preset}" onclick={() => commitPreset(preset)}></button>
-                        {/each}
-                      </div>
-                    </div>
-                  {/if}
-                </div>
-                <input class="dm-mini-range" style="--value:{lightbarBrightness}%" value={lightbarBrightness} disabled={!lightbarEnabled} max="100" min="0" type="range" aria-label="Max RPM indicator brightness" oninput={(event) => setLightbarBrightness(event.currentTarget.valueAsNumber)} />
-                <code>{normalizeTriggerPercent(lightbarBrightness).toString().padStart(3, '0')}</code>
-                <button class:active={lightbarEnabled} class="dm-toggle" type="button" aria-label="Toggle Max RPM indicator" aria-pressed={lightbarEnabled} onclick={() => setLightbarEnabled(!lightbarEnabled)}><span></span></button>
-                <button class="dm-mini-button" type="button" onclick={previewRpmColor}>Preview</button>
-              </div>
-            {/if}
-          </div>
-        </div>
-
-        <div class="dm-profile-console" bind:this={profilePanelEl}>
-          <div class="dm-profile-line">
-            <label>
-              <span>Profile</span>
-              <select value={selectedOverrideProfileId || activeProfileId} disabled={!profiles.length} onchange={(event) => void selectProfileForScope(event.currentTarget.value)}>
-                {#each profileContextProfiles as profile}
-                  <option value={profile.id}>{profile.name}{profile.scope === 'Game' ? ' / game' : profile.id === activeProfileId ? ' / active' : ''}</option>
-                {/each}
-              </select>
-            </label>
-            <div class="dm-action-row">
-              <Tooltip text="Import a DSCC profile JSON file into the selected scope." side="top" align="center">
-                <button class="dm-mini-button" type="button" onclick={requestProfileImport}>Import</button>
-              </Tooltip>
-              <input bind:this={profileImportInput} class="ops-hidden-file" type="file" accept="application/json,.json,.dscc-profile" onchange={(event) => void handleProfileImport(event)} />
-              <Tooltip text="Export the selected profile as a DSCC profile JSON file." side="top" align="center">
-                <button class="dm-mini-button" type="button" disabled={!activeProfileId || profileFileBusy} onclick={() => void exportSelectedProfile()}>Export</button>
-              </Tooltip>
-              <Tooltip text="Save the current tuning into a new custom profile without changing the built-in template." side="top" align="center">
-                <button
-                  class="dm-mini-button wide"
-                  type="button"
-                  disabled={!selectedActionProfile || profileSaveAsBusy}
-                  onclick={beginSaveAsProfile}
-                ><CopyPlus size={14} /> Save As</button>
-              </Tooltip>
-              <Tooltip text={canRenameSelectedProfile ? 'Rename the selected custom profile.' : 'Built-in profiles cannot be renamed. Use Save As first.'} side="top" align="center">
-                <button
-                  class="dm-mini-button"
-                  type="button"
-                  disabled={!canRenameSelectedProfile || profileRenameBusy || !selectedActionProfile}
-                  onclick={beginRenameSelectedProfile}
-                >Rename</button>
-              </Tooltip>
-              <Tooltip text={canDeleteSelectedProfile ? 'Delete the selected custom profile from DSCC.' : 'Built-in profiles cannot be deleted.'} side="top" align="center">
-                <button
-                  class="dm-mini-button"
-                  type="button"
-                  disabled={!canDeleteSelectedProfile || profileFileBusy || !selectedActionProfile}
-                  onclick={() => selectedActionProfile && void deleteProfileById(selectedActionProfile.id, selectedActionProfile.name)}
-                >Delete</button>
-              </Tooltip>
-              <Tooltip text="Restore the selected profile's trigger, haptic, and lightbar values to defaults." side="top" align="center">
-                <button class="dm-mini-button" type="button" onclick={restoreDefaults}><RotateCcw size={14} /> Reset</button>
-              </Tooltip>
-              <Tooltip text={profileConfigDirty ? 'Save the current tuning to the selected profile.' : 'No unsaved tuning changes.'} side="top" align="end">
-                <button
-                  class:dirty={profileConfigDirty}
-                  class="dm-apply-button"
-                  type="button"
-                  disabled={!selectedActionProfile || profileSaveBusy || !profileConfigDirty}
-                  onclick={() => void saveActiveProfile()}
-                ><Save size={14} /> {profileSaveBusy ? 'Saving' : 'Save'}</button>
-              </Tooltip>
-            </div>
-          </div>
-          {#if saveAsProfileOpen}
-            <div class="dm-profile-rename">
-              <label>
-                <span>Save As</span>
-                <input
-                  bind:value={saveAsProfileName}
-                  disabled={profileSaveAsBusy}
-                  maxlength="80"
-                  spellcheck="false"
-                  onkeydown={handleSaveAsProfileKeydown}
-                  aria-label="New profile name"
-                />
-              </label>
-              <div class="dm-action-row">
-                <button class="dm-mini-button" type="button" disabled={profileSaveAsBusy} onclick={cancelSaveAsProfile}>Cancel</button>
-                <button class="dm-mini-button primary" type="button" disabled={profileSaveAsBusy || !saveAsProfileName.trim()} onclick={() => void submitSaveAsProfile()}>
-                  {profileSaveAsBusy ? 'Saving' : 'Create'}
-                </button>
-              </div>
-            </div>
-          {/if}
-          {#if renameProfileId}
-            <div class="dm-profile-rename">
-              <label>
-                <span>Name</span>
-                <input
-                  bind:value={renameProfileName}
-                  disabled={profileRenameBusy}
-                  maxlength="80"
-                  spellcheck="false"
-                  onkeydown={handleRenameProfileKeydown}
-                  aria-label="Profile name"
-                />
-              </label>
-              <div class="dm-action-row">
-                <button class="dm-mini-button" type="button" disabled={profileRenameBusy} onclick={cancelRenameProfile}>Cancel</button>
-                <button class="dm-mini-button primary" type="button" disabled={profileRenameBusy || !renameProfileName.trim()} onclick={() => void submitRenameProfile()}>
-                  {profileRenameBusy ? 'Saving' : 'Apply'}
-                </button>
-              </div>
-            </div>
-          {/if}
-        </div>
-      </aside>
+      <TriggerCurvesPanel
+        {selectedTuningScope}
+        {snapshot}
+        {baseFeelTestActive}
+        {baseFeelTestBusy}
+        {resetTriggerCurvesToProfileDefaults}
+        {toggleBaseFeelTest}
+        {l2CurveShape}
+        {r2CurveShape}
+        {l2CurveLive}
+        {r2CurveLive}
+        {curveHover}
+        {curveDragPoint}
+        {l2LivePress}
+        {r2LivePress}
+        {l2From}
+        {l2To}
+        {r2From}
+        {r2To}
+        {l2Curve}
+        {r2Curve}
+        {l2CurvePoints}
+        {r2CurvePoints}
+        {triggerEffect}
+        {triggerIntensity}
+        {vibrationIntensity}
+        {vibrationMode}
+        {triggerEffectOptions}
+        {vibrationModeOptions}
+        {triggerEffectHelp}
+        {triggerStrengthHelp}
+        {vibrationHelp}
+        {vibrationModeHelp}
+        {triggerPressLabel}
+        {triggerRangeTooltip}
+        {triggerCurveTooltip}
+        {showTriggerPress}
+        {handleCurvePointer}
+        {updateCurveHover}
+        {clearCurveHover}
+        {handleCurvePointPointer}
+        {setTriggerRangeValue}
+        {setTriggerCurveValue}
+        {removeCurvePoint}
+        {addCurvePoint}
+        {setTriggerEffect}
+        {setTriggerIntensity}
+        {setVibrationIntensity}
+        {setVibrationMode}
+      />
+      <HapticsAside
+        {selectedTuningScope}
+        {snapshot}
+        {baseFeelTestActive}
+        {baseFeelTestBusy}
+        {triggerEffect}
+        {triggerIntensity}
+        {vibrationIntensity}
+        {vibrationMode}
+        {triggerEffectOptions}
+        {vibrationModeOptions}
+        {triggerEffectHelp}
+        {vibrationModeHelp}
+        {setTriggerEffect}
+        {setVibrationIntensity}
+        {setVibrationMode}
+        {toggleBaseFeelTest}
+        {previewBodyHaptics}
+        {enabledForzaEffectCount}
+        {allForzaEffectsEnabled}
+        {forzaEffectMetas}
+        {forzaEffectsById}
+        {effectStatusById}
+        {forzaBodyRumbleMode}
+        {bodyRumbleModeOptions}
+        {forzaRoutes}
+        {forzaEffect}
+        {toggleAllForzaEffects}
+        {setForzaBodyRumbleMode}
+        {updateForzaEffect}
+        {intensityTooltip}
+        {routeTooltip}
+        {forzaIntensityPercent}
+        {forzaIntensityFromPercent}
+        {lightbarEnabled}
+        bind:lightbarColor
+        bind:rpmColor
+        {lightbarBrightness}
+        onColorChange={handleLightbarColorChange}
+        {setLightbarBrightness}
+        {setLightbarEnabled}
+        {previewLightbar}
+        {previewRpmColor}
+        {profileContextProfiles}
+        {activeProfileId}
+        {selectedOverrideProfileId}
+        {selectedActionProfile}
+        selectedGameName={steamContextGame?.name ?? 'game'}
+        {canRenameSelectedProfile}
+        {canDeleteSelectedProfile}
+        {profileConfigDirty}
+        {profileSaveBusy}
+        {profileFileBusy}
+        {profileSaveAsBusy}
+        {profileRenameBusy}
+        {saveAsProfileOpen}
+        bind:saveAsProfileName
+        {renameProfileId}
+        bind:renameProfileName
+        onSelectProfile={selectProfileForScope}
+        onImportFile={handleProfileImport}
+        onExportProfile={exportSelectedProfile}
+        onBeginSaveAs={beginSaveAsProfile}
+        onCancelSaveAs={cancelSaveAsProfile}
+        onSubmitSaveAs={submitSaveAsProfile}
+        onSaveAsKeydown={handleSaveAsProfileKeydown}
+        onBeginRename={beginRenameSelectedProfile}
+        onCancelRename={cancelRenameProfile}
+        onSubmitRename={submitRenameProfile}
+        onRenameKeydown={handleRenameProfileKeydown}
+        onDeleteProfile={(profile) => void deleteProfileById(profile.id, profile.name)}
+        onRestoreDefaults={restoreDefaults}
+        onSaveProfile={saveActiveProfile}
+      />
       </HapticsView>
       {/if}
     <ButtonMappingView
@@ -5628,6 +4503,7 @@
       {steamBindingBusy}
       steamInputLayoutAvailable={bridgeContextActive ? Boolean(inputBridgeStatus?.available) : Boolean(steamInputLayout)}
       mappingReadOnly={bridgeContextActive ? !inputBridgeStatus?.available : !steamInputLayout}
+      defaultMirrorOnly={buttonMappingActive && !bridgeContextActive && !steamInputLayout}
       paddlePresetVisible={steamPaddlePresetVisible}
       paddlePresetAvailable={steamPaddlePresetAvailable}
       paddlePresetStatus={steamPaddlePresetStatus}
@@ -5652,16 +4528,7 @@
     />
     {/if}
   {/if}
-  {#if toastMessages.length}
-    <div class="dm-toast-stack" aria-live="polite" aria-atomic="false">
-      {#each toastMessages as toast (toast.id)}
-        <button class="dm-toast {toast.tone}" type="button" onclick={() => dismissToast(toast.id)}>
-          <span>{toast.tone}</span>
-          <strong>{toast.message}</strong>
-        </button>
-      {/each}
-    </div>
-  {/if}
+  <ToastStack messages={toastMessages} onDismiss={dismissToast} />
 
   <AddGameDialog
     open={addGameOpen}

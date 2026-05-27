@@ -603,13 +603,13 @@ fn button_bit(button: &str) -> u32 {
     }
 }
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(any(test, debug_assertions, feature = "test-mocks"))]
 #[derive(Clone, Debug, Default)]
 pub struct MockVirtualOutputBackend {
     inner: Arc<Mutex<MockVirtualOutputBackendInner>>,
 }
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(any(test, debug_assertions, feature = "test-mocks"))]
 #[derive(Clone, Debug)]
 struct MockVirtualOutputBackendInner {
     available: bool,
@@ -618,13 +618,13 @@ struct MockVirtualOutputBackendInner {
     next_session: u64,
 }
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(any(test, debug_assertions, feature = "test-mocks"))]
 #[derive(Clone, Debug)]
 struct MockVirtualOutputSession {
     states: Vec<VirtualGamepadState>,
 }
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(any(test, debug_assertions, feature = "test-mocks"))]
 impl Default for MockVirtualOutputBackendInner {
     fn default() -> Self {
         Self {
@@ -636,7 +636,7 @@ impl Default for MockVirtualOutputBackendInner {
     }
 }
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(any(test, debug_assertions, feature = "test-mocks"))]
 impl MockVirtualOutputBackend {
     pub fn new() -> Self {
         Self::default()
@@ -668,7 +668,7 @@ impl MockVirtualOutputBackend {
     }
 }
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(any(test, debug_assertions, feature = "test-mocks"))]
 impl VirtualOutputBackend for MockVirtualOutputBackend {
     fn status(&self) -> VirtualOutputBackendStatus {
         let inner = self.lock();

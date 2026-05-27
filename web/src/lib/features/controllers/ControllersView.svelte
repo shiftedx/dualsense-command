@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import ControllerCard from '../../../components/ControllerCard.svelte';
+  import ControllerCard from './ControllerCard.svelte';
   import Tooltip from '../../../components/Tooltip.svelte';
   import { getControllerInput } from '../../api';
   import {
@@ -269,6 +269,20 @@
     return 'Physical controller input is passed through normally.';
   }
 
+  function duplicateInputDetail() {
+    if (!controller) return 'No physical controller selected';
+    if (bridgeSessionActive) return 'Bridge active; hide the physical controller only if duplicate game input appears.';
+    if (controllerBridgeConfigured || appRequiresBridge) {
+      return inputBridge?.available
+        ? 'Physical controller remains visible until a bridge session starts.'
+        : 'Bridge unavailable; physical controller remains visible.';
+    }
+    if (inputPathTitle() === 'Steam Input Companion') {
+      return 'Steam may expose a virtual layout while DSCC keeps diagnostics on the physical controller.';
+    }
+    return 'Physical controller visible';
+  }
+
   function bridgeSessionState() {
     return bridgeSession ? `${bridgeSession.state} / ${bridgeSession.message}` : 'No bridge session active';
   }
@@ -330,7 +344,7 @@
               aria-label="Refresh DualSense Edge onboard slots"
               onclick={() => void onRefreshEdgeProfiles()}
             >
-              {edgeProfilesLoading ? '...' : 'Read'}
+              {edgeProfilesLoading ? 'Reading' : 'Read'}
             </button>
           </Tooltip>
         </div>
@@ -360,7 +374,7 @@
                       disabled={!currentControllerConfig || edgeProfilesBusySlot === slot.slotId}
                       onclick={() => void onWriteEdgeSlot(slot)}
                     >
-                      {edgeProfilesBusySlot === slot.slotId ? '...' : edgeSlotWriteLabel}
+                      {edgeProfilesBusySlot === slot.slotId ? 'Writing' : edgeSlotWriteLabel}
                     </button>
                   </Tooltip>
                 {/if}
@@ -413,6 +427,12 @@
       {/if}
     </section>
 
+    {#if !controller}
+      <section class="dm-controller-empty-state" aria-label="No controller selected">
+        <strong>No controller selected</strong>
+        <span>Connect a DualSense controller to view input routing, live stick plots, trigger travel, and calibration readings.</span>
+      </section>
+    {:else}
     <section class="dm-input-path-panel" aria-label="Controller input path">
       <div class="dm-live-panel-head">
         <div>
@@ -428,7 +448,7 @@
         </div>
         <div>
           <dt>Duplicate Input</dt>
-          <dd>Physical controller visible</dd>
+          <dd>{duplicateInputDetail()}</dd>
         </div>
         <div class="wide">
           <dt>Bridge Session</dt>
@@ -614,5 +634,6 @@
         </div>
       </dl>
     </section>
+    {/if}
   </div>
 </section>

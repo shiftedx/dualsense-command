@@ -8,6 +8,7 @@ rust-version.workspace = true
 [features]
 default = ["hidapi-backend"]
 hidapi-backend = ["dep:hidapi"]
+test-mocks = []
 
 [dependencies]
 dscc-core.workspace = true

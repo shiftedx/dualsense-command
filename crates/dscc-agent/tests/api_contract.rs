@@ -1,3 +1,5 @@
+#![cfg(any(debug_assertions, feature = "test-mocks"))]
+
 use axum::{
     body::{to_bytes, Body},
     http::{Method, Request, StatusCode},
@@ -10,6 +12,9 @@ use tower::ServiceExt;
 
 #[tokio::test]
 async fn agent_api_contract_serves_pre_hardware_runtime_state() {
+    let previous_process_scan = std::env::var_os("DSCC_DISABLE_PROCESS_SCAN");
+    std::env::set_var("DSCC_DISABLE_PROCESS_SCAN", "1");
+
     let router = app(AgentState::mock());
 
     let controllers: Vec<ControllerSummary> =
@@ -111,6 +116,12 @@ async fn agent_api_contract_serves_pre_hardware_runtime_state() {
     .await;
     assert!(effect.accepted);
     assert!(effect.dry_run);
+
+    if let Some(value) = previous_process_scan {
+        std::env::set_var("DSCC_DISABLE_PROCESS_SCAN", value);
+    } else {
+        std::env::remove_var("DSCC_DISABLE_PROCESS_SCAN");
+    }
 }
 
 async fn assert_status(router: axum::Router, uri: &str, expected: StatusCode) {

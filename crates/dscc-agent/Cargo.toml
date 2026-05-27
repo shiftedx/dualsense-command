@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+test-mocks = ["dscc-device/test-mocks", "dscc-virtual-output/test-mocks"]
+
 [dependencies]
 anyhow = "1"
 axum = { version = "0.7", features = ["json", "ws"] }
@@ -33,4 +36,6 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dev-dependencies]
+dscc-device = { workspace = true, features = ["test-mocks"] }
+dscc-virtual-output = { workspace = true, features = ["test-mocks"] }
 tower = { version = "0.5", features = ["util"] }

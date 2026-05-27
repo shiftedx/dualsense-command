@@ -1,11 +1,11 @@
 use std::time::Duration;
-#[cfg(any(test, debug_assertions))]
+#[cfg(any(test, debug_assertions, feature = "test-mocks"))]
 use std::{
     collections::{BTreeMap, VecDeque},
     sync::{Arc, Mutex, MutexGuard},
 };
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(any(test, debug_assertions, feature = "test-mocks"))]
 use crate::enumeration::DeviceAccess;
 use crate::{enumeration::RawHidDevice, error::DeviceError, status::RawDeviceId};
 
@@ -55,13 +55,13 @@ pub trait DeviceHandle: Send {
     }
 }
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(any(test, debug_assertions, feature = "test-mocks"))]
 #[derive(Clone, Debug, Default)]
 pub struct MockTransport {
     inner: Arc<Mutex<MockTransportInner>>,
 }
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(any(test, debug_assertions, feature = "test-mocks"))]
 #[derive(Clone, Debug, Default)]
 struct MockTransportInner {
     devices: Vec<RawHidDevice>,
@@ -75,7 +75,7 @@ struct MockTransportInner {
     open_errors: BTreeMap<RawDeviceId, DeviceError>,
 }
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(any(test, debug_assertions, feature = "test-mocks"))]
 impl MockTransport {
     pub fn new() -> Self {
         Self::default()
@@ -160,7 +160,7 @@ impl MockTransport {
     }
 }
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(any(test, debug_assertions, feature = "test-mocks"))]
 impl DeviceTransport for MockTransport {
     fn enumerate(&self) -> Result<Vec<RawHidDevice>, DeviceError> {
         let inner = self.lock();
@@ -198,14 +198,14 @@ impl DeviceTransport for MockTransport {
     }
 }
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(any(test, debug_assertions, feature = "test-mocks"))]
 #[derive(Clone, Debug)]
 struct MockDeviceHandle {
     id: RawDeviceId,
     inner: Arc<Mutex<MockTransportInner>>,
 }
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(any(test, debug_assertions, feature = "test-mocks"))]
 impl MockDeviceHandle {
     fn lock(&self) -> MutexGuard<'_, MockTransportInner> {
         match self.inner.lock() {
@@ -215,7 +215,7 @@ impl MockDeviceHandle {
     }
 }
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(any(test, debug_assertions, feature = "test-mocks"))]
 impl DeviceHandle for MockDeviceHandle {
     fn read_timeout(&mut self, _timeout: Duration) -> Result<Option<Vec<u8>>, DeviceError> {
         Ok(self
