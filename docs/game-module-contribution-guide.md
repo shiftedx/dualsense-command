@@ -1,6 +1,8 @@
 # Game Module Guide
 
-Use this guide when adding support for a game or profile pack.
+Use this guide when adding support for a game or profile pack. Start each PR
+from [Game Module PR Template](game-module-template.md) so detection, profile,
+telemetry, provenance, and validation work stay visible.
 
 ## The Two Pieces
 
@@ -108,6 +110,7 @@ cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warni
 npm.cmd --prefix web run typecheck
 npm.cmd --prefix web run build
 npm.cmd --prefix web run test:source-audit
+npm.cmd run check:perf
 ```
 
 For UI or button-mapping changes:

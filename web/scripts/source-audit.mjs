@@ -6,6 +6,13 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const git = process.platform === 'win32' ? 'git.exe' : 'git';
+const trackedFiles = execFileSync(git, ['ls-files'], {
+  cwd: repoRoot,
+  encoding: 'utf8'
+})
+  .split(/\r?\n/)
+  .filter(Boolean);
+
 const files = Array.from(new Set(execFileSync(git, ['ls-files', '--cached', '--modified', '--others', '--exclude-standard'], {
   cwd: repoRoot,
   encoding: 'utf8'
@@ -23,6 +30,10 @@ const files = Array.from(new Set(execFileSync(git, ['ls-files', '--cached', '--m
   .filter((file) => existsSync(path.join(repoRoot, file)));
 
 const selfAuditScript = /web\/scripts\/source-audit\.mjs$/;
+const allowedTrackedArtifacts = new Set([
+  'crates/dscc-agent/assets/forza/ControllerIcons.zip'
+]);
+const forbiddenTrackedArtifactPattern = /\.(msi|exe|dll|pdb|cab|wixobj|wixpdb|pfx|p12|pem|key|zip|7z|rar)$/i;
 
 const rules = [
   {
@@ -68,9 +79,25 @@ const rules = [
 ];
 
 const failures = [];
+for (const file of trackedFiles) {
+  const normalized = file.replaceAll('\\', '/');
+  if (forbiddenTrackedArtifactPattern.test(normalized) && !allowedTrackedArtifacts.has(normalized)) {
+    failures.push(`${file}: tracked release, signing, or binary artifact`);
+  }
+}
+
 for (const file of files) {
   const normalized = file.replaceAll('\\', '/');
   const text = readFileSync(path.join(repoRoot, file), 'utf8');
+  if (/-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/.test(text)) {
+    failures.push(`${file}: private key material must not be committed`);
+  }
+  if (/AKIA[0-9A-Z]{16}/.test(text)) {
+    failures.push(`${file}: AWS-style access key must not be committed`);
+  }
+  if (/ghp_[A-Za-z0-9_]{30,}/.test(text)) {
+    failures.push(`${file}: GitHub personal access token must not be committed`);
+  }
   const lines = text.split(/\r?\n/);
   for (const [index, line] of lines.entries()) {
     for (const rule of rules) {

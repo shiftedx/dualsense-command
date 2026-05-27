@@ -65,6 +65,40 @@ function Copy-FilesClean([string[]]$Files, [string]$Destination) {
     }
 }
 
+function Assert-InstallerFlavorStaging {
+    param(
+        [Parameter(Mandatory = $true)][string]$StagingRoot,
+        [Parameter(Mandatory = $true)][string]$EffectiveFlavor
+    )
+
+    $brokerDir = Join-Path $StagingRoot "hidmaestro"
+    $brokerExists = Test-Path -LiteralPath $brokerDir
+    if ($EffectiveFlavor -eq "Standard") {
+        if ($brokerExists) {
+            throw "Standard installer staging must not include the HIDMaestro broker."
+        }
+        return
+    }
+
+    if (-not $brokerExists) {
+        throw "$EffectiveFlavor installer staging must include the HIDMaestro broker."
+    }
+
+    foreach ($required in @("dscc-hidmaestro-broker.exe", "HIDMaestro.Core.dll")) {
+        if (-not (Test-Path -LiteralPath (Join-Path $brokerDir $required))) {
+            throw "$EffectiveFlavor installer staging is missing $required."
+        }
+    }
+
+    if ($EffectiveFlavor -eq "BridgeFrameworkDependent") {
+        foreach ($required in @("dscc-hidmaestro-broker.dll", "dscc-hidmaestro-broker.deps.json", "dscc-hidmaestro-broker.runtimeconfig.json")) {
+            if (-not (Test-Path -LiteralPath (Join-Path $brokerDir $required))) {
+                throw "BridgeFrameworkDependent installer staging is missing $required."
+            }
+        }
+    }
+}
+
 function Assert-FileSha256([string]$Path, [string]$ExpectedHash) {
     if (-not (Test-Path -LiteralPath $Path)) {
         throw "Expected file does not exist: $Path"
@@ -355,6 +389,7 @@ if ($includeBroker) {
         Copy-DirectoryClean -Source $brokerPublish -Destination (Join-Path $stagingRoot "hidmaestro")
     }
 }
+Assert-InstallerFlavorStaging -StagingRoot $stagingRoot -EffectiveFlavor $effectiveFlavor
 
 # Resolve signtool once if signing was requested, and prompt for the password if it
 # wasn't supplied. Sign the staged binaries here (before WiX harvests them) so the

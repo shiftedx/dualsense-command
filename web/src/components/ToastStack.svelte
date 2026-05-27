@@ -1,10 +1,5 @@
 <script lang="ts">
-  type ToastTone = 'success' | 'info' | 'error';
-  type ToastMessage = {
-    id: number;
-    tone: ToastTone;
-    message: string;
-  };
+  import type { ToastMessage, ToastTone } from '../app/toastState';
 
   export let messages: ToastMessage[] = [];
   export let onDismiss: (id: number) => void = () => {};

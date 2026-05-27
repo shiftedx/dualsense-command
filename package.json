@@ -5,6 +5,7 @@
   "private": true,
   "scripts": {
     "check": "npm run check:web && npm run check:rust",
+    "check:perf": "node tools/check-perf.mjs",
     "check:web": "npm --prefix web run check",
     "check:rust": "node -e \"const { spawnSync } = require('node:child_process'); const cargo = process.platform === 'win32' ? ['+stable-x86_64-pc-windows-gnu'] : []; const commands = [['fmt', '--all', '--', '--check'], ['test', '--workspace', '--all-features'], ['clippy', '--workspace', '--all-targets', '--', '-D', 'warnings']]; for (const args of commands) { const result = spawnSync('cargo', cargo.concat(args), { stdio: 'inherit' }); if (result.error) throw result.error; if (result.status !== 0) process.exit(result.status ?? 1); }\"",
     "dev": "node -e \"const { spawn } = require('node:child_process'); const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'; const children = ['dev:agent', 'dev:web'].map((script) => spawn(npm, ['run', script], { stdio: 'inherit' })); let stopping = false; const stop = (code = 0) => { if (stopping) return; stopping = true; for (const child of children) child.kill('SIGINT'); setTimeout(() => process.exit(code), 500); }; process.on('SIGINT', () => stop(0)); process.on('SIGTERM', () => stop(0)); for (const child of children) { child.on('error', (error) => { console.error(error); stop(1); }); child.on('exit', (code) => { if (!stopping) stop(code ?? 0); }); }\"",

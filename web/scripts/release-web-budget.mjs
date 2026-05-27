@@ -11,6 +11,14 @@ const budgets = {
   cssGzipBytes: 150_000,
   fileCount: 150
 };
+const forbiddenProductionStrings = [
+  'mock://',
+  'mock-dev',
+  'mock-dualsense',
+  'mock-fh6',
+  'Dev mock mode uses an in-memory virtual-output provider',
+  'Mock DSCC snapshot loaded'
+];
 
 async function walk(dir) {
   const entries = await readdir(dir, { withFileTypes: true });
@@ -60,9 +68,18 @@ async function main() {
 
   for (const file of files) {
     const bytes = await readFile(file);
+    const relative = path.relative(distDir, file).replaceAll(path.sep, '/');
+    if (/\.(js|html|css)$/.test(file)) {
+      const text = bytes.toString('utf8');
+      for (const forbidden of forbiddenProductionStrings) {
+        if (text.includes(forbidden)) {
+          throw new Error(`production web bundle contains dev mock fixture string "${forbidden}" in ${relative}`);
+        }
+      }
+    }
     rows.push({
       file,
-      relative: path.relative(distDir, file).replaceAll(path.sep, '/'),
+      relative,
       kind: fileKind(file),
       rawBytes: bytes.length,
       gzipBytes: gzipSync(bytes, { level: 9 }).length
