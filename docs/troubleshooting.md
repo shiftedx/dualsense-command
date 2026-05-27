@@ -57,8 +57,8 @@ DSCC keeps triggers and rumble neutral until it sees:
 2. An active profile for that game.
 3. Fresh telemetry from the game.
 
-This is intentional. It prevents DSCC from taking over the controller while
-you are not actually driving.
+DSCC uses this guard to avoid taking over the controller while you are outside
+the car.
 
 ## LAN Access Does Not Work
 
@@ -105,7 +105,7 @@ desktop session receives the new device ACL. More detail is in the
 Use USB first and make sure your user has permission to open the controller HID
 device without `sudo`. Release builds now run the trigger preview loop inside
 the agent so curve testing does not depend on browser-to-agent round trips for
-every trigger movement.
+each trigger movement.
 
 ## Steam Input Button Mapping Looks Empty
 
@@ -129,7 +129,7 @@ The fastest bug report is one with a sanitized support bundle.
 3. Choose **Copy JSON** or **Export JSON** for the sanitized support bundle.
 4. Attach it to your GitHub issue, or paste it if it is short.
 
-If the web UI will not open but the local agent is running, you can also run:
+If the web UI will not open but the local agent is running, run:
 
 ```powershell
 dscc-cli support-bundle
@@ -156,4 +156,4 @@ include:
   a controller support issue.
 - Game and telemetry status.
 - What you expected.
-- What actually happened.
+- What happened.

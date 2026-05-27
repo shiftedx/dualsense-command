@@ -102,7 +102,7 @@ DualSense Edge can be described as fully hardware-verified on Windows when:
 - Edge USB passes the current release-candidate checklist.
 - Edge Bluetooth passes a current release-candidate runtime, onboard-read, and
   non-default onboard-write re-test.
-- Release notes clearly state that Edge onboard profile sync is guarded over
+- Release notes state that Edge onboard profile sync is guarded over
   USB and Bluetooth and that default Fn + Triangle cannot be overwritten.
 - Any failed checklist item has either a fix, a known limitation, or a linked
   issue before publishing.

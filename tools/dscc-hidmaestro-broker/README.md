@@ -49,7 +49,7 @@ Package the self-contained Bridge MSI with:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging\package-msi.ps1 `
-  -Version 0.3.1 `
+  -Version 0.3.2 `
   -TargetTriple x86_64-pc-windows-gnu `
   -SkipWebBuild `
   -InstallerFlavor Bridge
@@ -83,13 +83,13 @@ Package the framework-dependent MSI with:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging\package-msi.ps1 `
-  -Version 0.3.1 `
+  -Version 0.3.2 `
   -TargetTriple x86_64-pc-windows-gnu `
   -SkipWebBuild `
   -InstallerFlavor BridgeFrameworkDependent
 ```
 
-This writes `target\installer\DualSenseCommandCenter-0.3.1-bridge-framework-dependent.msi`
+This writes `target\installer\DualSenseCommandCenter-0.3.2-bridge-framework-dependent.msi`
 so it is not confused with the default self-contained artifact.
 
 ### Standard MSI
@@ -98,13 +98,13 @@ Package the slim installer without the broker:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging\package-msi.ps1 `
-  -Version 0.3.1 `
+  -Version 0.3.2 `
   -TargetTriple x86_64-pc-windows-gnu `
   -SkipWebBuild `
   -InstallerFlavor Standard
 ```
 
-This writes `target\installer\DualSenseCommandCenter-0.3.1-standard.msi`.
+This writes `target\installer\DualSenseCommandCenter-0.3.2-standard.msi`.
 Bridge status will report the provider as not installed until the user installs
 a Bridge flavor or configures an external broker path.
 
