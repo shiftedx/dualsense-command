@@ -2,7 +2,7 @@
 
 Last updated: 2026-05-26
 
-DSCC `0.3.2` is a public unsigned Windows beta. Testers can use it now. Do not
+DSCC `0.3.3` is a public unsigned Windows beta. Testers can use it now. Do not
 call it production-ready until the hardware matrix is complete.
 
 ## Current Status

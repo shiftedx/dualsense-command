@@ -351,7 +351,7 @@ dependencies = [
 
 [[package]]
 name = "dscc-adapters"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "dscc-telemetry",
  "serde",
@@ -359,7 +359,7 @@ dependencies = [
 
 [[package]]
 name = "dscc-agent"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "axum",
@@ -383,7 +383,7 @@ dependencies = [
 
 [[package]]
 name = "dscc-cli"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -397,7 +397,7 @@ dependencies = [
 
 [[package]]
 name = "dscc-core"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "dscc-telemetry",
  "serde",
@@ -406,7 +406,7 @@ dependencies = [
 
 [[package]]
 name = "dscc-device"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "dscc-core",
  "hidapi",
@@ -414,7 +414,7 @@ dependencies = [
 
 [[package]]
 name = "dscc-telemetry"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "serde",
  "thiserror 1.0.69",
@@ -422,7 +422,7 @@ dependencies = [
 
 [[package]]
 name = "dscc-tray"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "serde",
@@ -432,7 +432,7 @@ dependencies = [
 
 [[package]]
 name = "dscc-virtual-output"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "serde",
  "serde_json",

@@ -85,6 +85,8 @@ pub struct ControllerSummary {
     pub battery_state: BatteryState,
     pub permission: ControllerPermissionState,
     pub diagnostic_state: ControllerDiagnosticState,
+    #[serde(default)]
+    pub power_diagnostics: ControllerPowerDiagnostics,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -103,6 +105,22 @@ pub struct ControllerDetail {
     pub product_id: u16,
     pub capabilities: ControllerCapabilities,
     pub diagnostics: Vec<ControllerDiagnostic>,
+    #[serde(default)]
+    pub power_diagnostics: ControllerPowerDiagnostics,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ControllerPowerDiagnostics {
+    pub written_reports: u64,
+    pub suppressed_redundant_reports: u64,
+    pub output_write_rate_hz: Option<u16>,
+    pub output_cadence_ms: Option<u64>,
+    pub keepalive_interval_ms: u64,
+    pub last_write_age_ms: Option<u64>,
+    pub last_suppressed_age_ms: Option<u64>,
+    pub native_rumble_passthrough: bool,
+    pub adaptive_triggers_retained: bool,
 }
 
 #[derive(Debug, Deserialize)]

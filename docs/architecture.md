@@ -85,6 +85,11 @@ not auto-install updates.
 Supported-game detection may set the lightbar before telemetry arrives. Trigger
 and rumble effects require fresh telemetry or a manual test.
 
+Hardware output compares stable encoded-report fingerprints before writing. If
+two typed frames encode to the same controller report, DSCC suppresses the
+redundant write until the keepalive interval. This keeps current haptics intact
+while reducing unnecessary USB/Bluetooth output traffic.
+
 ## Web UI
 
 The UI is Svelte 5 + Vite, not SvelteKit.

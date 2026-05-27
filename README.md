@@ -10,7 +10,7 @@ lightbar controls, and racing telemetry without Python setup or scripts.
 
 Get the latest Windows installer from [GitHub Releases](https://github.com/shiftedx/dualsense-command/releases/latest).
 
-- Current release: `0.3.2`
+- Current release: `0.3.3`
 - Recommended download: **DSCC Standard** Windows x86_64 MSI
 - Linux builds: beta archive with bundled web UI
 
@@ -90,6 +90,8 @@ setup and validation commands.
 - Includes a quick in-app guide and focused tooltips for the main tuning
   controls.
 - Shows controller health, battery, connection, and basic diagnostics.
+- Shows controller power diagnostics, including output cadence and suppressed
+  redundant reports, without lowering haptics by default.
 - Helps with Steam Input button mappings for supported game layouts, including
   a DualSense Edge paddle shift preset for keyboard-backed shifting.
 - Reads and writes supported DualSense Edge onboard Fn-slot settings over USB

@@ -24,7 +24,7 @@ sign MSIs because there is no paid code-signing certificate.
 ## Verify A Download
 
 ```powershell
-Get-FileHash .\DualSenseCommandCenter-v0.3.2-windows-x86_64-standard-unsigned.msi -Algorithm SHA256
+Get-FileHash .\DualSenseCommandCenter-v0.3.3-windows-x86_64-standard-unsigned.msi -Algorithm SHA256
 Get-Content .\SHA256SUMS-windows.txt
 ```
 
@@ -38,4 +38,3 @@ The hash from `Get-FileHash` must match the entry in the checksum file.
 
 Do not add auto-update install behavior until release signing and rollback
 rules are in place.
-

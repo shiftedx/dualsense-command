@@ -97,6 +97,8 @@
   $: controllerBridgeConfigured =
     currentControllerConfig?.inputMode === 'dscc_input_bridge' && Boolean(currentControllerConfig?.inputBridge?.enabled);
   $: bridgeSessionActive = bridgeSession?.state === 'active';
+  $: powerDiagnostics = controller?.powerDiagnostics ?? null;
+  $: powerSuggestions = batteryFriendlySuggestions(controller, currentControllerConfig);
   $: if ((controller?.id ?? '') !== observedForController) {
     observedForController = controller?.id ?? '';
     observed = emptyObservedInputRange();
@@ -285,6 +287,61 @@
 
   function bridgeSessionState() {
     return bridgeSession ? `${bridgeSession.state} / ${bridgeSession.message}` : 'No bridge session active';
+  }
+
+  function formatHz(value: number | null | undefined) {
+    return typeof value === 'number' ? `${value.toFixed(value >= 10 ? 0 : 1)} Hz` : 'Unavailable';
+  }
+
+  function formatMs(value: number | null | undefined) {
+    return typeof value === 'number' ? `${Math.round(value)}ms` : 'Unavailable';
+  }
+
+  function formatCount(value: number | null | undefined) {
+    return typeof value === 'number' ? Math.round(value).toLocaleString() : 'Unavailable';
+  }
+
+  function formatFlag(value: boolean | null | undefined, yes: string, no: string) {
+    if (typeof value !== 'boolean') return 'Unavailable';
+    return value ? yes : no;
+  }
+
+  function hasPowerMetrics(item: ControllerStatus | undefined) {
+    const diagnostics = item?.powerDiagnostics;
+    if (!diagnostics) return false;
+    return Object.values(diagnostics).some((value) => value !== null && value !== undefined);
+  }
+
+  function batteryFriendlySuggestions(
+    item: ControllerStatus | undefined,
+    config: ControllerConfiguration | null
+  ) {
+    const suggestions: string[] = [];
+    const diagnostics = item?.powerDiagnostics;
+    const nativeRumble =
+      diagnostics?.nativeRumblePassthrough ?? config?.forza.bodyRumbleMode === 'native_passthrough';
+    const adaptiveTriggers =
+      diagnostics?.adaptiveTriggersRetained ??
+      Boolean(config?.trigger.effect && config.trigger.effect.toLowerCase() !== 'off');
+    const lightbarBrightness = config?.lightbar.enabled ? config.lightbar.brightness : 0;
+
+    suggestions.push(
+      nativeRumble
+        ? 'Native rumble passthrough is preferred for body motors; keep it when the game already drives strong rumble.'
+        : 'Prefer native rumble passthrough for body motors when a profile does not need DSCC-only rumble shaping.'
+    );
+    suggestions.push(
+      adaptiveTriggers
+        ? 'Adaptive triggers are retained; reduce redundant writes before weakening trigger effects.'
+        : 'Retain adaptive triggers for drive cues, then save power through write cadence and lighting.'
+    );
+    suggestions.push(
+      lightbarBrightness > 45
+        ? 'Dim lightbar and player LEDs when visual telemetry is not needed; haptics stay intact.'
+        : 'Keep lightbar and player LEDs modest; use haptics for primary feedback.'
+    );
+
+    return suggestions;
   }
 
   onMount(() => {
@@ -496,6 +553,51 @@
       {#if inputBridge?.warnings.length && inputPathTitle() === 'DSCC Input Bridge'}
         <p class="dm-edge-slots-note">{inputBridge.warnings[0]}</p>
       {/if}
+    </section>
+
+    <section class="dm-power-diagnostics-panel" aria-label="Power diagnostics">
+      <div class="dm-live-panel-head">
+        <div>
+          <span>Power Diagnostics</span>
+          <strong>{hasPowerMetrics(controller) ? 'Output Cadence' : 'Awaiting Agent Metrics'}</strong>
+        </div>
+        <code>{controller.transport}</code>
+      </div>
+      <dl class="dm-controller-metric-grid compact">
+        <div>
+          <dt>Write Rate</dt>
+          <dd>{formatHz(powerDiagnostics?.outputWriteRateHz)}</dd>
+        </div>
+        <div>
+          <dt>Cadence</dt>
+          <dd>{formatMs(powerDiagnostics?.outputCadenceMs)}</dd>
+        </div>
+        <div>
+          <dt>Suppressed</dt>
+          <dd>{formatCount(powerDiagnostics?.suppressedRedundantReports)}</dd>
+        </div>
+        <div>
+          <dt>Keepalive</dt>
+          <dd>{formatMs(powerDiagnostics?.keepaliveIntervalMs)}</dd>
+        </div>
+        <div>
+          <dt>Last Write</dt>
+          <dd>{formatMs(powerDiagnostics?.lastWriteAgeMs)}</dd>
+        </div>
+        <div>
+          <dt>Rumble Path</dt>
+          <dd>{formatFlag(powerDiagnostics?.nativeRumblePassthrough, 'native passthrough', 'DSCC shaped')}</dd>
+        </div>
+        <div class="wide">
+          <dt>Trigger Policy</dt>
+          <dd>{formatFlag(powerDiagnostics?.adaptiveTriggersRetained, 'adaptive triggers retained', 'adaptive triggers not retained')}</dd>
+        </div>
+      </dl>
+      <div class="dm-power-suggestion-list" aria-label="Battery-friendly haptic guidance">
+        {#each powerSuggestions as suggestion}
+          <p>{suggestion}</p>
+        {/each}
+      </div>
     </section>
 
     <section class="dm-live-input-panel" aria-label="Live controller input">

@@ -60,6 +60,18 @@ DSCC keeps triggers and rumble neutral until it sees:
 DSCC uses this guard to avoid taking over the controller while you are outside
 the car.
 
+## Battery Drops Faster Than Expected
+
+- Open **Controllers -> Power Diagnostics** and check the write cadence.
+- Prefer native body rumble passthrough when the game already drives strong
+  rumble.
+- Dim the lightbar or player LEDs before weakening adaptive trigger effects.
+- Use USB when you want full haptics during longer sessions.
+
+DSCC suppresses redundant encoded output reports automatically. If the panel
+shows many suppressed reports, the app is avoiding duplicate controller writes
+while preserving the current haptic frame.
+
 ## LAN Access Does Not Work
 
 LAN Access is off by default. In DSCC, use **Web UI Location -> LAN Access**,

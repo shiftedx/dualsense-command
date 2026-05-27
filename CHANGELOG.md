@@ -1,3 +1,48 @@
+# DualSense Command Center 0.3.3
+
+Release date: 2026-05-27
+
+0.3.3 focuses on DualSense battery efficiency without reducing the current
+haptics, adaptive trigger, or telemetry feature set.
+
+## Battery And Output Efficiency
+
+- Hardware output now suppresses redundant encoded reports and keeps the
+  controller alive with the existing timed keepalive instead of rewriting the
+  same state every frame.
+- The suppression check compares the encoded report shape, so equivalent output
+  is skipped even when upstream floating-point frame construction varies.
+- Haptics and adaptive triggers remain retained: DSCC still writes immediately
+  when the desired controller output changes.
+
+## Controller Diagnostics
+
+- The Controllers tab now shows power diagnostics for output cadence, write
+  rate, suppressed reports, keepalive interval, and passthrough status.
+- Support bundles include the same sanitized counters so testers can report
+  battery and output behavior without exposing HID paths, serials, addresses, or
+  raw report bytes.
+
+## Validation Gate
+
+This release was cut after a clean run of:
+
+```powershell
+cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
+cargo +stable-x86_64-pc-windows-gnu test --workspace
+cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warnings
+npm.cmd --prefix web run typecheck
+npm.cmd --prefix web run build
+npm.cmd --prefix web run test:button-map
+npm.cmd --prefix web run test:release-size
+npm.cmd --prefix web run test:source-audit
+npm.cmd --prefix web run test:visual-smoke
+```
+
+Windows users should choose the `standard` MSI unless they specifically need
+DSCC Input Bridge testing for local non-Steam app profiles. The MSI remains
+unsigned.
+
 # DualSense Command Center 0.3.2
 
 Release date: 2026-05-27

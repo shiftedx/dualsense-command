@@ -22,8 +22,9 @@ use dscc_device::{MockTransport, RawHidDevice};
 
 use crate::{
     ControllerDetail, ControllerDiagnostic, ControllerDiagnosticState, ControllerDiscoveryEvent,
-    ControllerPermissionState, ControllerSummary, DevicePermissionProblem, DiagnosticSeverity,
-    DiscoveredController, HealthCheck, RealtimeMessage,
+    ControllerPermissionState, ControllerPowerDiagnostics, ControllerSummary,
+    DevicePermissionProblem, DiagnosticSeverity, DiscoveredController, HealthCheck,
+    RealtimeMessage,
 };
 
 #[cfg(target_os = "windows")]
@@ -391,6 +392,7 @@ impl ControllerRecord {
             battery_state: self.state.battery_state,
             permission: self.permission,
             diagnostic_state: self.diagnostic_state,
+            power_diagnostics: ControllerPowerDiagnostics::default(),
         }
     }
 
@@ -411,6 +413,7 @@ impl ControllerRecord {
             product_id: self.info.product_id,
             capabilities: self.info.capabilities.clone(),
             diagnostics: self.diagnostics.clone(),
+            power_diagnostics: summary.power_diagnostics,
         }
     }
 

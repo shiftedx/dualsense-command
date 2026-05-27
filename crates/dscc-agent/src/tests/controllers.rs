@@ -57,6 +57,82 @@ async fn controller_detail_includes_capabilities_and_diagnostics() {
 }
 
 #[tokio::test]
+async fn controller_api_includes_sanitized_power_diagnostics() {
+    let state = AgentState::from_controller_events([attach_event(
+        "edge-output-api",
+        ControllerFamily::DualSenseEdge,
+        ControllerTransportKind::Usb,
+        Some(100),
+    )]);
+    let frame = ControllerOutputFrame {
+        r2: TriggerOutput::AdaptiveResistance {
+            start_position: 0.42,
+            strength: 0.20,
+        },
+        ..ControllerOutputFrame::default()
+    };
+    let now = Instant::now();
+    state.record_output_frame_write("edge-output-api", &frame, DeviceTransportKind::Usb, now);
+    assert!(!state.output_frame_write_due(
+        "edge-output-api",
+        &frame,
+        DeviceTransportKind::Usb,
+        now + Duration::from_millis(33),
+    ));
+    let router = app(state);
+
+    let controllers: Vec<ControllerSummary> =
+        get_json(router.clone(), "/api/controllers", StatusCode::OK).await;
+    assert_eq!(controllers[0].power_diagnostics.written_reports, 1);
+    assert_eq!(
+        controllers[0]
+            .power_diagnostics
+            .suppressed_redundant_reports,
+        1
+    );
+    assert_eq!(
+        controllers[0].power_diagnostics.keepalive_interval_ms,
+        HARDWARE_OUTPUT_KEEPALIVE_INTERVAL.as_millis() as u64
+    );
+    assert!(controllers[0].power_diagnostics.last_write_age_ms.is_some());
+    assert!(controllers[0]
+        .power_diagnostics
+        .last_suppressed_age_ms
+        .is_some());
+    assert!(controllers[0].power_diagnostics.native_rumble_passthrough);
+    assert!(controllers[0].power_diagnostics.adaptive_triggers_retained);
+
+    let controllers_json: serde_json::Value =
+        get_json(router.clone(), "/api/controllers", StatusCode::OK).await;
+    let first_controller = &controllers_json
+        .as_array()
+        .expect("controllers response is an array")[0];
+    assert!(first_controller.get("power_diagnostics").is_some());
+    assert!(first_controller.get("output_diagnostics").is_none());
+    assert!(first_controller
+        .get("power_diagnostics")
+        .and_then(|value| value.get("suppressedRedundantReports"))
+        .is_some());
+
+    let detail: ControllerDetail =
+        get_json(router, "/api/controllers/edge-output-api", StatusCode::OK).await;
+    assert_eq!(
+        detail.power_diagnostics.written_reports,
+        controllers[0].power_diagnostics.written_reports
+    );
+    assert_eq!(
+        detail.power_diagnostics.suppressed_redundant_reports,
+        controllers[0]
+            .power_diagnostics
+            .suppressed_redundant_reports
+    );
+    assert_eq!(
+        detail.power_diagnostics.keepalive_interval_ms,
+        controllers[0].power_diagnostics.keepalive_interval_ms
+    );
+}
+
+#[tokio::test]
 async fn controller_can_be_renamed_without_changing_identity() {
     let router = app(AgentState::from_controller_events([attach_event(
         "edge-identity",
