@@ -57,6 +57,7 @@
     createQueuedThrottleTask,
     createTriggerInputPoller
   } from './app/runtimePolling';
+  import { buildUiSupportBundle, downloadSupportBundleText } from './app/supportBundle';
   import ControllersView from './lib/features/controllers/ControllersView.svelte';
   import HapticsAside from './lib/features/haptics/HapticsAside.svelte';
   import HapticsView from './lib/features/haptics/HapticsView.svelte';
@@ -64,7 +65,6 @@
   import {
     TRIGGER_CURVE_POINT_MAX,
     TRIGGER_CURVE_POINT_MIN,
-    TRIGGER_CURVE_SAMPLE_POSITIONS,
     clampUnit,
     defaultTriggerCurve,
     type ForzaEffectMeta,
@@ -76,6 +76,77 @@
     triggerCurvePointOutput,
     triggerCurvePointsFromCurve
   } from './lib/features/haptics/hapticsModel';
+  import {
+    forzaTriggerForceModelFor,
+    intensityTooltip,
+    routeTooltip,
+    triggerCurveLiveView,
+    triggerCurveShapeView,
+    triggerCurveTooltip,
+    triggerCurveValueFor,
+    triggerPressLabel,
+    triggerRangeTooltip,
+    triggerRangeValuesFor,
+    triggerStrengthScalarFor,
+    vibrationIntensityPercent,
+    vibrationModeRequest,
+    type TriggerCurveDisplayMode,
+    type TriggerSide
+  } from './lib/features/haptics/hapticsCurvePresentation';
+  import {
+    bodyRumbleModeOptions,
+    FORZA_BRAKE_BASELINE_FORCE,
+    FORZA_BRAKE_ENDSTOP_FORCE,
+    FORZA_BRAKE_ENDSTOP_FORCE_BOOST,
+    FORZA_BRAKE_NORMAL_FORCE,
+    FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE,
+    FORZA_BRAKE_OVERTRAVEL_RAMP_WIDTH,
+    FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION,
+    FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET,
+    FORZA_ENDSTOP_WALL_OFFSET,
+    FORZA_SHIFT_THUMP_DEFAULT_INTENSITY,
+    FORZA_THROTTLE_BASELINE_FORCE,
+    FORZA_THROTTLE_ENDSTOP_FORCE,
+    FORZA_THROTTLE_ENDSTOP_FORCE_BOOST,
+    FORZA_THROTTLE_NORMAL_FORCE,
+    FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION,
+    FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE,
+    FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH,
+    FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION,
+    forzaEffectMetas,
+    forzaRoutes,
+    shiftThumpPresetHelp,
+    shiftThumpPresets,
+    triggerEffectHelp,
+    triggerEffectOptions,
+    triggerStrengthHelp,
+    vibrationHelp,
+    vibrationModeHelp,
+    vibrationModeOptions
+  } from './lib/features/haptics/hapticsOptions';
+  import {
+    achievementText,
+    formatLastPlayed,
+    formatPlaytime,
+    gameAccentColor,
+    gameArtwork,
+    gameDetectionStatusText,
+    gameLauncherLabel,
+    gameMediaDetails,
+    gameProviderMeta,
+    gameTileStatus,
+    profileScopeCount as countProfilesForGame
+  } from './lib/features/games/gamePresentation';
+  import {
+    assignmentForGame,
+    defaultProfileIdForGame,
+    profileContextTag,
+    profileImportPayload,
+    profilesForGame,
+    sanitizeFileName,
+    uniqueProfileName,
+    usesForzaRuntimeProfile
+  } from './lib/features/profiles/profileSelection';
   import type { AppView } from './app/navigation';
   import type { SteamBindingSlot } from './lib/features/buttonMapping';
   import {
@@ -130,8 +201,6 @@
     ForzaBodyRumbleMode,
     ForzaEffectConfiguration,
     ForzaEffectRoute,
-    GameDetection,
-    ProfileAssignmentConfiguration,
     ProfileSummary,
     SteamInputBinding,
     SteamInputLayout,
@@ -170,231 +239,6 @@
       clearSteamBindingMessage();
     }
   };
-  const forzaRoutes: Array<{ value: ForzaEffectRoute; label: string }> = [
-    { value: 'body_both', label: 'Both grips' },
-    { value: 'body_left', label: 'Left grip' },
-    { value: 'body_right', label: 'Right grip' },
-    { value: 'l2', label: 'L2 trigger' },
-    { value: 'r2', label: 'R2 trigger' },
-    { value: 'both_triggers', label: 'Both triggers' },
-    { value: 'body_and_triggers', label: 'Body + triggers' },
-    { value: 'r2_and_body', label: 'R2 + body' },
-    { value: 'light_led', label: 'Light / LEDs' }
-  ];
-  const FORZA_SHIFT_THUMP_DEFAULT_INTENSITY = 255;
-  // Mirrors the backend Forza runtime profile so the graph shows felt force, not just exponent shape.
-  const FORZA_BRAKE_BASELINE_FORCE = 42 / 255;
-  const FORZA_BRAKE_NORMAL_FORCE = 164 / 255;
-  const FORZA_BRAKE_ENDSTOP_FORCE = 238 / 255;
-  const FORZA_THROTTLE_BASELINE_FORCE = 3 / 255;
-  const FORZA_THROTTLE_NORMAL_FORCE = 28 / 255;
-  const FORZA_THROTTLE_ENDSTOP_FORCE = 106 / 255;
-  const FORZA_ENDSTOP_WALL_OFFSET = 0.03;
-  const FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET = 0.28;
-  const FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION = 0.70;
-  const FORZA_BRAKE_OVERTRAVEL_RAMP_WIDTH = 0.16;
-  const FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE = 2.0;
-  const FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION = 0.80;
-  const FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION = 0.80;
-  const FORZA_BRAKE_ENDSTOP_FORCE_BOOST = 1.25;
-  const FORZA_THROTTLE_ENDSTOP_FORCE_BOOST = 3.0;
-  const FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH = 0.20;
-  const FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE = 2.4;
-
-  const shiftThumpPresets = [
-    { label: 'Soft', intensity: 35 },
-    { label: 'Medium', intensity: 65 },
-    { label: 'Strong', intensity: 180 },
-    { label: 'Max', intensity: FORZA_SHIFT_THUMP_DEFAULT_INTENSITY }
-  ];
-
-  const shiftThumpPresetHelp: Record<string, string> = {
-    Soft: 'A lighter mechanical cue for users who want shift feedback without a big kick through the controller.',
-    Medium: 'A moderate shift kick that is easy to feel but less abrupt than the stock strong profile.',
-    Strong: 'A firmer R2 kick with reduced body feedback for a more physical gear change.',
-    Max: 'The Base shift thump: the strongest cue, using the full 255 effect ceiling so gear changes punch through road texture and engine cues.'
-  };
-
-  const routeTooltips: Record<ForzaEffectRoute, string> = {
-    body_both: 'Sends the effect to both grip motors. Good for road, impacts, and whole-car events.',
-    body_left: 'Sends most of the effect to the left grip. Useful when you want to separate a cue from throttle-side feedback.',
-    body_right: 'Sends most of the effect to the right grip. Useful for traction or throttle-related cues.',
-    l2: 'Sends the effect only to the left adaptive trigger, usually brake-side feedback.',
-    r2: 'Sends the effect only to the right adaptive trigger, usually throttle-side feedback.',
-    both_triggers: 'Sends trigger feedback to both L2 and R2 without body rumble.',
-    body_and_triggers: 'Combines adaptive trigger feedback with a short body thump. Best for gear shifts and other physical events.',
-    r2_and_body: 'Combines R2 trigger feedback with a slightly reduced body thump. This is the Base shift route.',
-    light_led: 'Routes the effect to LEDs or the lightbar instead of trigger/body haptics.'
-  };
-
-  const triggerEffectHelp: Record<string, string> = {
-    'Adaptive resistance': 'A smooth force ramp that increases resistance as the trigger moves. This is the default because it feels closest to pedal load.',
-    Pulse: 'A vibration-like trigger pulse. Useful for alerts, but less pedal-like than adaptive resistance.',
-    Wall: 'Creates a hard stop at the trigger position. Best for binary actions such as a handbrake wall.',
-    'Wall pulse': 'A pulsing trigger pattern with a wall-form kick. This exposes the same hardware mode DSCC uses for strong shift thumps.',
-    Off: 'Disables base trigger force. Telemetry effects can still run if their individual rows are enabled.'
-  };
-
-  const triggerEffectOptions = [
-    { label: 'Adaptive resistance', badge: 'Ramp' },
-    { label: 'Pulse', badge: 'Pulse' },
-    { label: 'Wall', badge: 'Stop' },
-    { label: 'Wall pulse', badge: 'Kick' },
-    { label: 'Off', badge: 'Mute' }
-  ];
-
-  const triggerStrengthHelp: Record<string, string> = {
-    Off: 'No base trigger resistance is applied.',
-    Weak: 'Light resistance for users who want subtle feedback or less hand fatigue.',
-    Medium: 'Moderate resistance that keeps cues clear without making the triggers heavy.',
-    'Strong (Standard)': 'The intended DSCC baseline. Strong enough to feel the curve clearly while staying within comfortable DualSense force levels.'
-  };
-
-  const vibrationHelp: Record<string, string> = {
-    Off: 'Disables body rumble output while leaving adaptive triggers and LEDs available.',
-    Low: 'Keeps grip motors quiet and battery-friendly. Good for long sessions.',
-    Medium: 'Moderate body feedback for road texture and event thumps.',
-    High: 'Stronger grip feedback. Use when you want road, impact, and shift cues to stand out more.'
-  };
-
-  const vibrationModeHelp: Record<string, string> = {
-    Balanced: 'Keeps low and high motors blended for general-purpose body feedback.',
-    'Deep thump': 'Leans into the low-frequency motor for heavier grip movement and impact cues.',
-    'Fine buzz': 'Leans into the high-frequency motor for sharper texture and alert cues.'
-  };
-
-  const vibrationModeOptions = [
-    { label: 'Balanced', mode: 'balanced', badge: 'Blend' },
-    { label: 'Deep thump', mode: 'deep_thump', badge: 'Low' },
-    { label: 'Fine buzz', mode: 'fine_buzz', badge: 'High' }
-  ];
-
-  const bodyRumbleModeOptions: Array<{ value: ForzaBodyRumbleMode; label: string; badge: string; help: string }> = [
-    {
-      value: 'native_passthrough',
-      label: 'Native game',
-      badge: 'Default',
-      help: 'Leaves continuous engine and road rumble to the game while DSCC adds adaptive triggers, LEDs, shift thumps, and impact thumps.'
-    },
-    {
-      value: 'dscc_full_control',
-      label: 'DSCC mix',
-      badge: 'Full body',
-      help: 'Lets DSCC replace continuous body rumble with telemetry-driven road, slip, curb, puddle, and drivetrain layers.'
-    }
-  ];
-
-  const forzaEffectMetas: ForzaEffectMeta[] = [
-    {
-      id: 'brake_resistance',
-      label: 'Brake pressure',
-      signal: 'input.brake',
-      group: 'Trigger',
-      defaultIntensity: 100,
-      defaultRoute: 'l2',
-      help: 'Maps brake input to L2 resistance. Higher intensity makes the brake trigger push back harder as braking increases; best left on L2 for a natural brake pedal feel.'
-    },
-    {
-      id: 'abs_slip_pulse',
-      label: 'ABS / front slip',
-      signal: 'wheel.slip.front_max',
-      group: 'Trigger',
-      defaultIntensity: 100,
-      defaultRoute: 'l2',
-      help: 'Adds a quick L2 pulse when front tires lose grip under braking. It is useful for sensing ABS or front lockup without relying on screen or audio cues.'
-    },
-    {
-      id: 'handbrake_wall',
-      label: 'Handbrake wall',
-      signal: 'input.handbrake',
-      group: 'Trigger',
-      defaultIntensity: 100,
-      defaultRoute: 'l2',
-      help: 'Creates a hard L2 wall while the handbrake signal is active. This is an event cue, so it should feel distinct without adding constant body rumble.'
-    },
-    {
-      id: 'throttle_resistance',
-      label: 'Throttle load',
-      signal: 'input.throttle',
-      group: 'Trigger',
-      defaultIntensity: 100,
-      defaultRoute: 'r2',
-      help: 'Maps throttle load to R2 resistance. The Horizon default uses a curved ramp so early throttle remains controllable and force builds toward full throttle.'
-    },
-    {
-      id: 'gear_shift_thump',
-      label: 'Paddle shift thump',
-      signal: 'drivetrain.shift_pulse',
-      group: 'Cue',
-      defaultIntensity: FORZA_SHIFT_THUMP_DEFAULT_INTENSITY,
-      defaultRoute: 'r2_and_body',
-      help: 'Fires a short kick when DSCC detects a gear change. The Base route uses R2 plus a slightly reduced body thump so shifts feel physical without hitting both triggers.'
-    },
-    {
-      id: 'rev_limiter_buzz',
-      label: 'Rev limiter buzz',
-      signal: 'vehicle.rpm_ratio',
-      group: 'Cue',
-      defaultIntensity: 120,
-      defaultRoute: 'r2',
-      help: 'Adds a high-RPM buzz as the engine approaches the limiter. It is meant as a shift cue, so keep intensity moderate if you already use RPM LEDs.'
-    },
-    {
-      id: 'road_texture',
-      label: 'Road texture',
-      signal: 'surface.rumble.max',
-      group: 'Body',
-      defaultIntensity: 60,
-      defaultRoute: 'body_both',
-      help: 'Uses road surface rumble and speed to add low continuous texture through the grips. It is enabled in the Base profile at a conservative level.'
-    },
-    {
-      id: 'rumble_strip',
-      label: 'Rumble strips',
-      signal: 'surface.rumble_strip.max',
-      group: 'Body',
-      defaultIntensity: 72,
-      defaultRoute: 'body_both',
-      help: 'Adds stronger body pulses for curbs and rumble strips. It can be informative but uses more continuous motor output, so enable only if you want that extra surface cue.'
-    },
-    {
-      id: 'tire_slip',
-      label: 'Tire slip',
-      signal: 'wheel.slip.max',
-      group: 'Body',
-      defaultIntensity: 95,
-      defaultRoute: 'body_right',
-      help: 'Turns tire slip into body feedback. Routing right keeps it separated from brake cues; raise intensity carefully because sustained sliding can become busy.'
-    },
-    {
-      id: 'puddle_drag',
-      label: 'Puddle drag',
-      signal: 'surface.puddle.max',
-      group: 'Body',
-      defaultIntensity: 75,
-      defaultRoute: 'body_left',
-      help: 'Adds drag feedback when puddle telemetry rises. This helps water feel different from normal road texture without overpowering throttle and shift cues.'
-    },
-    {
-      id: 'suspension_impact',
-      label: 'Suspension / impact',
-      signal: 'suspension.impact_pulse',
-      group: 'Body',
-      defaultIntensity: 115,
-      defaultRoute: 'body_both',
-      help: 'Latches hard suspension and acceleration spikes into a short body thump through the grip motors. Best for jumps, crashes, and hard landings.'
-    },
-    {
-      id: 'rpm_leds',
-      label: 'Gear LEDs + RPM bar',
-      signal: 'vehicle.rpm_ratio',
-      group: 'Light',
-      defaultIntensity: 100,
-      defaultRoute: 'light_led',
-      help: 'Maps current gear to the five touchpad LEDs and blends the lightbar toward red as RPM approaches redline. Disabled leaves the lightbar on the user-selected profile color.'
-    }
-  ];
-
   const FALLBACK_POLL_INTERVAL_MS = 5000;
   const TRIGGER_INPUT_POLL_INTERVAL_MS = 40;
   const BASE_FEEL_TEST_DURATION_MS = 30000;
@@ -643,9 +487,9 @@
   $: profileContextGame = selectedTuningScope === 'game' ? selectedTuningGame : null;
   $: profileContextGameId = profileContextGame?.gameId ?? null;
   $: profileContextLabel = selectedTuningScope === 'global' ? 'Global Profile' : profileContextGame?.name ?? detectedGameLabel;
-  $: profileContextAssignment = assignmentForGame(profileContextGame);
+  $: profileContextAssignment = assignmentForGame(profileContextGame, currentControllerConfig);
   $: profileContextDefaultProfileId =
-    profileContextAssignment?.profileId ?? defaultProfileIdForGame(profileContextGame);
+    profileContextAssignment?.profileId ?? defaultProfileIdForGame(profileContextGame, profiles, activeProfileId, currentControllerConfig);
   $: profileContextDefaultProfile = profiles.find((profile) => profile.id === profileContextDefaultProfileId);
   $: profileContextProfiles = profilesForGame(
     profiles,
@@ -659,7 +503,7 @@
     selectedTuningScope === 'global'
       ? 'global scope'
       : profileContextGame && profileContextBadgeProfile
-        ? profileContextTag(profileContextBadgeProfile)
+        ? profileContextTag(profileContextBadgeProfile, profileContextGame, profileContextDefaultProfileId, activeProfileId)
         : 'game scope';
   $: profileContextDetail =
     selectedTuningScope === 'global'
@@ -1080,20 +924,7 @@
   };
   const forzaIntensityPercent = (intensity: number) => Math.round((clampForzaIntensity(intensity) / 255) * 100);
   const forzaIntensityFromPercent = (percent: number | string) => Math.round(clampForzaPercent(percent) * 2.55);
-  type TriggerSide = 'l2' | 'r2';
   type TriggerRangeEdge = 'from' | 'to';
-  type TriggerCurveDisplayMode = 'base' | 'forza';
-  type ForzaTriggerForceModel = {
-    start: number;
-    end: number;
-    wall: number;
-    rampStart?: number;
-    curve: number;
-    baselineForce: number;
-    normalForce: number;
-    endstopForce: number;
-    points: TriggerCurvePoint[];
-  };
   const appViewFromHash = (): AppView => {
     if (typeof window === 'undefined') return 'games';
     return viewFromHash(window.location.hash, { tuningReady, buttonMappingReady });
@@ -1469,119 +1300,6 @@
     scheduleLiveControllerConfigSync();
   };
   const normalizeEffectId = (id: string) => id.replaceAll('-', '_');
-  const gameArtwork = (
-    game: SupportedGame | null | undefined,
-    kind: 'icon' | 'banner' | 'hero' | 'capsule'
-  ): string | null => {
-    if (!game?.artwork) return null;
-    if (kind === 'icon') return game.artwork.iconUrl ?? game.artwork.capsuleUrl ?? game.artwork.bannerUrl ?? null;
-    if (kind === 'banner') return game.artwork.bannerUrl ?? game.artwork.heroUrl ?? game.artwork.capsuleUrl ?? null;
-    if (kind === 'hero') return game.artwork.heroUrl ?? game.artwork.bannerUrl ?? game.artwork.capsuleUrl ?? null;
-    return game.artwork.capsuleUrl ?? game.artwork.bannerUrl ?? game.artwork.heroUrl ?? null;
-  };
-
-  const builtInProfileIdForGame = (game: SupportedGame | null | undefined): string | null => {
-    const gameId = game?.gameId.toLowerCase() ?? '';
-    if (gameId === 'assetto-corsa-rally') return 'assetto-corsa-rally';
-    if (gameId.startsWith('forza-horizon')) {
-      return (
-        profiles.find((profile) => profile.id === 'forza-horizon-immersive')?.id ??
-        profiles.find((profile) => profile.id === 'forza-horizon')?.id ??
-        null
-      );
-    }
-    return null;
-  };
-
-  const usesForzaRuntimeProfile = (game: SupportedGame | null | undefined) => {
-    const gameId = game?.gameId.toLowerCase() ?? '';
-    return gameId.startsWith('forza') || gameId === 'assetto-corsa-rally';
-  };
-
-  const profileAssignmentMatchesGame = (assignment: ProfileAssignmentConfiguration, game: SupportedGame) => {
-    const assignmentGameId = assignment.gameId.trim().toLowerCase();
-    const gameId = game.gameId.trim().toLowerCase();
-    return assignmentGameId === gameId;
-  };
-
-  const assignmentForGame = (game: SupportedGame | null | undefined) => {
-    if (!game) return undefined;
-    return currentControllerConfig?.profileAssignments.find((assignment) =>
-      profileAssignmentMatchesGame(assignment, game)
-    );
-  };
-
-  const defaultProfileIdForGame = (game: SupportedGame | null | undefined) => {
-    if (!game) {
-      return (
-        profiles.find((profile) => profile.id === 'global')?.id ??
-        profiles.find((profile) => profile.scope === 'Global')?.id ??
-        profiles.find((profile) => profile.id === activeProfileId && profile.scope !== 'Game')?.id ??
-        profiles[0]?.id ??
-        ''
-      );
-    }
-    const scopedProfile = profiles.find((profile) => profile.scope === 'Game' && profile.gameId === game.gameId);
-    if (scopedProfile) return scopedProfile.id;
-    const assignment = assignmentForGame(game);
-    if (assignment?.profileId && profiles.some((profile) => profile.id === assignment.profileId)) {
-      return assignment.profileId;
-    }
-    const builtInProfileId = builtInProfileIdForGame(game);
-    if (builtInProfileId) return builtInProfileId;
-    return activeProfileId || profiles[0]?.id || '';
-  };
-
-  const profilesForGame = (
-    source: ProfileSummary[],
-    game: SupportedGame | null | undefined,
-    defaultProfileId: string,
-    selectedProfileId: string,
-    activeId: string
-  ) =>
-    source
-      .filter((profile) => {
-        if (profile.scope !== 'Game') return true;
-        if (game && profile.gameId === game.gameId) return true;
-        return profile.id === selectedProfileId || profile.id === activeId;
-      })
-      .map((profile, index) => ({ profile, index }))
-      .sort((left, right) => {
-        const rank = (profile: ProfileSummary) => {
-          if (profile.id === selectedProfileId) return 0;
-          if (game && profile.scope === 'Game' && profile.gameId === game.gameId) return 1;
-          if (game && profile.id === defaultProfileId) return 2;
-          if (profile.scope === 'Global' && !game) return 1;
-          if (profile.id === activeId) return 3;
-          if (profile.scope === 'Built-in') return 4;
-          return 5;
-        };
-        return rank(left.profile) - rank(right.profile) || left.index - right.index;
-      })
-      .map(({ profile }) => profile);
-
-  const profileContextTag = (profile: ProfileSummary) => {
-    if (profile.scope === 'Game') return 'game';
-    if (profileContextGame && profile.id === profileContextDefaultProfileId) return 'recommended';
-    if (profile.id === activeProfileId) return 'active';
-    return profile.builtIn ? (profile.scope === 'Global' ? 'stock global' : 'built-in') : profile.scope.toLowerCase();
-  };
-
-  const gameProviderMeta = (game: SupportedGame | null | undefined) => {
-    if (!game?.appId) return '';
-    if (game.source === 'local_app' || game.inputProvider === 'dscc_input_bridge') return 'Local app';
-    return `Steam ${game.appId}`;
-  };
-
-  const gameLauncherLabel = (game: SupportedGame) =>
-    [
-      game.name,
-      gameProviderMeta(game),
-      game.running ? 'running' : game.installed ? 'installed' : 'not installed'
-    ]
-      .filter(Boolean)
-      .join(' / ');
-
   const selectedProfileTargetIds = () =>
     resolveSelectedProfileTargetIds({
       profileTargetControllerIds,
@@ -1645,6 +1363,8 @@
     configLoadedFor = '';
     stopTriggerInputPolling();
   };
+
+  const profileScopeCount = (game: SupportedGame) => countProfilesForGame(game, profiles);
 
   const openAddGameDialog = async () => {
     addGameOpen = true;
@@ -1817,7 +1537,7 @@
   const selectTuningGame = async (game: SupportedGame) => {
     selectedTuningScope = 'game';
     selectedTuningGameId = game.gameId;
-    const preferredProfileId = defaultProfileIdForGame(game);
+    const preferredProfileId = defaultProfileIdForGame(game, profiles, activeProfileId, currentControllerConfig);
     if (preferredProfileId) selectedOverrideProfileId = preferredProfileId;
     activeView = 'haptics';
     setViewHash('haptics');
@@ -1927,360 +1647,23 @@
     return typeof value === 'number' && Number.isFinite(value) ? clampUnit(value) : 0;
   };
 
-  const triggerStrengthScalarFor = (effect: string, intensity: string) => {
-    if (effect === 'Off' || intensity === 'Off') return 0;
-    if (intensity === 'Weak') return 0.36;
-    if (intensity === 'Medium') return 0.68;
-    return 1;
-  };
-
   const triggerStrengthScalar = () => triggerStrengthScalarFor(triggerEffect, triggerIntensity);
 
-  const vibrationIntensityPercent = (value: string) => {
-    if (value === 'Off') return 0;
-    if (value === 'Low') return 48;
-    if (value === 'High') return 100;
-    return 82;
-  };
-
-  const vibrationModeRequest = (value: string) =>
-    vibrationModeOptions.find((option) => option.label === value)?.mode ?? 'balanced';
-
-  const triggerRangeValuesFor = (fromRaw: number | string, toRaw: number | string) => {
-    const from = normalizeTriggerPercent(fromRaw);
-    const to = Math.max(from, normalizeTriggerPercent(toRaw));
-    return { from, to, width: Math.max(0, to - from) };
-  };
-
-  const triggerRangeValues = (side: TriggerSide) => {
-    return side === 'l2' ? triggerRangeValuesFor(l2From, l2To) : triggerRangeValuesFor(r2From, r2To);
-  };
-
-  const triggerRangeUnitValuesFor = (fromRaw: number | string, toRaw: number | string) => {
-    const range = triggerRangeValuesFor(fromRaw, toRaw);
-    const start = range.from / 100;
-    const end = Math.max(start + 0.01, range.to / 100);
-    return { start, end };
-  };
-
-  const scaledUnitForGraph = (value: number, scalar: number) => clampUnit(value * scalar);
-  const signalCurveForGraph = (input: number, inputMin: number, inputMax: number, outputMin: number, outputMax: number, exponent: number) => {
-    if (inputMin === inputMax || exponent <= 0) return outputMin;
-    const ratio = clampUnit((input - inputMin) / (inputMax - inputMin));
-    return outputMin + (outputMax - outputMin) * Math.pow(ratio, exponent);
-  };
-
-  const endstopWallPosition = (start: number, end: number) => clamp(end - FORZA_ENDSTOP_WALL_OFFSET, start, end);
-  const brakeOvertravelGuardActive = (end: number) => end >= FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION;
-  const brakeOvertravelWallPosition = (start: number, end: number) =>
-    brakeOvertravelGuardActive(end)
-      ? clamp(Math.max(FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION, end - FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET), start, end)
-      : endstopWallPosition(start, end);
-  const brakeOvertravelRampStart = (start: number, wall: number) =>
-    clamp(wall - FORZA_BRAKE_OVERTRAVEL_RAMP_WIDTH, start, wall);
-  const throttleOvertravelGuardActive = (end: number) => end >= FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION;
-  const throttleOvertravelWallPosition = (start: number, end: number) =>
-    throttleOvertravelGuardActive(end)
-      ? clamp(Math.min(end, FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION), start, end)
-      : endstopWallPosition(start, end);
-  const throttleOvertravelRampStart = (start: number, wall: number) =>
-    clamp(Math.round((wall - FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH) * 1000) / 1000, start, wall);
-  const routeHasL2 = (route: ForzaEffectRoute) => route === 'l2' || route === 'both_triggers' || route === 'body_and_triggers';
-  const routeHasR2 = (route: ForzaEffectRoute) =>
-    route === 'r2' || route === 'both_triggers' || route === 'body_and_triggers' || route === 'r2_and_body';
-  const forzaEffectScalarForGraph = (effect: ForzaEffectConfiguration | undefined) =>
-    effect?.enabled ? clampForzaIntensity(effect.intensity) / 100 : 0;
-  const forzaEffectForGraph = (id: string, effects: ForzaEffectConfiguration[]) =>
-    effects.find((effect) => effect.id === id) ?? DEFAULT_FORZA_EFFECT_BY_ID.get(id);
-
-  const forzaTriggerForceModelFor = (
-    side: TriggerSide,
-    fromRaw: number | string,
-    toRaw: number | string,
-    curveRaw: number | string,
-    pointsRaw: TriggerCurvePoint[],
-    fallbackCurve: number,
-    effect: string,
-    intensity: string,
-    effects: ForzaEffectConfiguration[]
-  ): ForzaTriggerForceModel | null => {
-    const triggerScalar = triggerStrengthScalarFor(effect, intensity);
-    if (effect === 'Off' || triggerScalar <= 0) return null;
-
-    const { start, end } = triggerRangeUnitValuesFor(fromRaw, toRaw);
-    const curve = normalizeTriggerCurve(curveRaw, fallbackCurve);
-    const points = normalizeTriggerCurvePoints(pointsRaw, curve);
-
-    if (side === 'l2') {
-      const brake = forzaEffectForGraph('brake_resistance', effects);
-      if (!brake || !routeHasL2(brake.route)) return null;
-      const scalar = forzaEffectScalarForGraph(brake) * triggerScalar;
-      if (scalar <= 0) return null;
-      const wall = brakeOvertravelWallPosition(start, end);
-      const rampStart = brakeOvertravelGuardActive(end) ? brakeOvertravelRampStart(start, wall) : undefined;
-      return {
-        start,
-        end,
-        wall,
-        rampStart,
-        curve,
-        points,
-        baselineForce: scaledUnitForGraph(FORZA_BRAKE_BASELINE_FORCE, scalar),
-        normalForce: scaledUnitForGraph(FORZA_BRAKE_NORMAL_FORCE, scalar),
-        endstopForce: scaledUnitForGraph(FORZA_BRAKE_ENDSTOP_FORCE, scalar * FORZA_BRAKE_ENDSTOP_FORCE_BOOST)
-      };
-    }
-
-    const throttle = forzaEffectForGraph('throttle_resistance', effects);
-    if (!throttle || !routeHasR2(throttle.route)) return null;
-    const scalar = forzaEffectScalarForGraph(throttle) * triggerScalar;
-    if (scalar <= 0) return null;
-    const wall = throttleOvertravelWallPosition(start, end);
-    const rampStart = throttleOvertravelGuardActive(end) ? throttleOvertravelRampStart(start, wall) : undefined;
-    return {
-      start,
-      end,
-      wall,
-      rampStart,
-      curve,
-      points,
-      baselineForce: scaledUnitForGraph(FORZA_THROTTLE_BASELINE_FORCE, scalar),
-      normalForce: scaledUnitForGraph(FORZA_THROTTLE_NORMAL_FORCE, scalar),
-      endstopForce: scaledUnitForGraph(FORZA_THROTTLE_ENDSTOP_FORCE, scalar * FORZA_THROTTLE_ENDSTOP_FORCE_BOOST)
-    };
-  };
-
-  const forzaTriggerCurveValueFor = (side: TriggerSide, position: number, model: ForzaTriggerForceModel | null) => {
-    if (!model) return 0;
-    const x = clampUnit(position);
-    if (x <= model.start) return 0;
-    if (x >= model.wall) return model.endstopForce;
-    if (model.rampStart !== undefined && model.rampStart < model.wall && x >= model.rampStart) {
-      const rampCurve = side === 'l2' ? FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE : FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE;
-      return clampUnit(signalCurveForGraph(x, model.rampStart, model.wall, model.normalForce, model.endstopForce, rampCurve));
-    }
-    const editableEnd = model.rampStart ?? model.wall;
-    const active = clampUnit((x - model.start) / (Math.max(model.start + 0.01, editableEnd) - model.start));
-    const curved = triggerCurvePointOutput(model.points, active);
-    return clampUnit(model.baselineForce + (model.normalForce - model.baselineForce) * curved);
-  };
-
-  const baseTriggerCurveValueFromParts = (
-    position: number,
-    start: number,
-    end: number,
-    points: TriggerCurvePoint[],
-    strength: number
-  ) => {
-    if (strength <= 0) return 0;
-    const x = clampUnit(position);
-    const active = x <= start ? 0 : triggerCurvePointOutput(points, clampUnit((x - start) / (end - start)));
-    return clampUnit(active * strength);
-  };
-
-  const triggerCurveValueFor = (
-    side: TriggerSide,
-    position: number,
-    fromRaw: number | string,
-    toRaw: number | string,
-    curveRaw: number | string,
-    pointsRaw: TriggerCurvePoint[],
-    fallbackCurve: number,
-    effect: string,
-    intensity: string,
-    displayMode: TriggerCurveDisplayMode,
-    effects: ForzaEffectConfiguration[]
-  ) => {
-    if (displayMode === 'forza') {
-      return forzaTriggerCurveValueFor(
-        side,
-        position,
-        forzaTriggerForceModelFor(side, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, effects)
-      );
-    }
-
-    const range = triggerRangeValuesFor(fromRaw, toRaw);
-    const start = range.from / 100;
-    const end = Math.max(start + 0.01, range.to / 100);
-    const curve = normalizeTriggerCurve(curveRaw, fallbackCurve);
-    const points = normalizeTriggerCurvePoints(pointsRaw, curve);
-    const strength = triggerStrengthScalarFor(effect, intensity);
-    return baseTriggerCurveValueFromParts(position, start, end, points, strength);
-  };
+  const triggerRangeValues = (side: TriggerSide) =>
+    side === 'l2' ? triggerRangeValuesFor(l2From, l2To) : triggerRangeValuesFor(r2From, r2To);
 
   const triggerCurveValue = (side: TriggerSide, position: number) =>
     side === 'l2'
       ? triggerCurveValueFor(side, position, l2From, l2To, l2Curve, l2CurvePoints, defaultTriggerCurve('l2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects)
       : triggerCurveValueFor(side, position, r2From, r2To, r2Curve, r2CurvePoints, defaultTriggerCurve('r2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects);
 
-  const triggerCurvePathFor = (
-    side: TriggerSide,
-    fromRaw: number | string,
-    toRaw: number | string,
-    curveRaw: number | string,
-    pointsRaw: TriggerCurvePoint[],
-    fallbackCurve: number,
-    effect: string,
-    intensity: string,
-    displayMode: TriggerCurveDisplayMode,
-    effects: ForzaEffectConfiguration[]
-  ) => {
-    const samplePositions = [...TRIGGER_CURVE_SAMPLE_POSITIONS];
-    const model =
-      displayMode === 'forza'
-        ? forzaTriggerForceModelFor(side, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, effects)
-        : null;
-    if (model) {
-      samplePositions.push(model.start, model.end, model.wall);
-      if (model.rampStart !== undefined) samplePositions.push(model.rampStart);
-    }
-
-    const range = displayMode === 'base' ? triggerRangeValuesFor(fromRaw, toRaw) : null;
-    const start = range ? range.from / 100 : 0;
-    const end = range ? Math.max(start + 0.01, range.to / 100) : 1;
-    const curve = displayMode === 'base' ? normalizeTriggerCurve(curveRaw, fallbackCurve) : fallbackCurve;
-    const basePoints = displayMode === 'base' ? normalizeTriggerCurvePoints(pointsRaw, curve) : [];
-    const strength = displayMode === 'base' ? triggerStrengthScalarFor(effect, intensity) : 0;
-    const valueAt = (x: number) =>
-      displayMode === 'forza'
-        ? forzaTriggerCurveValueFor(side, x, model)
-        : baseTriggerCurveValueFromParts(x, start, end, basePoints, strength);
-
-    const pathPoints = [...new Set(samplePositions)]
-      .sort((a, b) => a - b)
-      .map((x) => {
-        const y = 1 - valueAt(x);
-        return `${(x * 100).toFixed(2)},${(y * 100).toFixed(2)}`;
-      });
-    return `M ${pathPoints.join(' L ')}`;
-  };
-
-  const curveControlPointsFor = (
-    side: TriggerSide,
-    fromRaw: number | string,
-    toRaw: number | string,
-    curveRaw: number | string,
-    pointsRaw: TriggerCurvePoint[],
-    fallbackCurve: number,
-    effect: string,
-    intensity: string,
-    displayMode: TriggerCurveDisplayMode,
-    effects: ForzaEffectConfiguration[]
-  ) => {
-    const range = triggerRangeValuesFor(fromRaw, toRaw);
-    const start = range.from / 100;
-    const end = Math.max(start + 0.01, range.to / 100);
-    const curve = normalizeTriggerCurve(curveRaw, fallbackCurve);
-    const points = normalizeTriggerCurvePoints(pointsRaw, curve);
-    const model =
-      displayMode === 'forza'
-        ? forzaTriggerForceModelFor(side, fromRaw, toRaw, curveRaw, points, fallbackCurve, effect, intensity, effects)
-        : null;
-    const editableEnd = model ? model.rampStart ?? model.wall : end;
-    const span = Math.max(0.01, editableEnd - start);
-    const strength = displayMode === 'base' ? triggerStrengthScalarFor(effect, intensity) : 0;
-    const valueAt = (x: number) =>
-      displayMode === 'forza'
-        ? forzaTriggerCurveValueFor(side, x, model)
-        : baseTriggerCurveValueFromParts(x, start, end, points, strength);
-
-    return points.map((point, index) => {
-      const active = point.input / 100;
-      const x = clampUnit(start + span * active);
-      const y = 1 - valueAt(x);
-      return {
-        index,
-        input: point.input,
-        output: point.output,
-        locked: index === 0 || index === points.length - 1,
-        x: (x * 100).toFixed(2),
-        y: (clampUnit(y) * 100).toFixed(2)
-      };
-    });
-  };
-
-  const triggerCurveShapeView = (
-    side: TriggerSide,
-    fromRaw: number | string,
-    toRaw: number | string,
-    curveRaw: number | string,
-    pointsRaw: TriggerCurvePoint[],
-    fallbackCurve: number,
-    effect: string,
-    intensity: string,
-    displayMode: TriggerCurveDisplayMode,
-    effects: ForzaEffectConfiguration[]
-  ) => {
-    const range = triggerRangeValuesFor(fromRaw, toRaw);
-    const curvePoints = curveControlPointsFor(side, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, displayMode, effects);
-    return {
-      rangeStart: range.from.toFixed(2),
-      rangeEnd: range.to.toFixed(2),
-      rangeWidth: range.width.toFixed(2),
-      path: triggerCurvePathFor(side, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, displayMode, effects),
-      curvePoints
-    };
-  };
-
-  const triggerCurveLiveView = (
-    side: TriggerSide,
-    fromRaw: number | string,
-    toRaw: number | string,
-    curveRaw: number | string,
-    pointsRaw: TriggerCurvePoint[],
-    fallbackCurve: number,
-    livePress: number,
-    effect: string,
-    intensity: string,
-    displayMode: TriggerCurveDisplayMode,
-    effects: ForzaEffectConfiguration[]
-  ) => {
-    const liveX = clampUnit(livePress) * 100;
-    const liveY = 100 - triggerCurveValueFor(side, livePress, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, displayMode, effects) * 100;
-    return {
-      liveX: liveX.toFixed(2),
-      liveY: liveY.toFixed(2)
-    };
-  };
-
   $: l2CurveShape = triggerCurveShapeView('l2', l2From, l2To, l2Curve, l2CurvePoints, defaultTriggerCurve('l2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects);
   $: r2CurveShape = triggerCurveShapeView('r2', r2From, r2To, r2Curve, r2CurvePoints, defaultTriggerCurve('r2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects);
   $: l2CurveLive = triggerCurveLiveView('l2', l2From, l2To, l2Curve, l2CurvePoints, defaultTriggerCurve('l2'), l2LivePress, triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects);
   $: r2CurveLive = triggerCurveLiveView('r2', r2From, r2To, r2Curve, r2CurvePoints, defaultTriggerCurve('r2'), r2LivePress, triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects);
 
-  const triggerPressLabel = (value: number) => `${Math.round(clampUnit(value) * 100)}%`;
   const showTriggerPress = (_side: 'l2' | 'r2', value: number) =>
     baseFeelTestActive || clampUnit(value) > 0.01;
-
-  const intensityTooltip = (meta: ForzaEffectMeta, intensity: number) =>
-    `${meta.label} intensity is ${forzaIntensityPercent(intensity)}% (${clampForzaIntensity(intensity)} / 255 raw). This scales trigger, rumble, or LED output depending on signal and route.`;
-
-  const routeTooltip = (route: ForzaEffectRoute) => routeTooltips[route] ?? 'Selects where DSCC sends this telemetry effect.';
-
-  const brakeOvertravelWallPoint = (end: number) =>
-    Math.round(end >= FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION * 100
-      ? Math.min(end, Math.max(FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION * 100, end - FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET * 100))
-      : Math.max(0, end - FORZA_ENDSTOP_WALL_OFFSET * 100));
-  const throttleOvertravelWallPoint = (end: number) =>
-    Math.round(end >= FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION * 100
-      ? Math.min(end, FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION * 100)
-      : Math.max(0, end - FORZA_ENDSTOP_WALL_OFFSET * 100));
-  const throttleOvertravelRampPoint = (end: number) => {
-    if (end < FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION * 100) return Math.max(0, end - 3);
-    const wall = throttleOvertravelWallPoint(end);
-    return Math.round(Math.min(end, Math.max(0, wall - FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH * 100)));
-  };
-
-  const triggerRangeTooltip = (side: 'L2' | 'R2', edge: 'from' | 'to', value: number) =>
-    edge === 'from'
-      ? `${side} starts building force at ${value}% trigger travel. Raising this creates more free travel before resistance begins.`
-      : side === 'L2'
-        ? `${side} max resistance begins near ${brakeOvertravelWallPoint(value)}% and holds through the end of travel, while ABS/handbrake priority effects can still take over.`
-        : `${side} stays light first, ramps from about ${throttleOvertravelRampPoint(value)}%, then holds max resistance from about ${throttleOvertravelWallPoint(value)}% through full travel unless shift/rev priority effects take over.`;
-
-  const triggerCurveTooltip = (side: 'L2' | 'R2', value: number) =>
-    `${side} curve is ${value.toFixed(2)}. Drag the dots for a custom response, or move this slider to regenerate a smooth exponent curve.`;
-
   const curveGraphPointFromPointer = (event: PointerEvent, target: HTMLElement) => {
     const rect = target.getBoundingClientRect();
     const x = clampUnit((event.clientX - rect.left) / Math.max(1, rect.width));
@@ -2768,8 +2151,8 @@
   const restoreDefaults = async () => {
     const selectedProfile = profiles.find((profile) => profile.id === (selectedOverrideProfileId || activeProfileId));
     const profileId = selectedProfile && !selectedProfile.builtIn
-      ? defaultProfileIdForGame(profileContextGame) || 'global'
-      : selectedProfile?.id ?? defaultProfileIdForGame(profileContextGame);
+      ? defaultProfileIdForGame(profileContextGame, profiles, activeProfileId, currentControllerConfig) || 'global'
+      : selectedProfile?.id ?? defaultProfileIdForGame(profileContextGame, profiles, activeProfileId, currentControllerConfig);
     if (!profileId) {
       setApplyMessage('No active profile selected');
       return;
@@ -2811,135 +2194,30 @@
     showToast(message, tone);
   };
 
-  const sanitizeSupportText = (value: string | undefined | null) =>
-    (value ?? '')
-      .replace(/[A-Z]:\\[^"'\r\n]+/gi, '[local-path]')
-      .replace(/\/(?:home|Users)\/[^"'\r\n]+/gi, '[local-path]');
-
-  const buildUiSupportBundle = (agentBundleError?: string): SupportBundle => ({
-    schema: 'dev.dscc.support-bundle.ui.v1',
-    generatedAt: new Date().toISOString(),
-    source: 'web-ui-sanitized-fallback',
-    privacy: {
-      sanitized: true,
-      omitted: ['raw HID paths', 'raw controller hardware IDs', 'serial numbers', 'Bluetooth addresses', 'Steam install paths', 'local app executable paths', 'virtual-output provider private paths']
-    },
-    app: {
-      version: status?.version ?? 'unknown',
-      health: status?.health ?? 'unavailable',
-      uptime: status?.uptime ?? 'unknown',
-      apiBinding: listenOnAllInterfaces ? 'lan' : 'loopback',
-      activeAdapter: status?.activeAdapter ?? 'None'
-    },
-    environment: {
-      userAgent: navigator.userAgent,
-      language: navigator.language,
-      viewport: `${window.innerWidth}x${window.innerHeight}`
-    },
-    selectedContext: {
-      scope: selectedTuningScope,
-      game: selectedTuningGame ? { gameId: selectedTuningGame.gameId, name: selectedTuningGame.name } : null,
-      profile: activeProfile ? { scope: activeProfile.scope, builtIn: activeProfile.builtIn, name: activeProfile.name } : null
-    },
-    controllers: controllers.map((item, index) => ({
-      index,
-      family: item.family,
-      transport: item.transport,
-      connected: item.connected,
-      batteryState: item.batteryState,
-      battery: item.battery,
-      permission: item.permission,
-      diagnosticState: item.diagnosticState,
-      capabilities: item.capabilities
-    })),
-    adapters: snapshot?.adapters.map((item) => ({
-      id: item.id,
-      name: item.name,
-      state: item.state,
-      packetRateHz: item.packetRateHz,
-      setupHint: item.setupHint
-    })) ?? [],
-    diagnostics,
-    partialErrors: snapshot?.partialErrors ?? [],
-    gameDetection: {
-      activeGameName: snapshot?.gameDetection.activeGameName ?? null,
-      source: snapshot?.gameDetection.source ?? 'unknown',
-      confidence: snapshot?.gameDetection.confidence ?? 0,
-      moduleId: snapshot?.gameDetection.moduleId ?? null,
-      adapterId: snapshot?.gameDetection.adapterId ?? null,
-      supportedGames: supportedGames.map((game) => ({
-        gameId: game.gameId,
-        name: game.name,
-        source: game.source,
-        inputProvider: game.inputProvider,
-        installed: game.installed,
-        running: game.running,
-        supportLevel: game.supportLevel
-      }))
-    },
-    profileResolution: {
-      reason: snapshot?.profileResolution.reason ?? 'unknown',
-      validation: snapshot?.profileResolution.validation ?? 'unknown',
-      detectedGameId: snapshot?.profileResolution.detectedGameId ?? null,
-      activeAdapterId: snapshot?.profileResolution.activeAdapterId ?? null
-    },
-    steamInput: {
-      running: snapshot?.steamInput.running ?? false,
-      available: snapshot?.steamInput.available ?? false,
-      layoutCount: snapshot?.steamInput.layouts.length ?? 0,
-      warnings: snapshot?.steamInput.warnings.map(sanitizeSupportText) ?? []
-    },
-    inputBridge: snapshot?.inputBridge
-      ? {
-        available: snapshot.inputBridge.available,
-        backendId: snapshot.inputBridge.backendId,
-        provider: snapshot.inputBridge.provider,
-        state: snapshot.inputBridge.state,
-        message: sanitizeSupportText(snapshot.inputBridge.message),
-        sessionCount: snapshot.inputBridge.sessions.length,
-        warnings: snapshot.inputBridge.warnings.map(sanitizeSupportText)
-      }
-      : null,
-    effectState: effectState
-      ? {
-        reason: effectState.reason,
-        dryRun: effectState.dryRun,
-        hardwareOutputEnabled: effectState.hardwareOutputEnabled,
-        warnings: effectState.warnings.map(sanitizeSupportText),
-        parityEffects: effectState.parityEffects
-      }
-      : null,
-    logs: logs.slice(-40).map((entry) => ({
-      level: entry.level,
-      time: entry.time,
-      source: entry.source,
-      message: sanitizeSupportText(entry.message)
-    })),
-    agentBundleError: agentBundleError ? sanitizeSupportText(agentBundleError) : undefined
-  });
-
   const loadSupportBundle = async (): Promise<{ bundle: SupportBundle; fallback: boolean }> => {
     try {
       return { bundle: await getSupportBundle(), fallback: false };
     } catch (caught) {
       if (!snapshot) throw caught;
       const message = caught instanceof Error ? caught.message : 'Support bundle endpoint unavailable.';
-      return { bundle: buildUiSupportBundle(message), fallback: true };
+      return {
+        bundle: buildUiSupportBundle({
+          snapshot,
+          status,
+          listenOnAllInterfaces,
+          selectedTuningScope,
+          selectedTuningGame,
+          activeProfile,
+          controllers,
+          diagnostics,
+          supportedGames,
+          effectState,
+          logs,
+          agentBundleError: message
+        }),
+        fallback: true
+      };
     }
-  };
-
-  const supportBundleFileName = () =>
-    `dscc-support-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.json`;
-
-  const downloadSupportBundleText = (text: string) => {
-    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = supportBundleFileName();
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
   };
 
   const copySupportBundle = async () => {
@@ -3161,7 +2439,7 @@
       return;
     }
     cancelRenameProfile();
-    saveAsProfileName = uniqueProfileName(`${selectedActionProfile.name} copy`);
+    saveAsProfileName = uniqueProfileName(`${selectedActionProfile.name} copy`, profiles);
     saveAsProfileOpen = true;
   };
 
@@ -3254,122 +2532,6 @@
     return item.name;
   };
 
-  const formatPlaytime = (minutes: number | null | undefined) => {
-    if (minutes === null || minutes === undefined || !Number.isFinite(minutes) || minutes <= 0) return '';
-    if (minutes < 60) return `${Math.round(minutes)}m played`;
-    const hours = minutes / 60;
-    return `${hours < 100 ? hours.toFixed(1) : Math.round(hours)}h played`;
-  };
-
-  const formatLastPlayed = (unixSeconds: number | null | undefined) => {
-    if (!unixSeconds || !Number.isFinite(unixSeconds)) return '';
-    const then = unixSeconds * 1000;
-    const days = Math.max(0, Math.floor((Date.now() - then) / 86_400_000));
-    if (days === 0) return 'played today';
-    if (days === 1) return 'played yesterday';
-    if (days < 14) return `played ${days}d ago`;
-    return `played ${new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(new Date(then))}`;
-  };
-
-  const achievementText = (game: SupportedGame) => {
-    const achievements = game.stats?.achievements;
-    if (!achievements || achievements.total <= 0) return '';
-    return `${achievements.unlocked}/${achievements.total} achievements`;
-  };
-
-  const gameTileStatus = (game: SupportedGame) => {
-    if (game.running) return 'running';
-    if (game.installed) return 'installed';
-    return 'not installed';
-  };
-
-  const gameDetectionStatusText = (detection: GameDetection | undefined) => {
-    if (!detection?.activeGameId && !detection?.activeGameName) return '';
-
-    const source = detection.source.split(':', 1)[0];
-    switch (source) {
-      case 'process_scan':
-        return 'Running on this PC';
-      case 'process_scan_disabled':
-        return 'Game detection paused';
-      case 'process_scan_unavailable':
-        return 'Game detection unavailable';
-      case 'built_in':
-        return 'Built-in game support';
-      case 'none':
-      case 'unknown':
-      case '':
-        return 'Detected';
-      default:
-        return source.replaceAll('_', ' ');
-    }
-  };
-
-  const gameMediaDetails = (game: SupportedGame) =>
-    [
-      gameProviderMeta(game),
-      formatPlaytime(game.stats?.playtimeMinutes),
-      achievementText(game),
-      formatLastPlayed(game.stats?.lastPlayedUnix)
-    ].filter(Boolean);
-
-  const profileScopeCount = (game: SupportedGame) =>
-    profiles.filter((profile) => profile.scope === 'Game' && profile.gameId === game.gameId).length;
-
-  const SCOPE_ACCENT_BUILT_IN = '#3BA0FF';
-  const SCOPE_ACCENT_CUSTOM = '#E0B341';
-
-  const gameAccentColor = (game: SupportedGame | null | undefined): string =>
-    game?.supportLevel === 'custom' ? SCOPE_ACCENT_CUSTOM : SCOPE_ACCENT_BUILT_IN;
-
-  const sanitizeFileName = (value: string) =>
-    value
-      .trim()
-      .replace(/[^a-z0-9._-]+/gi, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 80) || 'profile';
-
-  const profileSlug = (value: string) =>
-    value
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '');
-
-  const uniqueProfileName = (baseName: string) => {
-    const existingNames = new Set(profiles.map((profile) => profile.name.toLowerCase()));
-    let candidate = baseName.trim() || 'Imported profile';
-    if (!existingNames.has(candidate.toLowerCase()) && !profiles.some((profile) => profile.id === profileSlug(candidate))) {
-      return candidate;
-    }
-    const root = candidate.replace(/\s+copy(?:\s+\d+)?$/i, '').trim() || 'Imported profile';
-    for (let index = 2; index < 1000; index += 1) {
-      candidate = `${root} copy ${index}`;
-      if (!existingNames.has(candidate.toLowerCase()) && !profiles.some((profile) => profile.id === profileSlug(candidate))) {
-        return candidate;
-      }
-    }
-    return `${root} copy ${Date.now()}`;
-  };
-
-  const profileImportPayload = (value: unknown) => {
-    if (!value || typeof value !== 'object') throw new Error('Profile file is not valid JSON.');
-    const profile = value as Partial<ExportedProfile>;
-    if (profile.schema !== 'dev.dscc.profile.v1') throw new Error('Unsupported DSCC profile schema.');
-    const name = typeof profile.name === 'string' ? profile.name.trim() : '';
-    if (!name) throw new Error('Profile file is missing a profile name.');
-
-    const id = typeof profile.id === 'string' ? profile.id.trim() : '';
-    const existingIds = new Set(profiles.map((item) => item.id));
-    const idAvailable = Boolean(id) && !existingIds.has(id);
-    return {
-      id: idAvailable ? id : undefined,
-      schema: profile.schema,
-      name: idAvailable ? name : uniqueProfileName(`${name} copy`),
-      config: profile.config ?? undefined
-    };
-  };
-
   const exportSelectedProfile = async () => {
     const profileId = selectedOverrideProfileId || activeProfileId;
     if (!profileId || profileFileBusy) {
@@ -3404,7 +2566,7 @@
 
     profileFileBusy = true;
     try {
-      const payload = profileImportPayload(JSON.parse(await file.text()));
+      const payload = profileImportPayload(JSON.parse(await file.text()), profiles);
       const imported = await importProfile(payload);
       selectedOverrideProfileId = imported.id;
       await refresh();
@@ -3598,7 +2760,8 @@
       let preservingStockProfile = false;
       if (targetProfile?.builtIn) {
         const name = uniqueProfileName(
-          profileContextGame ? `${profileContextGame.name} ${targetProfile.name} custom` : `${targetProfile.name} custom`
+          profileContextGame ? `${profileContextGame.name} ${targetProfile.name} custom` : `${targetProfile.name} custom`,
+          profiles
         );
         targetProfile = await createProfile(name, { gameId: profileContextGameId });
         preservingStockProfile = true;

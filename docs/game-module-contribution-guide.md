@@ -69,14 +69,16 @@ and surface cues.
 
 ```powershell
 cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
-cargo +stable-x86_64-pc-windows-gnu test --workspace
+cargo +stable-x86_64-pc-windows-gnu test --workspace --all-features
 cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warnings
 npm.cmd --prefix web run typecheck
 npm.cmd --prefix web run build
+npm.cmd --prefix web run test:source-audit
 ```
 
 For UI or button-mapping changes:
 
 ```powershell
 npm.cmd --prefix web run test:button-map
+npm.cmd --prefix web run test:visual-smoke
 ```

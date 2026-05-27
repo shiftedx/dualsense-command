@@ -86,7 +86,7 @@
   .dscc-tooltip-bubble {
     position: fixed;
     z-index: 10000;
-    display: block;
+    display: none;
     visibility: hidden;
     max-width: min(23rem, calc(100vw - 2rem));
     width: max-content;
@@ -113,6 +113,7 @@
   .dscc-tooltip:hover > .dscc-tooltip-bubble,
   .dscc-tooltip:focus-visible > .dscc-tooltip-bubble,
   .dscc-tooltip:focus-within > .dscc-tooltip-bubble {
+    display: block;
     visibility: visible;
     opacity: 1;
     transform: translateY(0);

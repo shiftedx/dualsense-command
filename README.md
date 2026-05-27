@@ -182,12 +182,14 @@ Run the usual validation set:
 
 ```powershell
 cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
-cargo +stable-x86_64-pc-windows-gnu test --workspace
+cargo +stable-x86_64-pc-windows-gnu test --workspace --all-features
 cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warnings
 npm.cmd --prefix web run typecheck
+npm.cmd --prefix web run test:source-audit
 npm.cmd --prefix web run build
 npm.cmd --prefix web run test:button-map
 npm.cmd --prefix web run test:release-size
+npm.cmd --prefix web run test:visual-smoke
 ```
 
 Contributor docs:

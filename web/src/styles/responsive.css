@@ -170,6 +170,12 @@
     font-size: 11px;
   }
 
+  .dm-app-tagline {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
   .dm-slider-bank {
     grid-template-columns: 1fr;
   }

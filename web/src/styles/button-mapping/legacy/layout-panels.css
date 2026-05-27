@@ -1,0 +1,83 @@
+.dm-button-map-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.8fr);
+  gap: clamp(14px, 1.5vw, 22px);
+  min-height: 0;
+}
+
+.dm-button-map-panel {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: clamp(16px, 1.6vw, 22px);
+}
+
+.dm-button-map-panel.wide {
+  gap: 18px;
+}
+
+.dm-page-status {
+  color: var(--actuation);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.dm-map-context-grid,
+.dm-map-placeholder {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dm-map-context-grid > div,
+.dm-map-placeholder > div,
+.dm-button-bind-row {
+  min-width: 0;
+  padding: 12px;
+  background: rgba(10, 10, 12, 0.42);
+  box-shadow: inset 0 0 0 1px rgba(226, 232, 240, 0.045);
+}
+
+.dm-map-context-grid span,
+.dm-map-placeholder span,
+.dm-button-bind-row span {
+  display: block;
+  color: var(--tungsten);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.dm-map-context-grid strong,
+.dm-map-placeholder strong,
+.dm-button-bind-row strong {
+  display: block;
+  margin-top: 6px;
+  overflow: hidden;
+  color: #FFFFFF;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dm-map-context-grid small {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--tungsten);
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dm-button-bind-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+}

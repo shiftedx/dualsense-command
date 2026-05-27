@@ -1,0 +1,207 @@
+.dm-button-map-page {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  gap: clamp(8px, 1vw, 16px);
+  width: min(1480px, 100%);
+  min-height: 0;
+  margin: 0 auto;
+  padding: clamp(6px, 1vw, 14px) clamp(8px, 1.2vw, 20px) clamp(10px, 1.4vw, 18px);
+  background: transparent;
+}
+
+/* === Mapping page header — no card, just type ===================== */
+.dm-mapping-header {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  gap: 8px 18px;
+  padding: 4px 4px 8px;
+}
+
+.dm-mapping-titleblock {
+  display: grid;
+  gap: 2px;
+}
+
+.dm-mapping-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--actuation);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.dm-mapping-eyebrow em {
+  color: var(--tungsten);
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0;
+  opacity: 0.7;
+}
+
+.dm-mapping-titleblock h2 {
+  margin: 0;
+  color: #FFFFFF;
+  font-family: "Space Grotesk", "Inter Tight", Inter, sans-serif;
+  font-size: clamp(22px, 2.4vw, 30px);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.05;
+}
+
+.dm-mapping-context {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  color: var(--tungsten);
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: right;
+  justify-content: flex-end;
+}
+
+.dm-mapping-context strong {
+  color: var(--haptic);
+  font-weight: 700;
+}
+
+.dm-mapping-context em {
+  color: var(--tungsten);
+  font-style: normal;
+  font-weight: 500;
+}
+
+.dm-mapping-context-count {
+  color: var(--actuation);
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 700;
+}
+
+.dm-mapping-provider-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(252, 211, 77, 0.28);
+  border-radius: 6px;
+  color: #FDE68A;
+  background: rgba(120, 53, 15, 0.18);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+/* === Steam Input mirror =========================================== */
+.dm-paddle-preset {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(88px, 116px) minmax(88px, 116px) auto;
+  align-items: end;
+  gap: 10px;
+  width: min(100%, 1260px);
+  margin: 10px auto 0;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: linear-gradient(180deg, rgba(19, 25, 33, 0.92), rgba(12, 15, 20, 0.94));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.dm-paddle-preset-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.dm-paddle-preset-title div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dm-paddle-preset-title svg {
+  flex: 0 0 auto;
+  color: var(--haptic);
+}
+
+.dm-paddle-key-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dm-paddle-preset-title span,
+.dm-paddle-key-field span {
+  color: var(--tungsten);
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.dm-paddle-preset-title strong {
+  overflow: hidden;
+  color: #FFFFFF;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dm-paddle-preset-title em {
+  overflow: hidden;
+  color: var(--tungsten);
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dm-paddle-key-field input {
+  width: 100%;
+  height: 30px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  background: rgba(2, 5, 9, 0.86);
+  color: #FFFFFF;
+  font: 800 12px/1 "JetBrains Mono", monospace;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.dm-paddle-key-field input:focus-visible {
+  outline: 2px solid rgba(0, 132, 255, 0.42);
+  outline-offset: 1px;
+}
+
+.dm-paddle-preset-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 86px;
+  height: 30px;
+  border: 1px solid rgba(0, 132, 255, 0.42);
+  background: rgba(0, 132, 255, 0.16);
+  color: #FFFFFF;
+  font-size: 11px;
+  font-weight: 800;
+  transition: background 160ms ease-out, border-color 160ms ease-out, box-shadow 180ms ease-out;
+}
+
+.dm-paddle-preset-action:hover:not(:disabled),
+.dm-paddle-preset-action:focus-visible {
+  outline: none;
+  border-color: rgba(0, 132, 255, 0.72);
+  background: rgba(0, 132, 255, 0.24);
+  box-shadow: 0 0 18px rgba(0, 112, 204, 0.24);
+}
+
+.dm-paddle-preset-action:disabled {
+  cursor: not-allowed;
+  border-color: rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--tungsten);
+}
