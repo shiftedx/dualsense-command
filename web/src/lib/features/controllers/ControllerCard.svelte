@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ControllerStatus } from '../lib/types';
+  import type { ControllerStatus } from '../../types';
   import {
     controllerBatteryDetail,
     controllerBatteryFillWidth,
@@ -11,7 +11,7 @@
     controllerPermissionDetail,
     controllerTransportDetail,
     shortControllerId
-  } from '../lib/controllerDisplay';
+  } from '../../controllerDisplay';
 
   export let item: ControllerStatus;
   export let index = 0;

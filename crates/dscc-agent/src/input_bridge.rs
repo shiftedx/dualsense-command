@@ -5,7 +5,7 @@ use dscc_core::input_bridge::{
     InputBridgeConfig, InputBridgeSource, InputBridgeTarget, VirtualAxis,
 };
 use dscc_device::ControllerInputState;
-#[cfg(any(test, debug_assertions))]
+#[cfg(any(test, debug_assertions, feature = "test-mocks"))]
 use dscc_virtual_output::MockVirtualOutputBackend;
 use dscc_virtual_output::{
     HidMaestroBrokerBackend, VirtualButtonState, VirtualGamepadState, VirtualOutputBackend,
@@ -76,7 +76,7 @@ impl InputBridgeService {
         }
     }
 
-    #[cfg(any(test, debug_assertions))]
+    #[cfg(any(test, debug_assertions, feature = "test-mocks"))]
     pub(crate) fn mock() -> Self {
         Self {
             backend: Arc::new(MockVirtualOutputBackend::new()),
@@ -338,7 +338,7 @@ fn public_backend_status_message(message: &str, state: VirtualOutputBackendState
 }
 
 fn input_bridge_warnings(provider: &str, state: VirtualOutputBackendState) -> Vec<String> {
-    #[cfg(any(test, debug_assertions))]
+    #[cfg(any(test, debug_assertions, feature = "test-mocks"))]
     if provider == "mock" {
         return vec!["Input Bridge is using the in-memory test backend.".to_string()];
     }

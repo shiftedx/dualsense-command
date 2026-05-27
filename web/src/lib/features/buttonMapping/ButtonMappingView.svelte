@@ -22,6 +22,7 @@
   export let providerOnline = false;
   export let mappingAvailabilityMessage = '';
   export let mappingReadOnly = false;
+  export let defaultMirrorOnly = false;
   export let controllerHeaderName = '';
   export let controllerTransport: ControllerStatus['transport'] | undefined = undefined;
   export let gameName = 'No supported game selected';
@@ -159,8 +160,13 @@
     <p class="dm-mapping-context">
       <strong>{gameName}</strong>
       <em>· {steamLayoutTitle}</em>
-      <em class="dm-mapping-context-count">· {mappedVisibleChipCount}/{mirroredInputCount} inputs mapped</em>
+      {#if !defaultMirrorOnly && mirroredInputCount > 0}
+        <em class="dm-mapping-context-count">· {mappedVisibleChipCount}/{mirroredInputCount} inputs mapped</em>
+      {/if}
     </p>
+    {#if defaultMirrorOnly}
+      <p class="dm-mapping-provider-note">Default mirror only. No writable {providerLabel} layout is loaded for this game/app yet.</p>
+    {/if}
     {#if mappingAvailabilityMessage}
       <p class="dm-mapping-provider-note">{mappingAvailabilityMessage}</p>
     {/if}
@@ -255,6 +261,10 @@
       {#if noMirrorAvailable}
         <p class="dm-steam-empty-note">
           No {providerLabel} layout in this scope. Select a game from Profiles to remap inputs against the active provider.
+        </p>
+      {:else if defaultMirrorOnly}
+        <p class="dm-steam-empty-note">
+          Showing DSCC's default controller mirror for orientation. Apply stays disabled until a writable provider layout is available.
         </p>
       {/if}
       <div class="dm-steam-controller-art">
