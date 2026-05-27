@@ -17,6 +17,7 @@ mod effects;
 mod forza_glyphs;
 mod game_detection;
 mod input_bridge;
+mod perf_guards;
 mod profiles;
 mod steam_input;
 mod telemetry;
