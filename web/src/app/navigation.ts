@@ -30,9 +30,6 @@ export function hashForView(view: AppView): string {
 }
 
 export function guardView(view: AppView, readiness: ViewReadiness): AppView {
-  if (view === 'buttonMapping' && !readiness.buttonMappingReady) {
-    return readiness.tuningReady ? 'haptics' : 'games';
-  }
   if (view === 'haptics' && !readiness.tuningReady) return 'games';
   return view;
 }

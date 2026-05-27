@@ -14,7 +14,6 @@
   import {
     ButtonMappingView,
     assembleSteamBindingRaw,
-    buildDefaultSteamBindingBySlotKey,
     buildSteamBindingBySlotKey,
     createSteamMirrorGroups,
     parseSteamBindingTriple,
@@ -23,10 +22,41 @@
     steamBindingTargetPart,
     steamSlotGlyphs
   } from './lib/features/buttonMapping';
+  import { bindingTargetGroupsForProvider } from './lib/features/buttonMapping/buttonMappingState';
   import {
-    bindingTargetGroupsForProvider,
-    prepareBindingTargetGroups
-  } from './lib/features/buttonMapping/buttonMappingState';
+    EMPTY_STEAM_BINDING_MAP,
+    EMPTY_STEAM_INPUT_BINDINGS,
+    EMPTY_STEAM_MIRROR_GROUPS,
+    defaultSteamBindingsForFamily,
+    preparedSteamBindingTargetGroups
+  } from './lib/features/buttonMapping/steamBindingTargets';
+  import {
+    profileTargetsCoverAllConnectedControllers,
+    reconcileProfileTargetControllerIds,
+    resolveSelectedControllerId,
+    resolveSelectedProfileTargetIds,
+    selectCurrentController,
+    summarizeProfileTargets
+  } from './app/controllerSelection';
+  import {
+    baseForzaTriggerDefaults,
+    buildBuiltInProfileConfig,
+    buildControllerConfigDraft,
+    buildDefaultControllerConfig as createDefaultControllerConfig,
+    editableConfigFromController as createEditableConfigFromController,
+    editableConfigFromProfileExport as createEditableConfigFromProfileExport,
+    normalizeForzaBodyRumbleMode,
+    normalizeInputBridgeConfig,
+    profileConfigSignature as createProfileConfigSignature,
+    type EditableControllerConfig,
+    type ProfileDraftValues
+  } from './app/profileDraft';
+  import {
+    createDebouncedAsyncTask,
+    createOneShotTimer,
+    createQueuedThrottleTask,
+    createTriggerInputPoller
+  } from './app/runtimePolling';
   import ControllersView from './lib/features/controllers/ControllersView.svelte';
   import HapticsAside from './lib/features/haptics/HapticsAside.svelte';
   import HapticsView from './lib/features/haptics/HapticsView.svelte';
@@ -47,8 +77,7 @@
     triggerCurvePointsFromCurve
   } from './lib/features/haptics/hapticsModel';
   import type { AppView } from './app/navigation';
-  import type { SteamBindingSlot, SteamMirrorGroup } from './lib/features/buttonMapping';
-  import type { PreparedSteamBindingTargetGroup } from './lib/features/buttonMapping/buttonMappingState';
+  import type { SteamBindingSlot } from './lib/features/buttonMapping';
   import {
     activateProfile,
     addCustomGame,
@@ -102,7 +131,6 @@
     ForzaEffectConfiguration,
     ForzaEffectRoute,
     GameDetection,
-    InputBridgeConfig,
     ProfileAssignmentConfiguration,
     ProfileSummary,
     SteamInputBinding,
@@ -129,261 +157,6 @@
     releaseUrl?: string;
     message?: string;
   };
-  type EditableControllerConfig = Omit<ControllerConfiguration, 'controllerId' | 'model'>;
-  type SteamBindingTargetGroup = {
-    label: string;
-    options: Array<{ label: string; raw: string }>;
-  };
-
-  const EMPTY_STEAM_INPUT_BINDINGS: SteamInputBinding[] = [];
-  const EMPTY_STEAM_BINDING_MAP = new Map<string, SteamInputBinding>();
-  const EMPTY_STEAM_MIRROR_GROUPS: SteamMirrorGroup[] = [];
-  let defaultSteamBindingCacheReady = false;
-  let defaultSteamBindingCacheFamily: ControllerStatus['family'] | undefined | null;
-  let defaultSteamBindingCache = EMPTY_STEAM_BINDING_MAP;
-
-  const defaultSteamBindingsForFamily = (family: ControllerStatus['family'] | undefined | null) => {
-    if (!defaultSteamBindingCacheReady || defaultSteamBindingCacheFamily !== family) {
-      defaultSteamBindingCacheReady = true;
-      defaultSteamBindingCacheFamily = family;
-      defaultSteamBindingCache = buildDefaultSteamBindingBySlotKey(family);
-    }
-    return defaultSteamBindingCache;
-  };
-
-  // Steam Input target catalog. The raw VDF form for every binding is
-  // `<command> <param>, <icon>, <label>` — the third field is a free-form
-  // label that Steam shows in its UI (e.g. "Next radio station") and we
-  // leave blank here so the user can author one if they want. Anything
-  // not in this catalog can still be set verbatim through the Raw VDF
-  // field below the dropdown.
-  const keyboardLetterOptions = Array.from({ length: 26 }, (_, i) => {
-    const letter = String.fromCharCode(65 + i);
-    return { label: `${letter} Key`, raw: `key_press ${letter}, , ` };
-  });
-  const keyboardNumberOptions = Array.from({ length: 10 }, (_, i) => ({
-    label: `${i} Key`,
-    raw: `key_press ${i}, , `
-  }));
-  const keyboardFunctionOptions = Array.from({ length: 12 }, (_, i) => ({
-    label: `F${i + 1}`,
-    raw: `key_press F${i + 1}, , `
-  }));
-  const keyboardNumpadOptions = [
-    ...Array.from({ length: 10 }, (_, i) => ({
-      label: `Numpad ${i}`,
-      raw: `key_press KP_${i}, , `
-    })),
-    { label: 'Numpad /', raw: 'key_press KP_DIVIDE, , ' },
-    { label: 'Numpad *', raw: 'key_press KP_MULTIPLY, , ' },
-    { label: 'Numpad -', raw: 'key_press KP_MINUS, , ' },
-    { label: 'Numpad +', raw: 'key_press KP_PLUS, , ' },
-    { label: 'Numpad .', raw: 'key_press KP_PERIOD, , ' },
-    { label: 'Numpad Enter', raw: 'key_press KP_ENTER, , ' }
-  ];
-
-  const steamBindingTargetGroups: SteamBindingTargetGroup[] = [
-    {
-      label: 'Gamepad — Face / D-Pad',
-      options: [
-        { label: 'A / Cross', raw: 'xinput_button a, , ' },
-        { label: 'B / Circle', raw: 'xinput_button b, , ' },
-        { label: 'X / Square', raw: 'xinput_button x, , ' },
-        { label: 'Y / Triangle', raw: 'xinput_button y, , ' },
-        { label: 'D-Pad Up', raw: 'xinput_button dpad_up, , ' },
-        { label: 'D-Pad Down', raw: 'xinput_button dpad_down, , ' },
-        { label: 'D-Pad Left', raw: 'xinput_button dpad_left, , ' },
-        { label: 'D-Pad Right', raw: 'xinput_button dpad_right, , ' }
-      ]
-    },
-    {
-      label: 'Gamepad — Shoulders / Triggers / Sticks',
-      options: [
-        { label: 'Left Bumper (LB)', raw: 'xinput_button shoulder_left, , ' },
-        { label: 'Right Bumper (RB)', raw: 'xinput_button shoulder_right, , ' },
-        { label: 'Left Trigger (LT)', raw: 'xinput_button trigger_left, , ' },
-        { label: 'Right Trigger (RT)', raw: 'xinput_button trigger_right, , ' },
-        { label: 'Left Stick Click (LS)', raw: 'xinput_button joystick_left, , ' },
-        { label: 'Right Stick Click (RS)', raw: 'xinput_button joystick_right, , ' }
-      ]
-    },
-    {
-      label: 'Gamepad — System',
-      options: [
-        { label: 'Start / Options', raw: 'xinput_button start, , ' },
-        { label: 'Select / Create', raw: 'xinput_button select, , ' },
-        { label: 'Guide / PS Button', raw: 'xinput_button guide, , ' }
-      ]
-    },
-    {
-      label: 'Keyboard — Letters',
-      options: keyboardLetterOptions
-    },
-    {
-      label: 'Keyboard — Numbers',
-      options: keyboardNumberOptions
-    },
-    {
-      label: 'Keyboard — Function Keys',
-      options: keyboardFunctionOptions
-    },
-    {
-      label: 'Keyboard — Modifiers',
-      options: [
-        { label: 'Left Shift', raw: 'key_press LSHIFT, , ' },
-        { label: 'Right Shift', raw: 'key_press RSHIFT, , ' },
-        { label: 'Left Ctrl', raw: 'key_press LCONTROL, , ' },
-        { label: 'Right Ctrl', raw: 'key_press RCONTROL, , ' },
-        { label: 'Left Alt', raw: 'key_press LALT, , ' },
-        { label: 'Right Alt', raw: 'key_press RALT, , ' },
-        { label: 'Left Win', raw: 'key_press LWIN, , ' },
-        { label: 'Right Win', raw: 'key_press RWIN, , ' }
-      ]
-    },
-    {
-      label: 'Keyboard — Navigation',
-      options: [
-        { label: 'Tab', raw: 'key_press TAB, , ' },
-        { label: 'Space', raw: 'key_press SPACE, , ' },
-        { label: 'Enter / Return', raw: 'key_press RETURN, , ' },
-        { label: 'Esc', raw: 'key_press ESCAPE, , ' },
-        { label: 'Backspace', raw: 'key_press BACKSPACE, , ' },
-        { label: 'Delete', raw: 'key_press DELETE, , ' },
-        { label: 'Insert', raw: 'key_press INSERT, , ' },
-        { label: 'Home', raw: 'key_press HOME, , ' },
-        { label: 'End', raw: 'key_press END, , ' },
-        { label: 'Page Up', raw: 'key_press PAGE_UP, , ' },
-        { label: 'Page Down', raw: 'key_press PAGE_DOWN, , ' },
-        { label: 'Caps Lock', raw: 'key_press CAPSLOCK, , ' },
-        { label: 'Print Screen', raw: 'key_press PRINT_SCREEN, , ' },
-        { label: 'Scroll Lock', raw: 'key_press SCROLL_LOCK, , ' },
-        { label: 'Pause / Break', raw: 'key_press PAUSE, , ' }
-      ]
-    },
-    {
-      label: 'Keyboard — Arrows',
-      options: [
-        { label: 'Up Arrow', raw: 'key_press UP_ARROW, , ' },
-        { label: 'Down Arrow', raw: 'key_press DOWN_ARROW, , ' },
-        { label: 'Left Arrow', raw: 'key_press LEFT_ARROW, , ' },
-        { label: 'Right Arrow', raw: 'key_press RIGHT_ARROW, , ' }
-      ]
-    },
-    {
-      label: 'Keyboard — Punctuation',
-      options: [
-        { label: ', (Comma)', raw: 'key_press COMMA, , ' },
-        { label: '. (Period)', raw: 'key_press PERIOD, , ' },
-        { label: '; (Semicolon)', raw: 'key_press SEMICOLON, , ' },
-        { label: "' (Apostrophe)", raw: 'key_press SINGLE_QUOTE, , ' },
-        { label: '/ (Slash)', raw: 'key_press FORWARD_SLASH, , ' },
-        { label: '\\ (Backslash)', raw: 'key_press BACK_SLASH, , ' },
-        { label: '[ Left Bracket', raw: 'key_press LEFT_BRACKET, , ' },
-        { label: '] Right Bracket', raw: 'key_press RIGHT_BRACKET, , ' },
-        { label: '- (Minus)', raw: 'key_press DASH, , ' },
-        { label: '= (Equals)', raw: 'key_press EQUALS, , ' },
-        { label: '` (Backquote)', raw: 'key_press BACK_TICK, , ' }
-      ]
-    },
-    {
-      label: 'Keyboard — Numpad',
-      options: keyboardNumpadOptions
-    },
-    {
-      label: 'Mouse — Buttons',
-      options: [
-        { label: 'Left Click', raw: 'mouse_button left, , ' },
-        { label: 'Right Click', raw: 'mouse_button right, , ' },
-        { label: 'Middle Click', raw: 'mouse_button middle, , ' },
-        { label: 'Mouse Button 4 (X1)', raw: 'mouse_button x1, , ' },
-        { label: 'Mouse Button 5 (X2)', raw: 'mouse_button x2, , ' }
-      ]
-    },
-    {
-      label: 'Mouse — Wheel',
-      options: [
-        { label: 'Wheel Up', raw: 'mouse_wheel up, , ' },
-        { label: 'Wheel Down', raw: 'mouse_wheel down, , ' }
-      ]
-    }
-  ];
-
-  const defaultButtonAssignments = (edge = false): EditableControllerConfig['buttons'] => [
-    { key: 'Cross', label: 'Cross' },
-    { key: 'Circle', label: 'Circle' },
-    { key: 'Square', label: 'Square' },
-    { key: 'Triangle', label: 'Triangle' },
-    { key: 'D-Pad', label: 'D-Pad' },
-    { key: 'L1', label: 'L1' },
-    { key: 'R1', label: 'R1' },
-    { key: 'L2', label: 'L2' },
-    { key: 'R2', label: 'R2' },
-    { key: 'L3', label: 'L3' },
-    { key: 'R3', label: 'R3' },
-    { key: 'Create', label: 'Create' },
-    { key: 'Options', label: 'Options' },
-    { key: 'Touch Pad', label: 'Touch Pad Press' },
-    { key: 'Mute', label: 'Mute' },
-    ...(edge
-      ? [
-          { key: 'Back Left', label: 'L3' },
-          { key: 'Back Right', label: 'R3' },
-          { key: 'Fn Left', label: 'Previous DSCC Profile' },
-          { key: 'Fn Right', label: 'Next DSCC Profile' }
-        ]
-      : [])
-  ];
-
-  const canonicalButtonKey = (key: string) => {
-    const trimmed = key.trim();
-    const legacy: Record<string, string> = {
-      cross: 'Cross',
-      circle: 'Circle',
-      square: 'Square',
-      triangle: 'Triangle',
-      dpad: 'D-Pad',
-      dpadUp: 'D-Pad Up',
-      dpadDown: 'D-Pad Down',
-      dpadLeft: 'D-Pad Left',
-      dpadRight: 'D-Pad Right',
-      l1: 'L1',
-      r1: 'R1',
-      l2: 'L2',
-      r2: 'R2',
-      l3: 'L3',
-      r3: 'R3',
-      create: 'Create',
-      options: 'Options',
-      touchPad: 'Touch Pad',
-      mute: 'Mute',
-      edgeBackLeft: 'Back Left',
-      edgeBackRight: 'Back Right',
-      edgeFnLeft: 'Fn Left',
-      edgeFnRight: 'Fn Right'
-    };
-    return legacy[trimmed] ?? trimmed;
-  };
-
-  const normalizeButtonAssignments = (
-    buttons: EditableControllerConfig['buttons'] | undefined,
-    edge = false
-  ): EditableControllerConfig['buttons'] => {
-    const byKey = new Map(
-      (buttons ?? [])
-        .map((button) => ({
-          key: canonicalButtonKey(button.key ?? ''),
-          label: (button.label ?? '').trim()
-        }))
-        .filter((button) => button.key)
-        .map((button) => [button.key, button])
-    );
-    const defaults = defaultButtonAssignments(edge);
-    const ordered = defaults.map((button) => byKey.get(button.key) ?? button);
-    const defaultKeys = new Set(defaults.map((button) => button.key));
-    const extras = [...byKey.values()].filter((button) => !defaultKeys.has(button.key)).slice(0, Math.max(0, 24 - ordered.length));
-    return [...ordered, ...extras];
-  };
-  const preparedSteamBindingTargetGroups: PreparedSteamBindingTargetGroup[] = prepareBindingTargetGroups(steamBindingTargetGroups);
   $: activeBindingTargetGroups = bindingTargetGroupsForProvider(
     preparedSteamBindingTargetGroups,
     bridgeContextActive ? 'bridge' : 'steam'
@@ -688,18 +461,8 @@
   let profileSaveAsBusy = false;
   let profileFileBusy = false;
   let appRuntime: ReturnType<typeof createAppRuntime> | undefined;
-  let liveConfigSyncTimer: number | undefined;
-  let liveConfigSyncInFlight = false;
-  let liveConfigSyncQueued = false;
   let baseFeelTestActive = false;
   let baseFeelTestBusy = false;
-  let baseFeelTestTimer: number | undefined;
-  let baseFeelTestRefreshTimer: number | undefined;
-  let baseFeelTestRefreshInFlight = false;
-  let baseFeelTestRefreshQueued = false;
-  let lastBaseFeelTestRefreshAt = 0;
-  let triggerInputPollTimer: number | undefined;
-  let triggerInputBusy = false;
   let l2ControllerPress = 0;
   let r2ControllerPress = 0;
   let controllerInputFresh = false;
@@ -754,19 +517,17 @@
   $: controllers = snapshot?.controllers ?? [];
   $: connectedControllers = controllers.filter((item) => item.connected);
   $: connectedControllerIds = connectedControllers.map((item) => item.id);
-  $: if (connectedControllers.length > 0 && !connectedControllers.some((item) => item.id === selectedControllerId)) {
-    selectedControllerId = connectedControllers[0].id;
-  } else if (connectedControllers.length === 0 && controllers.length > 0 && !controllers.some((item) => item.id === selectedControllerId)) {
-    selectedControllerId = controllers[0].id;
-  }
-  $: controller = connectedControllers.find((item) => item.id === selectedControllerId) ?? connectedControllers[0] ?? null;
   $: {
-    const validTargets = profileTargetControllerIds.filter((id) => connectedControllerIds.includes(id));
-    const fallbackTarget =
-      selectedControllerId && connectedControllerIds.includes(selectedControllerId)
-        ? selectedControllerId
-        : connectedControllerIds[0];
-    const nextTargets = validTargets.length ? validTargets : fallbackTarget ? [fallbackTarget] : [];
+    const nextSelectedControllerId = resolveSelectedControllerId(controllers, selectedControllerId);
+    if (nextSelectedControllerId !== selectedControllerId) selectedControllerId = nextSelectedControllerId;
+  }
+  $: controller = selectCurrentController(controllers, selectedControllerId);
+  $: {
+    const nextTargets = reconcileProfileTargetControllerIds(
+      profileTargetControllerIds,
+      connectedControllerIds,
+      selectedControllerId
+    );
     if (
       nextTargets.length !== profileTargetControllerIds.length ||
       nextTargets.some((id, index) => id !== profileTargetControllerIds[index])
@@ -774,10 +535,34 @@
       profileTargetControllerIds = nextTargets;
     }
   }
-  $: profileTargetsAllConnected =
-    connectedControllerIds.length > 1 &&
-    profileTargetControllerIds.length === connectedControllerIds.length &&
-    connectedControllerIds.every((id) => profileTargetControllerIds.includes(id));
+  $: profileTargetsAllConnected = profileTargetsCoverAllConnectedControllers(
+    profileTargetControllerIds,
+    connectedControllerIds
+  );
+
+  const triggerInputPoller = createTriggerInputPoller({
+    intervalMs: TRIGGER_INPUT_POLL_INTERVAL_MS,
+    getControllerId: () => controller?.id,
+    shouldPoll: () => shouldPollTriggerInput(),
+    getControllerInput,
+    onState: (state) => {
+      l2ControllerPress = state.l2;
+      r2ControllerPress = state.r2;
+      controllerInputFresh = state.fresh;
+    }
+  });
+  const baseFeelTestDurationTimer = createOneShotTimer(BASE_FEEL_TEST_DURATION_MS, () => {
+    markBaseFeelTestInactive();
+  });
+  const baseFeelTestRefreshTask = createQueuedThrottleTask({
+    minIntervalMs: BASE_FEEL_TEST_REFRESH_INTERVAL_MS,
+    shouldRun: () => baseFeelTestActive,
+    run: () => startBaseFeelTest(true)
+  });
+  const liveConfigSync = createDebouncedAsyncTask({
+    delayMs: LIVE_CONFIG_SYNC_DEBOUNCE_MS,
+    run: () => syncLiveControllerConfig()
+  });
   $: status = snapshot?.status;
   $: profiles = snapshot?.profiles ?? [];
   $: activeProfileId = profiles.find((profile) => profile.active)?.id ?? snapshot?.profileResolution.selectedProfileId ?? '';
@@ -1797,28 +1582,20 @@
       .filter(Boolean)
       .join(' / ');
 
-  const selectedProfileTargetIds = () => {
-    const validTargets = profileTargetControllerIds.filter((id) => connectedControllerIds.includes(id));
-    if (validTargets.length) return validTargets;
-    return controller?.id ? [controller.id] : [];
-  };
-
-  const targetsCoverAllConnectedControllers = (ids: string[] = selectedProfileTargetIds()) =>
-    connectedControllerIds.length > 1 &&
-    ids.length === connectedControllerIds.length &&
-    connectedControllerIds.every((id) => ids.includes(id));
-
-  const profileTargetName = (id: string) => {
-    const target = controllers.find((item) => item.id === id);
-    return target?.name || controllerModelText(target);
-  };
+  const selectedProfileTargetIds = () =>
+    resolveSelectedProfileTargetIds({
+      profileTargetControllerIds,
+      connectedControllerIds,
+      controllerId: controller?.id
+    });
 
   const profileTargetSummary = () => {
     const ids = selectedProfileTargetIds();
-    if (targetsCoverAllConnectedControllers(ids)) return 'all connected controllers';
-    const names = ids.map(profileTargetName).filter(Boolean);
-    if (names.length <= 2) return names.join(', ') || 'selected controller';
-    return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
+    return summarizeProfileTargets({
+      targetIds: ids,
+      controllers,
+      connectedControllerIds
+    });
   };
 
   const setAllProfileTargets = () => {
@@ -2080,70 +1857,22 @@
       };
     });
   };
-  const normalizeForzaBodyRumbleMode = (mode: string | undefined | null): ForzaBodyRumbleMode =>
-    mode === 'dscc_full_control' ? 'dscc_full_control' : 'native_passthrough';
+  const isEdgeController = () => controller?.family === 'DualSense Edge';
 
-  const defaultInputBridgeConfig = (): InputBridgeConfig => ({
-    enabled: false,
-    outputKind: 'xbox360',
-    autoStart: false,
-    bindings: []
-  });
+  const editableConfigFromController = (config: ControllerConfiguration): EditableControllerConfig =>
+    createEditableConfigFromController(config, isEdgeController());
 
-  const normalizeInputBridgeConfig = (config: InputBridgeConfig | undefined | null): InputBridgeConfig => ({
-    ...defaultInputBridgeConfig(),
-    ...config,
-    bindings: Array.isArray(config?.bindings) ? config.bindings : []
-  });
-
-  const editableConfigFromController = (config: ControllerConfiguration): EditableControllerConfig => ({
-    inputMode: config.inputMode,
-    trigger: config.trigger,
-    lightbar: config.lightbar,
-    forza: config.forza,
-    sticks: config.sticks,
-    buttons: normalizeButtonAssignments(config.buttons, config.model === 'DualSense Edge' || controller?.family === 'DualSense Edge'),
-    inputBridge: normalizeInputBridgeConfig(config.inputBridge),
-    profileAssignments: config.profileAssignments
-  });
+  const buildDefaultControllerConfig = (): EditableControllerConfig =>
+    createDefaultControllerConfig({
+      isEdge: isEdgeController(),
+      defaultForzaEffects: defaultForzaEffects()
+    });
 
   const profileConfigSignature = (config: EditableControllerConfig | ControllerConfiguration): string =>
-    JSON.stringify({
-      inputMode: config.inputMode,
-      trigger: {
-        sameRange: false,
-        l2From: normalizeTriggerPercent(config.trigger.l2From),
-        l2To: normalizeTriggerPercent(config.trigger.l2To),
-        r2From: normalizeTriggerPercent(config.trigger.r2From),
-        r2To: normalizeTriggerPercent(config.trigger.r2To),
-        l2Curve: normalizeTriggerCurve(config.trigger.l2Curve, defaultTriggerCurve('l2')),
-        r2Curve: normalizeTriggerCurve(config.trigger.r2Curve, defaultTriggerCurve('r2')),
-        l2CurvePoints: normalizeTriggerCurvePoints(config.trigger.l2CurvePoints, normalizeTriggerCurve(config.trigger.l2Curve, defaultTriggerCurve('l2'))),
-        r2CurvePoints: normalizeTriggerCurvePoints(config.trigger.r2CurvePoints, normalizeTriggerCurve(config.trigger.r2Curve, defaultTriggerCurve('r2'))),
-        effect: config.trigger.effect,
-        intensity: config.trigger.intensity,
-        vibration: config.trigger.vibration,
-        vibrationMode: config.trigger.vibrationMode ?? 'Balanced'
-      },
-      lightbar: {
-        enabled: config.lightbar?.enabled ?? true,
-        color: config.lightbar?.color ?? '#4cc9f0',
-        rpmColor: config.lightbar?.rpmColor ?? '#ff3a2e',
-        brightness: normalizeTriggerPercent(config.lightbar?.brightness ?? 72)
-      },
-      forza: {
-        bodyRumbleMode: normalizeForzaBodyRumbleMode(config.forza?.bodyRumbleMode),
-        effects: normalizeForzaEffects(config.forza?.effects).map((effect) => ({
-          id: effect.id,
-          enabled: effect.enabled,
-          intensity: forzaIntensityPercent(effect.intensity),
-          route: effect.route
-        }))
-      },
-      sticks: config.sticks,
-      buttons: normalizeButtonAssignments(config.buttons, controller?.family === 'DualSense Edge'),
-      inputBridge: normalizeInputBridgeConfig(config.inputBridge),
-      profileAssignments: config.profileAssignments
+    createProfileConfigSignature(config, {
+      isEdge: isEdgeController(),
+      normalizeForzaEffects,
+      forzaIntensityPercent
     });
 
   $: profileConfigDirty =
@@ -2880,77 +2609,21 @@
     }
   };
 
-  const buildDefaultControllerConfig = (): EditableControllerConfig => ({
-    inputMode: 'native_dualsense',
-    trigger: {
-      sameRange: false,
-      l2From: 0,
-      l2To: 100,
-      r2From: 0,
-      r2To: 100,
-      l2Curve: 1.35,
-      r2Curve: 2.25,
-      l2CurvePoints: triggerCurvePointsFromCurve(1.35),
-      r2CurvePoints: triggerCurvePointsFromCurve(2.25),
-      effect: 'Adaptive resistance',
-      intensity: 'Strong (Standard)',
-      vibration: 'Medium',
-      vibrationMode: 'Balanced'
-    },
-    lightbar: {
-      enabled: true,
-      color: '#4cc9f0',
-      rpmColor: '#ff3a2e',
-      brightness: 72
-    },
-    forza: {
-      bodyRumbleMode: 'native_passthrough',
-      effects: defaultForzaEffects()
-    },
-    sticks: {
-      leftCurve: 'Default',
-      leftCurveAmount: 50,
-      leftDeadzone: 0,
-      rightCurve: 'Default',
-      rightCurveAmount: 50,
-      rightDeadzone: 0
-    },
-    buttons: defaultButtonAssignments(controller?.family === 'DualSense Edge'),
-    inputBridge: defaultInputBridgeConfig(),
-    profileAssignments: []
-  });
-
-  const builtInProfileConfig = (profileId: string): EditableControllerConfig => {
-    const base = buildDefaultControllerConfig();
-    if (profileId === 'global') {
-      return {
-        ...base,
-        profileAssignments: currentControllerConfig?.profileAssignments ?? []
-      };
-    }
-
-    return {
-      ...base,
-      trigger: baseForzaTriggerDefaults(),
-      forza: {
-        bodyRumbleMode: 'native_passthrough',
-        effects: forzaPresetEffects(profileId === 'forza-horizon-immersive' ? 'immersive' : 'base')
-      },
+  const builtInProfileConfig = (profileId: string): EditableControllerConfig =>
+    buildBuiltInProfileConfig({
+      profileId,
+      isEdge: isEdgeController(),
+      defaultForzaEffects: defaultForzaEffects(),
+      builtInForzaEffects: forzaPresetEffects(profileId === 'forza-horizon-immersive' ? 'immersive' : 'base'),
       profileAssignments: currentControllerConfig?.profileAssignments ?? []
-    };
-  };
+    });
 
-  const editableConfigFromProfileExport = (config: NonNullable<ExportedProfile['config']>): EditableControllerConfig => ({
-    ...buildDefaultControllerConfig(),
-    inputMode: config.inputMode,
-    trigger: config.trigger,
-    lightbar: config.lightbar,
-    forza: config.forza,
-    sticks: config.sticks,
-    buttons: normalizeButtonAssignments(config.buttons, controller?.family === 'DualSense Edge'),
-    inputBridge: normalizeInputBridgeConfig(config.inputBridge),
-    profileAssignments: currentControllerConfig?.profileAssignments ?? []
-  });
+  const editableConfigFromProfileExport = (config: NonNullable<ExportedProfile['config']>): EditableControllerConfig =>
+    createEditableConfigFromProfileExport(config, {
+      isEdge: isEdgeController(),
+      defaultForzaEffects: defaultForzaEffects(),
+      profileAssignments: currentControllerConfig?.profileAssignments ?? []
+    });
 
   const loadProfileConfigForEditor = async (profile: ProfileSummary) => {
     let config: EditableControllerConfig | null = null;
@@ -2964,22 +2637,6 @@
     applyEditableConfig(config);
     profileSaveBaselineSignature = profileConfigSignature(buildControllerConfig());
   };
-
-  const baseForzaTriggerDefaults = (): EditableControllerConfig['trigger'] => ({
-    sameRange: false,
-    l2From: 0,
-    l2To: 100,
-    r2From: 4,
-    r2To: 100,
-    l2Curve: defaultTriggerCurve('l2'),
-    r2Curve: defaultTriggerCurve('r2'),
-    l2CurvePoints: triggerCurvePointsFromCurve(defaultTriggerCurve('l2')),
-    r2CurvePoints: triggerCurvePointsFromCurve(defaultTriggerCurve('r2')),
-    effect: 'Adaptive resistance',
-    intensity: 'Strong (Standard)',
-    vibration: 'Medium',
-    vibrationMode: 'Balanced'
-  });
 
   const applyTriggerConfig = (trigger: EditableControllerConfig['trigger']) => {
     l2From = normalizeTriggerPercent(trigger.l2From);
@@ -3004,45 +2661,38 @@
     setApplyMessage(`Reset trigger curves to ${profileLabel} defaults`);
   };
 
+  const currentProfileDraftValues = (): ProfileDraftValues => ({
+    l2From,
+    l2To,
+    r2From,
+    r2To,
+    l2Curve,
+    r2Curve,
+    l2CurvePoints,
+    r2CurvePoints,
+    triggerEffect,
+    triggerIntensity,
+    vibrationIntensity,
+    vibrationMode,
+    lightbarEnabled,
+    lightbarColor,
+    rpmColor,
+    lightbarBrightness,
+    forzaBodyRumbleMode,
+    forzaEffects,
+    leftStickDeadzone,
+    rightStickDeadzone
+  });
+
   const buildControllerConfig = (): EditableControllerConfig => {
     const base = currentControllerConfig
       ? editableConfigFromController(currentControllerConfig)
       : buildDefaultControllerConfig();
 
-    return {
-      ...base,
-      trigger: {
-        sameRange: false,
-        l2From: normalizeTriggerPercent(l2From),
-        l2To: Math.max(normalizeTriggerPercent(l2From), normalizeTriggerPercent(l2To)),
-        r2From: normalizeTriggerPercent(r2From),
-        r2To: Math.max(normalizeTriggerPercent(r2From), normalizeTriggerPercent(r2To)),
-        l2Curve: normalizeTriggerCurve(l2Curve, defaultTriggerCurve('l2')),
-        r2Curve: normalizeTriggerCurve(r2Curve, defaultTriggerCurve('r2')),
-        l2CurvePoints: normalizeTriggerCurvePoints(l2CurvePoints, l2Curve),
-        r2CurvePoints: normalizeTriggerCurvePoints(r2CurvePoints, r2Curve),
-        effect: triggerEffect,
-        intensity: triggerIntensity,
-        vibration: vibrationIntensity,
-        vibrationMode
-      },
-      lightbar: {
-        enabled: lightbarEnabled,
-        color: lightbarColor,
-        rpmColor,
-        brightness: lightbarBrightness
-      },
-      forza: {
-        bodyRumbleMode: normalizeForzaBodyRumbleMode(forzaBodyRumbleMode),
-        effects: normalizeForzaEffects(forzaEffects)
-      },
-      sticks: {
-        ...base.sticks,
-        leftDeadzone: normalizeStickDeadzone(leftStickDeadzone),
-        rightDeadzone: normalizeStickDeadzone(rightStickDeadzone)
-      },
-      buttons: normalizeButtonAssignments(base.buttons, controller?.family === 'DualSense Edge')
-    };
+    return buildControllerConfigDraft(base, currentProfileDraftValues(), {
+      isEdge: isEdgeController(),
+      normalizeForzaEffects
+    });
   };
 
   const saveCurrentConfig = async () => {
@@ -3060,33 +2710,18 @@
 
   const syncLiveControllerConfig = async () => {
     if (!controller || !currentControllerConfig || currentControllerConfig.controllerId !== controller.id) return;
-    if (liveConfigSyncInFlight) {
-      liveConfigSyncQueued = true;
-      return;
-    }
-
-    liveConfigSyncInFlight = true;
-    liveConfigSyncQueued = false;
     const controllerId = controller.id;
     try {
       const updated = await saveControllerConfig(controllerId, buildControllerConfig());
       if (selectedControllerId === controllerId) currentControllerConfig = updated;
     } catch (caught) {
       setApplyMessage(caught instanceof Error ? caught.message : 'Unable to update live controller config');
-    } finally {
-      liveConfigSyncInFlight = false;
-      if (liveConfigSyncQueued) scheduleLiveControllerConfigSync();
     }
   };
 
   function scheduleLiveControllerConfigSync() {
     if (!controller || !currentControllerConfig) return;
-    liveConfigSyncQueued = true;
-    if (liveConfigSyncTimer !== undefined) window.clearTimeout(liveConfigSyncTimer);
-    liveConfigSyncTimer = window.setTimeout(() => {
-      liveConfigSyncTimer = undefined;
-      void syncLiveControllerConfig();
-    }, LIVE_CONFIG_SYNC_DEBOUNCE_MS);
+    liveConfigSync.schedule();
   }
 
   const setTriggerEffect = (value: string) => {
@@ -3782,26 +3417,12 @@
   };
 
   function stopTriggerInputPolling() {
-    if (triggerInputPollTimer !== undefined) {
-      window.clearInterval(triggerInputPollTimer);
-      triggerInputPollTimer = undefined;
-    }
-    triggerInputBusy = false;
-    controllerInputFresh = false;
-    l2ControllerPress = 0;
-    r2ControllerPress = 0;
+    triggerInputPoller.stop();
   }
 
   function clearBaseFeelTestTimers() {
-    if (baseFeelTestTimer !== undefined) {
-      window.clearTimeout(baseFeelTestTimer);
-      baseFeelTestTimer = undefined;
-    }
-    if (baseFeelTestRefreshTimer !== undefined) {
-      window.clearTimeout(baseFeelTestRefreshTimer);
-      baseFeelTestRefreshTimer = undefined;
-    }
-    baseFeelTestRefreshQueued = false;
+    baseFeelTestDurationTimer.clear();
+    baseFeelTestRefreshTask.clear();
   }
 
   function markBaseFeelTestInactive() {
@@ -3822,8 +3443,7 @@
   }
 
   function syncTriggerInputPolling() {
-    if (shouldPollTriggerInput()) startTriggerInputPolling();
-    else stopTriggerInputPolling();
+    triggerInputPoller.sync();
   }
 
   $: if (
@@ -3840,66 +3460,19 @@
   }
 
   async function pollTriggerInput() {
-    if (triggerInputBusy || !shouldPollTriggerInput()) return;
-    const requestedControllerId = controller?.id;
-    if (!requestedControllerId) return;
-    triggerInputBusy = true;
-    try {
-      const input = await getControllerInput(requestedControllerId);
-      if (input.controllerId !== requestedControllerId || controller?.id !== requestedControllerId) return;
-      if (input.available) {
-        const nextL2 = clampUnit(input.triggers.l2);
-        const nextR2 = clampUnit(input.triggers.r2);
-        l2ControllerPress = nextL2;
-        r2ControllerPress = nextR2;
-        controllerInputFresh = true;
-      } else {
-        controllerInputFresh = false;
-      }
-    } catch {
-      controllerInputFresh = false;
-    } finally {
-      triggerInputBusy = false;
-    }
+    await triggerInputPoller.poll();
   }
 
   function startTriggerInputPolling() {
-    if (!shouldPollTriggerInput()) return;
-    void pollTriggerInput();
-    if (triggerInputPollTimer !== undefined) return;
-    triggerInputPollTimer = window.setInterval(() => void pollTriggerInput(), TRIGGER_INPUT_POLL_INTERVAL_MS);
+    triggerInputPoller.start();
   }
 
   function armBaseFeelTestTimer() {
-    if (baseFeelTestTimer !== undefined) window.clearTimeout(baseFeelTestTimer);
-    baseFeelTestTimer = window.setTimeout(() => {
-      markBaseFeelTestInactive();
-    }, BASE_FEEL_TEST_DURATION_MS);
+    baseFeelTestDurationTimer.arm();
   }
 
   function scheduleBaseFeelTestRefresh() {
-    if (!baseFeelTestActive) return;
-    baseFeelTestRefreshQueued = true;
-    if (baseFeelTestRefreshInFlight || baseFeelTestRefreshTimer !== undefined) return;
-    const elapsed = performance.now() - lastBaseFeelTestRefreshAt;
-    const waitMs = Math.max(0, BASE_FEEL_TEST_REFRESH_INTERVAL_MS - elapsed);
-    baseFeelTestRefreshTimer = window.setTimeout(() => {
-      baseFeelTestRefreshTimer = undefined;
-      void flushBaseFeelTestRefresh();
-    }, waitMs);
-  }
-
-  async function flushBaseFeelTestRefresh() {
-    if (!baseFeelTestActive || baseFeelTestRefreshInFlight) return;
-    baseFeelTestRefreshQueued = false;
-    baseFeelTestRefreshInFlight = true;
-    lastBaseFeelTestRefreshAt = performance.now();
-    try {
-      await startBaseFeelTest(true);
-    } finally {
-      baseFeelTestRefreshInFlight = false;
-      if (baseFeelTestRefreshQueued && baseFeelTestActive) scheduleBaseFeelTestRefresh();
-    }
+    baseFeelTestRefreshTask.schedule();
   }
 
   const baseFeelTestRequest = (): EffectTestRequest => ({
@@ -3946,10 +3519,7 @@
       return;
     }
     baseFeelTestBusy = true;
-    if (baseFeelTestRefreshTimer !== undefined) {
-      window.clearTimeout(baseFeelTestRefreshTimer);
-      baseFeelTestRefreshTimer = undefined;
-    }
+    baseFeelTestRefreshTask.clear();
     try {
       const result = await runEffectTest(
         {
@@ -4115,8 +3685,7 @@
         syncTriggerInputPolling();
       },
       onStop: () => {
-        if (liveConfigSyncTimer !== undefined) window.clearTimeout(liveConfigSyncTimer);
-        liveConfigSyncTimer = undefined;
+        liveConfigSync.clear();
         clearBaseFeelTestTimers();
         stopTriggerInputPolling();
       }
