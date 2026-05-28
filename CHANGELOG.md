@@ -1,3 +1,38 @@
+# DualSense Command Center 0.3.4
+
+Release date: 2026-05-27
+
+0.3.4 fixes a Windows restart/shutdown blocker in the tray host.
+
+## Windows Restart And Shutdown
+
+- The tray now explicitly accepts Windows session-end requests so restart and
+  shutdown can proceed without DSCC appearing in the blocking-app screen.
+- On confirmed session end, DSCC removes its tray icon and stops the owned local
+  agent quickly instead of waiting on UI, browser, or network cleanup.
+- The tray popup handles the same session-end path, so an open right-click menu
+  cannot hold the session open.
+
+## Validation Gate
+
+This release was cut after a clean run of:
+
+```powershell
+cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
+cargo +stable-x86_64-pc-windows-gnu test --workspace
+cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warnings
+npm.cmd --prefix web run typecheck
+npm.cmd --prefix web run build
+npm.cmd --prefix web run test:button-map
+npm.cmd --prefix web run test:release-size
+npm.cmd --prefix web run test:source-audit
+npm.cmd --prefix web run test:visual-smoke
+```
+
+Windows users should choose the `standard` MSI unless they specifically need
+DSCC Input Bridge testing for local non-Steam app profiles. The MSI remains
+unsigned.
+
 # DualSense Command Center 0.3.3
 
 Release date: 2026-05-27

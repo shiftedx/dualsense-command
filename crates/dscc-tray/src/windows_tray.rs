@@ -35,9 +35,10 @@ use windows_sys::Win32::{
             SetWindowLongPtrW, ShowWindow, CREATESTRUCTW, CS_DROPSHADOW, CS_HREDRAW, CS_VREDRAW,
             CW_USEDEFAULT, GWLP_USERDATA, HICON, IDC_ARROW, IDI_APPLICATION, MB_ICONERROR, MB_OK,
             MSG, SM_CXSCREEN, SM_CYSCREEN, SW_SHOW, SW_SHOWNORMAL, WA_INACTIVE, WM_ACTIVATE,
-            WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_KILLFOCUS, WM_LBUTTONDBLCLK,
-            WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_NULL, WM_PAINT, WM_RBUTTONUP,
-            WM_SETCURSOR, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+            WM_APP, WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_ENDSESSION, WM_KILLFOCUS,
+            WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_NULL,
+            WM_PAINT, WM_QUERYENDSESSION, WM_RBUTTONUP, WM_SETCURSOR, WNDCLASSW, WS_EX_TOOLWINDOW,
+            WS_EX_TOPMOST, WS_POPUP,
         },
     },
 };
@@ -132,6 +133,7 @@ struct TrayState {
     last_open_ui: Option<(Instant, String)>,
     health_cache: Arc<Mutex<TrayHealthCache>>,
     health_refresh_tx: SyncSender<()>,
+    session_ending: bool,
 }
 
 impl TrayState {
@@ -153,6 +155,7 @@ impl TrayState {
             last_open_ui: None,
             health_cache,
             health_refresh_tx,
+            session_ending: false,
         })
     }
 
@@ -242,6 +245,21 @@ impl TrayState {
             let _ = child.wait();
         }
         self.request_health_refresh();
+    }
+
+    fn stop_agent_for_session_end(&mut self) {
+        if let Some(mut child) = self.agent.take() {
+            let _ = child.kill();
+            let _ = child.try_wait();
+        }
+    }
+
+    fn begin_session_end(&mut self) {
+        if self.session_ending {
+            return;
+        }
+        self.session_ending = true;
+        self.stop_agent_for_session_end();
     }
 
     fn restart_agent(&mut self) -> Result<()> {
@@ -502,6 +520,17 @@ unsafe extern "system" fn window_proc(
             }
             0
         }
+        WM_QUERYENDSESSION => 1,
+        WM_ENDSESSION => {
+            if session_end_was_confirmed(wparam) {
+                end_tray_session(hwnd);
+            }
+            0
+        }
+        WM_CLOSE => {
+            quit_tray(hwnd, true);
+            0
+        }
         WM_DESTROY => {
             remove_tray_icon(hwnd);
             PostQuitMessage(0);
@@ -571,6 +600,13 @@ unsafe extern "system" fn popup_window_proc(
         }
         WM_KILLFOCUS => {
             DestroyWindow(hwnd);
+            0
+        }
+        WM_QUERYENDSESSION => 1,
+        WM_ENDSESSION => {
+            if session_end_was_confirmed(wparam) {
+                DestroyWindow(hwnd);
+            }
             0
         }
         WM_NCDESTROY => {
@@ -758,16 +794,32 @@ fn handle_command(hwnd: HWND, command: usize) {
             }
         }
         CMD_QUIT => {
-            let _ = with_state(|state| {
-                state.stop_agent();
-                Ok(())
-            });
-            remove_tray_icon(hwnd);
-            unsafe {
-                PostQuitMessage(0);
-            }
+            quit_tray(hwnd, true);
         }
         _ => {}
+    }
+}
+
+fn session_end_was_confirmed(wparam: WPARAM) -> bool {
+    wparam != 0
+}
+
+fn end_tray_session(hwnd: HWND) {
+    quit_tray(hwnd, false);
+}
+
+fn quit_tray(hwnd: HWND, wait_for_agent: bool) {
+    let _ = with_state(|state| {
+        if wait_for_agent {
+            state.stop_agent();
+        } else {
+            state.begin_session_end();
+        }
+        Ok(())
+    });
+    remove_tray_icon(hwnd);
+    unsafe {
+        PostQuitMessage(0);
     }
 }
 
