@@ -47,6 +47,7 @@ fn tray_state_debounces_duplicate_open_ui_requests() {
             refreshed_at: Instant::now(),
         })),
         health_refresh_tx,
+        session_ending: false,
     };
 
     assert!(state.claim_open_ui(DASHBOARD_URL));
@@ -59,6 +60,12 @@ fn tray_state_debounces_duplicate_open_ui_requests() {
         BUTTON_MAPPING_URL.to_string(),
     ));
     assert!(state.claim_open_ui(BUTTON_MAPPING_URL));
+}
+
+#[test]
+fn tray_accepts_windows_session_end_without_prompting() {
+    assert!(session_end_was_confirmed(1));
+    assert!(!session_end_was_confirmed(0));
 }
 
 #[test]
