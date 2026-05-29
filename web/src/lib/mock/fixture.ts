@@ -4,7 +4,11 @@ import type {
   ControllerProfileAssignment,
   CurrentEffectState,
   ExportedProfile,
+  ForzaAbsTuningConfiguration,
   ForzaEffectConfiguration,
+  ForzaRevLimiterTuningConfiguration,
+  ForzaShiftTuningConfiguration,
+  ForzaThrottleTuningConfiguration,
   InputBridgeStatus,
   ProfileSummary,
   SteamInputBinding,
@@ -36,6 +40,49 @@ export const mockForzaEffects: ForzaEffectConfiguration[] = [
   { id: 'suspension_impact', enabled: true, intensity: 110, route: 'body_both' },
   { id: 'rpm_leds', enabled: false, intensity: 100, route: 'light_led' }
 ];
+
+export const mockForzaAbsTuning: ForzaAbsTuningConfiguration = {
+  mode: 'strong_pulse',
+  slipSource: 'auto_front_first',
+  slipThreshold: 0.68,
+  brakeThresholdRatio: 0.38,
+  minSpeedKmh: 12,
+  minStrength: 48 / 63,
+  maxStrength: 1,
+  frequencyHz: 34,
+  curve: 1
+};
+
+export const mockForzaThrottleTuning: ForzaThrottleTuningConfiguration = {
+  baselineForce: 3 / 255,
+  normalForce: 28 / 255,
+  endstopForce: 106 / 255,
+  endstopBoost: 3,
+  wallPosition: 0.8,
+  guardMinEnd: 0.8,
+  rampWidth: 0.2,
+  rampCurve: 2.4
+};
+
+export const mockForzaShiftTuning: ForzaShiftTuningConfiguration = {
+  wallFormAt: 0.15,
+  frequencyHz: 34,
+  wallZones: 4,
+  bodyLowWeight: 0.92,
+  bodyHighWeight: 0.84
+};
+
+export const mockForzaRevLimiterTuning: ForzaRevLimiterTuningConfiguration = {
+  thresholdRatio: 0.93,
+  minStrength: 18 / 63,
+  maxStrength: 18 / 63,
+  frequencyHz: 42,
+  wallFormThrottleAt: 0.6,
+  wallZones: 4,
+  curve: 1,
+  bodyLowWeight: 0.2,
+  bodyHighWeight: 0.8
+};
 
 export const mockControllerProfileAssignments: ControllerProfileAssignment[] = [
   {
@@ -109,16 +156,18 @@ export const mockControllerConfig: ControllerConfiguration = {
   trigger: {
     sameRange: false,
     l2From: 6,
-    l2To: 92,
+    l2To: 100,
     r2From: 2,
     r2To: 100,
     l2Curve: 1.45,
     r2Curve: 2.1,
     l2CurvePoints: [
       { input: 0, output: 0 },
-      { input: 25, output: 13 },
-      { input: 50, output: 37 },
-      { input: 75, output: 66 },
+      { input: 12, output: 8 },
+      { input: 25, output: 22 },
+      { input: 40, output: 46 },
+      { input: 58, output: 70 },
+      { input: 78, output: 90 },
       { input: 100, output: 100 }
     ],
     r2CurvePoints: [
@@ -141,7 +190,11 @@ export const mockControllerConfig: ControllerConfiguration = {
   },
   forza: {
     bodyRumbleMode: 'native_passthrough',
-    effects: mockForzaEffects
+    effects: mockForzaEffects,
+    abs: mockForzaAbsTuning,
+    throttle: mockForzaThrottleTuning,
+    shift: mockForzaShiftTuning,
+    revLimiter: mockForzaRevLimiterTuning
   },
   sticks: {
     leftCurve: 'Default',
@@ -218,7 +271,28 @@ export const mockProfileConfigs: Record<string, MockEditableControllerConfig> = 
       effects: mockForzaEffects.map((effect) => ({
         ...effect,
         intensity: effect.id === 'rpm_leds' ? effect.intensity : Math.round(effect.intensity * 0.75)
-      }))
+      })),
+      abs: {
+        ...mockForzaAbsTuning,
+        minStrength: 0.62,
+        frequencyHz: 30
+      },
+      throttle: {
+        ...mockForzaThrottleTuning,
+        wallPosition: 0.74,
+        rampWidth: 0.16,
+        rampCurve: 2.1
+      },
+      shift: {
+        ...mockForzaShiftTuning,
+        frequencyHz: 30,
+        bodyHighWeight: 0.62
+      },
+      revLimiter: {
+        ...mockForzaRevLimiterTuning,
+        thresholdRatio: 0.95,
+        maxStrength: 0.42
+      }
     }
   }
 };

@@ -10,7 +10,7 @@ lightbar controls, and racing telemetry without Python setup or scripts.
 
 Get the latest Windows installer from [GitHub Releases](https://github.com/shiftedx/dualsense-command/releases/latest).
 
-- Current release: `0.3.4`
+- Current release: `0.3.5`
 - Recommended download: **DSCC Standard** Windows x86_64 MSI
 - Linux builds: beta archive with bundled web UI
 
@@ -84,6 +84,8 @@ setup and validation commands.
 - Tunes L2/R2 adaptive trigger feel.
 - Lets you create, save, import, export, and switch profiles.
 - Provides 4-8 point custom trigger curves for detailed brake/throttle feel.
+- Exposes advanced telemetry tuning for ABS, throttle, shift thump, and rev
+  limiter buzz when a game profile is active.
 - Uses live game telemetry for racing haptics when available.
 - Adds body-rumble cues such as paddle-shift and landing thumps.
 - Controls lightbar color, brightness, RPM colors, and player LEDs.
@@ -147,8 +149,9 @@ taking over game-specific haptics.
 ## Need Help?
 
 - Start with [Troubleshooting](docs/troubleshooting.md).
-- For bug reports, copy or export a sanitized support bundle from the DSCC
-  Support panel. It is designed to leave out raw hardware IDs and private paths.
+- For bug reports, open the DSCC **Support** panel. It links to the project
+  repository and can copy or export a sanitized support bundle that leaves out
+  raw hardware IDs and private paths.
 - Ask setup questions, "is this expected?" beta-limit questions, or tuning ideas
   in [GitHub Discussions](https://github.com/shiftedx/dualsense-command/discussions).
 - Report reproducible bugs in [GitHub Issues](https://github.com/shiftedx/dualsense-command/issues).

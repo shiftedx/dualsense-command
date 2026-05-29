@@ -85,7 +85,7 @@
   export let vibrationModeHelp: Record<string, string> = {};
 
   export let triggerPressLabel: (value: number) => string = (value) => `${Math.round(value * 100)}%`;
-  export let triggerRangeTooltip: (side: 'L2' | 'R2', edge: 'from' | 'to', value: number) => string = () => '';
+  export let triggerRangeTooltip: (side: 'L2' | 'R2', edge: 'from' | 'to', value: number, startValue?: number) => string = () => '';
   export let triggerCurveTooltip: (side: 'L2' | 'R2', value: number) => string = () => '';
   export let showTriggerPress: (side: TriggerSide, value: number) => boolean = () => false;
   export let handleCurvePointer: (event: PointerEvent, side: TriggerSide) => void = noop as (event: PointerEvent, side: TriggerSide) => void;
@@ -201,7 +201,7 @@
             <code>{l2From.toString().padStart(3, '0')}</code>
           </label>
         </Tooltip>
-        <Tooltip block text={triggerRangeTooltip('L2', 'to', l2To)} side="top" align="start">
+        <Tooltip block text={triggerRangeTooltip('L2', 'to', l2To, l2From)} side="top" align="start">
           <label class="dm-slider-row">
             <span>End</span>
             <input class="dm-range" style="--value:{l2To}%" value={l2To} max="100" min={l2From} type="range" oninput={(event) => setTriggerRangeValue('l2', 'to', event.currentTarget.valueAsNumber)} />
@@ -292,7 +292,7 @@
             <code>{r2From.toString().padStart(3, '0')}</code>
           </label>
         </Tooltip>
-        <Tooltip block text={triggerRangeTooltip('R2', 'to', r2To)} side="top" align="start">
+        <Tooltip block text={triggerRangeTooltip('R2', 'to', r2To, r2From)} side="top" align="start">
           <label class="dm-slider-row">
             <span>End</span>
             <input class="dm-range" style="--value:{r2To}%" value={r2To} max="100" min={r2From} type="range" oninput={(event) => setTriggerRangeValue('r2', 'to', event.currentTarget.valueAsNumber)} />

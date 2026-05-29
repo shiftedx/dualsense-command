@@ -375,7 +375,7 @@ async fn activating_forza_profile_writes_preset_into_controller_config() {
         .find(|effect| effect.id == "rpm_leds")
         .expect("rpm_leds present after activation");
     assert!(!rpm_leds.enabled);
-    assert_eq!(config.trigger.l2_from, 0);
+    assert_eq!(config.trigger.l2_from, 6);
     assert_eq!(config.trigger.r2_from, 4);
     assert_eq!(config.trigger.l2_to, 100);
     assert_eq!(config.trigger.r2_to, 100);
@@ -448,7 +448,7 @@ async fn activating_immersive_forza_profile_writes_layered_preset() {
         !effect("rpm_leds").enabled,
         "Immersive should leave gear LEDs and the RPM bar disabled"
     );
-    assert_eq!(config.trigger.l2_from, 0);
+    assert_eq!(config.trigger.l2_from, 6);
     assert_eq!(config.trigger.r2_from, 4);
     assert_eq!(config.trigger.l2_to, 100);
     assert_eq!(config.trigger.r2_to, 100);

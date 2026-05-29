@@ -1,4 +1,9 @@
-import type { ForzaEffectConfiguration, ForzaEffectRoute, TriggerCurvePoint } from '../../types';
+import type {
+  ForzaEffectConfiguration,
+  ForzaEffectRoute,
+  ForzaThrottleTuningConfiguration,
+  TriggerCurvePoint
+} from '../../types';
 import {
   TRIGGER_CURVE_SAMPLE_POSITIONS,
   clampUnit,
@@ -11,9 +16,10 @@ import {
   FORZA_BRAKE_BASELINE_FORCE,
   FORZA_BRAKE_ENDSTOP_FORCE,
   FORZA_BRAKE_ENDSTOP_FORCE_BOOST,
+  FORZA_BRAKE_FINAL_STOP_ARM_OFFSET,
+  FORZA_BRAKE_FINAL_STOP_OFFSET,
   FORZA_BRAKE_NORMAL_FORCE,
   FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE,
-  FORZA_BRAKE_OVERTRAVEL_RAMP_WIDTH,
   FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION,
   FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET,
   FORZA_ENDSTOP_WALL_OFFSET,
@@ -38,7 +44,10 @@ export type ForzaTriggerForceModel = {
   end: number;
   wall: number;
   rampStart?: number;
+  finalStopInput?: number;
+  finalStopPosition?: number;
   curve: number;
+  rampCurve?: number;
   baselineForce: number;
   normalForce: number;
   endstopForce: number;
@@ -92,21 +101,58 @@ export const signalCurveForGraph = (input: number, inputMin: number, inputMax: n
     return outputMin + (outputMax - outputMin) * Math.pow(ratio, exponent);
   };
 
+export const defaultForzaThrottleTuningForGraph = (): ForzaThrottleTuningConfiguration => ({
+    baselineForce: FORZA_THROTTLE_BASELINE_FORCE,
+    normalForce: FORZA_THROTTLE_NORMAL_FORCE,
+    endstopForce: FORZA_THROTTLE_ENDSTOP_FORCE,
+    endstopBoost: FORZA_THROTTLE_ENDSTOP_FORCE_BOOST,
+    wallPosition: FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION,
+    guardMinEnd: FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION,
+    rampWidth: FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH,
+    rampCurve: FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE
+  });
+
+const finiteClamp = (value: number | undefined, min: number, max: number, fallback: number) => {
+    const numeric = Number(value);
+    return clamp(Number.isFinite(numeric) ? numeric : fallback, min, max);
+  };
+
+export const normalizeForzaThrottleTuningForGraph = (
+    tuning: Partial<ForzaThrottleTuningConfiguration> | undefined | null
+  ): ForzaThrottleTuningConfiguration => {
+    const defaults = defaultForzaThrottleTuningForGraph();
+    const baselineForce = finiteClamp(tuning?.baselineForce, 0, 1, defaults.baselineForce);
+    return {
+      baselineForce,
+      normalForce: finiteClamp(tuning?.normalForce, baselineForce, 1, defaults.normalForce),
+      endstopForce: finiteClamp(tuning?.endstopForce, 0, 1, defaults.endstopForce),
+      endstopBoost: finiteClamp(tuning?.endstopBoost, 0, 5, defaults.endstopBoost),
+      wallPosition: finiteClamp(tuning?.wallPosition, 0, 1, defaults.wallPosition),
+      guardMinEnd: finiteClamp(tuning?.guardMinEnd, 0, 1, defaults.guardMinEnd),
+      rampWidth: finiteClamp(tuning?.rampWidth, 0.01, 0.8, defaults.rampWidth),
+      rampCurve: finiteClamp(tuning?.rampCurve, 0.4, 4, defaults.rampCurve)
+    };
+  };
+
 export const endstopWallPosition = (start: number, end: number) => clamp(end - FORZA_ENDSTOP_WALL_OFFSET, start, end);
 export const brakeOvertravelGuardActive = (end: number) => end >= FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION;
 export const brakeOvertravelWallPosition = (start: number, end: number) =>
     brakeOvertravelGuardActive(end)
       ? clamp(Math.max(FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION, end - FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET), start, end)
       : endstopWallPosition(start, end);
-export const brakeOvertravelRampStart = (start: number, wall: number) =>
-    clamp(wall - FORZA_BRAKE_OVERTRAVEL_RAMP_WIDTH, start, wall);
-export const throttleOvertravelGuardActive = (end: number) => end >= FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION;
-export const throttleOvertravelWallPosition = (start: number, end: number) =>
-    throttleOvertravelGuardActive(end)
-      ? clamp(Math.min(end, FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION), start, end)
+export const throttleOvertravelGuardActive = (end: number, guardMinEnd = FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION) =>
+    end >= clampUnit(guardMinEnd);
+export const throttleOvertravelWallPosition = (
+    start: number,
+    end: number,
+    wallPosition = FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION,
+    guardMinEnd = FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION
+  ) =>
+    throttleOvertravelGuardActive(end, guardMinEnd)
+      ? clamp(Math.min(end, clampUnit(wallPosition)), start, end)
       : endstopWallPosition(start, end);
-export const throttleOvertravelRampStart = (start: number, wall: number) =>
-    clamp(Math.round((wall - FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH) * 1000) / 1000, start, wall);
+export const throttleOvertravelRampStart = (start: number, wall: number, rampWidth = FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH) =>
+    clamp(Math.round((wall - clamp(rampWidth, 0.01, 0.8)) * 1000) / 1000, start, wall);
 export const routeHasL2 = (route: ForzaEffectRoute) => route === 'l2' || route === 'both_triggers' || route === 'body_and_triggers';
 export const routeHasR2 = (route: ForzaEffectRoute) =>
     route === 'r2' || route === 'both_triggers' || route === 'body_and_triggers' || route === 'r2_and_body';
@@ -124,7 +170,8 @@ export const forzaTriggerForceModelFor = (
     fallbackCurve: number,
     effect: string,
     intensity: string,
-    effects: ForzaEffectConfiguration[]
+    effects: ForzaEffectConfiguration[],
+    throttleTuningRaw?: Partial<ForzaThrottleTuningConfiguration> | null
   ): ForzaTriggerForceModel | null => {
     const triggerScalar = triggerStrengthScalarFor(effect, intensity);
     if (effect === 'Off' || triggerScalar <= 0) return null;
@@ -139,12 +186,14 @@ export const forzaTriggerForceModelFor = (
       const scalar = forzaEffectScalarForGraph(brake) * triggerScalar;
       if (scalar <= 0) return null;
       const wall = brakeOvertravelWallPosition(start, end);
-      const rampStart = brakeOvertravelGuardActive(end) ? brakeOvertravelRampStart(start, wall) : undefined;
+      const finalStopInput = clamp(end - FORZA_BRAKE_FINAL_STOP_ARM_OFFSET, wall, end);
+      const finalStopPosition = clamp(end - FORZA_BRAKE_FINAL_STOP_OFFSET, start, end);
       return {
         start,
         end,
         wall,
-        rampStart,
+        finalStopInput,
+        finalStopPosition,
         curve,
         points,
         baselineForce: scaledUnitForGraph(FORZA_BRAKE_BASELINE_FORCE, scalar),
@@ -155,20 +204,29 @@ export const forzaTriggerForceModelFor = (
 
     const throttle = forzaEffectForGraph('throttle_resistance', effects);
     if (!throttle || !routeHasR2(throttle.route)) return null;
+    const throttleTuning = normalizeForzaThrottleTuningForGraph(throttleTuningRaw);
     const scalar = forzaEffectScalarForGraph(throttle) * triggerScalar;
     if (scalar <= 0) return null;
-    const wall = throttleOvertravelWallPosition(start, end);
-    const rampStart = throttleOvertravelGuardActive(end) ? throttleOvertravelRampStart(start, wall) : undefined;
+    const wall = throttleOvertravelWallPosition(
+      start,
+      end,
+      throttleTuning.wallPosition,
+      throttleTuning.guardMinEnd
+    );
+    const rampStart = throttleOvertravelGuardActive(end, throttleTuning.guardMinEnd)
+      ? throttleOvertravelRampStart(start, wall, throttleTuning.rampWidth)
+      : undefined;
     return {
       start,
       end,
       wall,
       rampStart,
       curve,
+      rampCurve: throttleTuning.rampCurve,
       points,
-      baselineForce: scaledUnitForGraph(FORZA_THROTTLE_BASELINE_FORCE, scalar),
-      normalForce: scaledUnitForGraph(FORZA_THROTTLE_NORMAL_FORCE, scalar),
-      endstopForce: scaledUnitForGraph(FORZA_THROTTLE_ENDSTOP_FORCE, scalar * FORZA_THROTTLE_ENDSTOP_FORCE_BOOST)
+      baselineForce: scaledUnitForGraph(throttleTuning.baselineForce, scalar),
+      normalForce: scaledUnitForGraph(throttleTuning.normalForce, scalar),
+      endstopForce: scaledUnitForGraph(throttleTuning.endstopForce, scalar * throttleTuning.endstopBoost)
     };
   };
 
@@ -176,10 +234,19 @@ export const forzaTriggerCurveValueFor = (side: TriggerSide, position: number, m
     if (!model) return 0;
     const x = clampUnit(position);
     if (x <= model.start) return 0;
+    if (side === 'l2') {
+      if (model.finalStopInput !== undefined && x >= model.finalStopInput) return model.endstopForce;
+      if (x >= model.end) return model.endstopForce;
+      if (x >= model.wall) {
+        return clampUnit(signalCurveForGraph(x, model.wall, model.end, model.normalForce, model.endstopForce, FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE));
+      }
+      const active = clampUnit((x - model.start) / (Math.max(model.start + 0.01, model.wall) - model.start));
+      const curved = triggerCurvePointOutput(model.points, active);
+      return clampUnit(model.baselineForce + (model.normalForce - model.baselineForce) * curved);
+    }
     if (x >= model.wall) return model.endstopForce;
     if (model.rampStart !== undefined && model.rampStart < model.wall && x >= model.rampStart) {
-      const rampCurve = side === 'l2' ? FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE : FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE;
-      return clampUnit(signalCurveForGraph(x, model.rampStart, model.wall, model.normalForce, model.endstopForce, rampCurve));
+      return clampUnit(signalCurveForGraph(x, model.rampStart, model.wall, model.normalForce, model.endstopForce, model.rampCurve ?? FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE));
     }
     const editableEnd = model.rampStart ?? model.wall;
     const active = clampUnit((x - model.start) / (Math.max(model.start + 0.01, editableEnd) - model.start));
@@ -211,13 +278,14 @@ export const triggerCurveValueFor = (
     effect: string,
     intensity: string,
     displayMode: TriggerCurveDisplayMode,
-    effects: ForzaEffectConfiguration[]
+    effects: ForzaEffectConfiguration[],
+    throttleTuningRaw?: Partial<ForzaThrottleTuningConfiguration> | null
   ) => {
     if (displayMode === 'forza') {
       return forzaTriggerCurveValueFor(
         side,
         position,
-        forzaTriggerForceModelFor(side, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, effects)
+        forzaTriggerForceModelFor(side, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, effects, throttleTuningRaw)
       );
     }
 
@@ -240,16 +308,20 @@ export const triggerCurvePathFor = (
     effect: string,
     intensity: string,
     displayMode: TriggerCurveDisplayMode,
-    effects: ForzaEffectConfiguration[]
+    effects: ForzaEffectConfiguration[],
+    throttleTuningRaw?: Partial<ForzaThrottleTuningConfiguration> | null
   ) => {
     const samplePositions = [...TRIGGER_CURVE_SAMPLE_POSITIONS];
     const model =
       displayMode === 'forza'
-        ? forzaTriggerForceModelFor(side, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, effects)
+        ? forzaTriggerForceModelFor(side, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, effects, throttleTuningRaw)
         : null;
     if (model) {
       samplePositions.push(model.start, model.end, model.wall);
       if (model.rampStart !== undefined) samplePositions.push(model.rampStart);
+      if (model.finalStopInput !== undefined) {
+        samplePositions.push(Math.max(0, model.finalStopInput - 0.001), model.finalStopInput);
+      }
     }
 
     const range = displayMode === 'base' ? triggerRangeValuesFor(fromRaw, toRaw) : null;
@@ -282,7 +354,8 @@ export const curveControlPointsFor = (
     effect: string,
     intensity: string,
     displayMode: TriggerCurveDisplayMode,
-    effects: ForzaEffectConfiguration[]
+    effects: ForzaEffectConfiguration[],
+    throttleTuningRaw?: Partial<ForzaThrottleTuningConfiguration> | null
   ) => {
     const range = triggerRangeValuesFor(fromRaw, toRaw);
     const start = range.from / 100;
@@ -291,7 +364,7 @@ export const curveControlPointsFor = (
     const points = normalizeTriggerCurvePoints(pointsRaw, curve);
     const model =
       displayMode === 'forza'
-        ? forzaTriggerForceModelFor(side, fromRaw, toRaw, curveRaw, points, fallbackCurve, effect, intensity, effects)
+        ? forzaTriggerForceModelFor(side, fromRaw, toRaw, curveRaw, points, fallbackCurve, effect, intensity, effects, throttleTuningRaw)
         : null;
     const editableEnd = model ? model.rampStart ?? model.wall : end;
     const span = Math.max(0.01, editableEnd - start);
@@ -326,15 +399,16 @@ export const triggerCurveShapeView = (
     effect: string,
     intensity: string,
     displayMode: TriggerCurveDisplayMode,
-    effects: ForzaEffectConfiguration[]
+    effects: ForzaEffectConfiguration[],
+    throttleTuningRaw?: Partial<ForzaThrottleTuningConfiguration> | null
   ) => {
     const range = triggerRangeValuesFor(fromRaw, toRaw);
-    const curvePoints = curveControlPointsFor(side, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, displayMode, effects);
+    const curvePoints = curveControlPointsFor(side, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, displayMode, effects, throttleTuningRaw);
     return {
       rangeStart: range.from.toFixed(2),
       rangeEnd: range.to.toFixed(2),
       rangeWidth: range.width.toFixed(2),
-      path: triggerCurvePathFor(side, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, displayMode, effects),
+      path: triggerCurvePathFor(side, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, displayMode, effects, throttleTuningRaw),
       curvePoints
     };
   };
@@ -350,10 +424,11 @@ export const triggerCurveLiveView = (
     effect: string,
     intensity: string,
     displayMode: TriggerCurveDisplayMode,
-    effects: ForzaEffectConfiguration[]
+    effects: ForzaEffectConfiguration[],
+    throttleTuningRaw?: Partial<ForzaThrottleTuningConfiguration> | null
   ) => {
     const liveX = clampUnit(livePress) * 100;
-    const liveY = 100 - triggerCurveValueFor(side, livePress, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, displayMode, effects) * 100;
+    const liveY = 100 - triggerCurveValueFor(side, livePress, fromRaw, toRaw, curveRaw, pointsRaw, fallbackCurve, effect, intensity, displayMode, effects, throttleTuningRaw) * 100;
     return {
       liveX: liveX.toFixed(2),
       liveY: liveY.toFixed(2)
@@ -366,26 +441,66 @@ export const intensityTooltip = (meta: ForzaEffectMeta, intensity: number) =>
 
 export const routeTooltip = (route: ForzaEffectRoute) => routeTooltips[route] ?? 'Selects where DSCC sends this telemetry effect.';
 
-export const brakeOvertravelWallPoint = (end: number) =>
-    Math.round(end >= FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION * 100
-      ? Math.min(end, Math.max(FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION * 100, end - FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET * 100))
-      : Math.max(0, end - FORZA_ENDSTOP_WALL_OFFSET * 100));
-export const throttleOvertravelWallPoint = (end: number) =>
-    Math.round(end >= FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION * 100
-      ? Math.min(end, FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION * 100)
-      : Math.max(0, end - FORZA_ENDSTOP_WALL_OFFSET * 100));
-export const throttleOvertravelRampPoint = (end: number) => {
-    if (end < FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION * 100) return Math.max(0, end - 3);
-    const wall = throttleOvertravelWallPoint(end);
-    return Math.round(Math.min(end, Math.max(0, wall - FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH * 100)));
+export const brakeOvertravelWallPoint = (end: number, start = 0) => {
+    const startUnit = clampUnit(start / 100);
+    const endUnit = Math.max(startUnit + 0.01, end / 100);
+    return Math.round(brakeOvertravelWallPosition(startUnit, endUnit) * 100);
+  };
+export const brakeFinalStopPoint = (start: number, end: number) => {
+    const startUnit = clampUnit(start / 100);
+    const endUnit = Math.max(startUnit + 0.01, end / 100);
+    const wall = brakeOvertravelWallPosition(startUnit, endUnit);
+    return Math.round(clamp(endUnit - FORZA_BRAKE_FINAL_STOP_ARM_OFFSET, wall, endUnit) * 100);
+  };
+export const throttleOvertravelWallPoint = (
+    end: number,
+    start = 0,
+    throttleTuningRaw?: Partial<ForzaThrottleTuningConfiguration> | null
+  ) => {
+    const throttleTuning = normalizeForzaThrottleTuningForGraph(throttleTuningRaw);
+    const startUnit = clampUnit(start / 100);
+    const endUnit = Math.max(startUnit + 0.01, end / 100);
+    return Math.round(
+      throttleOvertravelWallPosition(
+        startUnit,
+        endUnit,
+        throttleTuning.wallPosition,
+        throttleTuning.guardMinEnd
+      ) * 100
+    );
+  };
+export const throttleOvertravelRampPoint = (
+    end: number,
+    start = 0,
+    throttleTuningRaw?: Partial<ForzaThrottleTuningConfiguration> | null
+  ) => {
+    const throttleTuning = normalizeForzaThrottleTuningForGraph(throttleTuningRaw);
+    const startUnit = clampUnit(start / 100);
+    const endUnit = Math.max(startUnit + 0.01, end / 100);
+    const wall = throttleOvertravelWallPosition(
+      startUnit,
+      endUnit,
+      throttleTuning.wallPosition,
+      throttleTuning.guardMinEnd
+    );
+    if (!throttleOvertravelGuardActive(endUnit, throttleTuning.guardMinEnd)) {
+      return Math.round(endstopWallPosition(startUnit, endUnit) * 100);
+    }
+    return Math.round(throttleOvertravelRampStart(startUnit, wall, throttleTuning.rampWidth) * 100);
   };
 
-export const triggerRangeTooltip = (side: 'L2' | 'R2', edge: 'from' | 'to', value: number) =>
+export const triggerRangeTooltip = (
+    side: 'L2' | 'R2',
+    edge: 'from' | 'to',
+    value: number,
+    startValue = 0,
+    throttleTuningRaw?: Partial<ForzaThrottleTuningConfiguration> | null
+  ) =>
     edge === 'from'
       ? `${side} starts building force at ${value}% trigger travel. Raising this creates more free travel before resistance begins.`
       : side === 'L2'
-        ? `${side} max resistance begins near ${brakeOvertravelWallPoint(value)}% and holds through the end of travel, while ABS/handbrake priority effects can still take over.`
-        : `${side} stays light first, ramps from about ${throttleOvertravelRampPoint(value)}%, then holds max resistance from about ${throttleOvertravelWallPoint(value)}% through full travel unless shift/rev priority effects take over.`;
+        ? `${side} end-load ramp begins near ${brakeOvertravelWallPoint(value, startValue)}%, then full brake force takes over near ${brakeFinalStopPoint(startValue, value)}%. ABS/handbrake priority effects can still take over.`
+        : `${side} stays light first, ramps from about ${throttleOvertravelRampPoint(value, startValue, throttleTuningRaw)}%, then holds max resistance from about ${throttleOvertravelWallPoint(value, startValue, throttleTuningRaw)}% through full travel unless shift/rev priority effects take over.`;
 
 export const triggerCurveTooltip = (side: 'L2' | 'R2', value: number) =>
     `${side} curve is ${value.toFixed(2)}. Drag the dots for a custom response, or move this slider to regenerate a smooth exponent curve.`;

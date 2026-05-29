@@ -24,7 +24,7 @@ sign MSIs because there is no paid code-signing certificate.
 ## Verify A Download
 
 ```powershell
-Get-FileHash .\DualSenseCommandCenter-v0.3.4-windows-x86_64-standard-unsigned.msi -Algorithm SHA256
+Get-FileHash .\DualSenseCommandCenter-0.3.5-standard.msi -Algorithm SHA256
 Get-Content .\SHA256SUMS-windows.txt
 ```
 

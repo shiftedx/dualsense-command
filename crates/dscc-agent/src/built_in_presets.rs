@@ -79,6 +79,10 @@ pub(crate) fn forza_horizon_preset() -> ForzaTelemetryConfig {
     ForzaTelemetryConfig {
         body_rumble_mode: default_forza_body_rumble_mode(),
         effects,
+        abs: ForzaAbsTuningConfig::default(),
+        throttle: ForzaThrottleTuningConfig::default(),
+        shift: ForzaShiftTuningConfig::default(),
+        rev_limiter: ForzaRevLimiterTuningConfig::default(),
     }
     .normalized()
 }
@@ -130,6 +134,10 @@ pub(crate) fn forza_horizon_immersive_preset() -> ForzaTelemetryConfig {
     ForzaTelemetryConfig {
         body_rumble_mode: default_forza_body_rumble_mode(),
         effects,
+        abs: ForzaAbsTuningConfig::default(),
+        throttle: ForzaThrottleTuningConfig::default(),
+        shift: ForzaShiftTuningConfig::default(),
+        rev_limiter: ForzaRevLimiterTuningConfig::default(),
     }
     .normalized()
 }
@@ -170,6 +178,10 @@ pub(crate) fn assetto_corsa_rally_preset() -> ForzaTelemetryConfig {
     ForzaTelemetryConfig {
         body_rumble_mode: default_forza_body_rumble_mode(),
         effects,
+        abs: ForzaAbsTuningConfig::default(),
+        throttle: ForzaThrottleTuningConfig::default(),
+        shift: ForzaShiftTuningConfig::default(),
+        rev_limiter: ForzaRevLimiterTuningConfig::default(),
     }
     .normalized()
 }
@@ -177,15 +189,13 @@ pub(crate) fn assetto_corsa_rally_preset() -> ForzaTelemetryConfig {
 pub(crate) fn forza_horizon_trigger_preset() -> TriggerConfig {
     TriggerConfig {
         same_range: false,
-        l2_from: 0,
+        l2_from: 6,
         l2_to: 100,
         r2_from: 4,
         r2_to: 100,
         l2_curve: TriggerCurve::from_ratio(FORZA_BRAKE_CURVE),
         r2_curve: TriggerCurve::from_ratio(FORZA_THROTTLE_CURVE),
-        l2_curve_points: trigger_curve_points_from_curve(TriggerCurve::from_ratio(
-            FORZA_BRAKE_CURVE,
-        )),
+        l2_curve_points: default_l2_trigger_curve_points(),
         r2_curve_points: trigger_curve_points_from_curve(TriggerCurve::from_ratio(
             FORZA_THROTTLE_CURVE,
         )),

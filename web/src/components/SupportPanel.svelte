@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ClipboardCopy, Download } from '@lucide/svelte';
+  import { ClipboardCopy, Download, ExternalLink } from '@lucide/svelte';
 
   type SupportBundleBusy = 'copy' | 'download' | '';
   type SupportMessageTone = 'success' | 'info' | 'error';
@@ -9,6 +9,8 @@
   export let tone: SupportMessageTone = 'info';
   export let onCopy: () => void | Promise<void> = () => {};
   export let onExport: () => void | Promise<void> = () => {};
+
+  const PROJECT_REPOSITORY_URL = 'https://github.com/shiftedx/dualsense-command';
 </script>
 
 <aside id="support-bundle-panel" class="dm-support-panel" aria-label="Support diagnostics bundle">
@@ -18,6 +20,9 @@
     <p>No raw HID paths, raw hardware IDs, serial numbers, or Bluetooth addresses are included.</p>
   </div>
   <div class="dm-support-actions">
+    <a class="dm-mini-button" href={PROJECT_REPOSITORY_URL} target="_blank" rel="noreferrer">
+      <ExternalLink size={13} /> GitHub
+    </a>
     <button class="dm-mini-button" type="button" disabled={Boolean(busy)} onclick={() => void onCopy()}>
       <ClipboardCopy size={13} /> {busy === 'copy' ? 'Copying' : 'Copy JSON'}
     </button>

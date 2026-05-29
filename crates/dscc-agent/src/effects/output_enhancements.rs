@@ -100,7 +100,15 @@ pub(crate) fn forza_rumble_output(
     let slip_angle = signal_scaled(snapshot, "tire.slip_angle.max", 0.22, 1.05);
     let shift = signal_unit_value(snapshot, "drivetrain.shift_pulse");
     let suspension_impact = signal_unit_value(snapshot, "suspension.impact_pulse");
-    let rev_limiter = signal_scaled(snapshot, "vehicle.rpm_ratio", 0.93, 1.0);
+    let shift_tuning = forza.shift.clone().normalized();
+    let rev_tuning = forza.rev_limiter.clone().normalized();
+    let rev_limiter = signal_scaled(
+        snapshot,
+        "vehicle.rpm_ratio",
+        rev_tuning.threshold_ratio,
+        1.0,
+    )
+    .powf(rev_tuning.curve);
     let native_passthrough = forza.body_rumble_mode == default_forza_body_rumble_mode();
 
     let road_texture = surface.max(strip * 0.95) * rolling_texture * (0.35 + speed * 0.65);
@@ -170,8 +178,8 @@ pub(crate) fn forza_rumble_output(
         &mut high,
         &forza.effect("gear_shift_thump"),
         shift,
-        0.92,
-        0.84,
+        shift_tuning.body_low_weight,
+        shift_tuning.body_high_weight,
     );
     if !native_passthrough {
         add_forza_rumble_component(
@@ -179,8 +187,8 @@ pub(crate) fn forza_rumble_output(
             &mut high,
             &forza.effect("rev_limiter_buzz"),
             rev_limiter,
-            0.20,
-            0.80,
+            rev_tuning.body_low_weight,
+            rev_tuning.body_high_weight,
         );
         add_forza_rumble_component(
             &mut low,

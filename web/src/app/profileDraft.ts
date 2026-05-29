@@ -1,16 +1,20 @@
 import {
   defaultTriggerCurve,
+  defaultTriggerCurvePoints,
   normalizeStickDeadzone,
   normalizeTriggerCurve,
   normalizeTriggerCurvePoints,
-  normalizeTriggerPercent,
-  triggerCurvePointsFromCurve
+  normalizeTriggerPercent
 } from '../lib/features/haptics/hapticsModel';
 import type {
   ControllerConfiguration,
   ExportedProfile,
+  ForzaAbsTuningConfiguration,
   ForzaBodyRumbleMode,
   ForzaEffectConfiguration,
+  ForzaRevLimiterTuningConfiguration,
+  ForzaShiftTuningConfiguration,
+  ForzaThrottleTuningConfiguration,
   InputBridgeConfig,
   ProfileAssignmentConfiguration
 } from '../lib/types';
@@ -36,6 +40,10 @@ export type ProfileDraftValues = {
   lightbarBrightness: number;
   forzaBodyRumbleMode: ForzaBodyRumbleMode;
   forzaEffects: ForzaEffectConfiguration[];
+  forzaAbsTuning: ForzaAbsTuningConfiguration;
+  forzaThrottleTuning: ForzaThrottleTuningConfiguration;
+  forzaShiftTuning: ForzaShiftTuningConfiguration;
+  forzaRevLimiterTuning: ForzaRevLimiterTuningConfiguration;
   leftStickDeadzone: number;
   rightStickDeadzone: number;
 };
@@ -43,12 +51,28 @@ export type ProfileDraftValues = {
 type DraftConfigOptions = {
   isEdge?: boolean;
   defaultForzaEffects: ForzaEffectConfiguration[];
+  defaultForzaAbsTuning: ForzaAbsTuningConfiguration;
+  defaultForzaThrottleTuning: ForzaThrottleTuningConfiguration;
+  defaultForzaShiftTuning: ForzaShiftTuningConfiguration;
+  defaultForzaRevLimiterTuning: ForzaRevLimiterTuningConfiguration;
   profileAssignments?: ProfileAssignmentConfiguration[];
 };
 
 type DraftBuildOptions = {
   isEdge?: boolean;
   normalizeForzaEffects: (effects: ForzaEffectConfiguration[] | undefined) => ForzaEffectConfiguration[];
+  normalizeForzaAbsTuning: (
+    tuning: Partial<ForzaAbsTuningConfiguration> | undefined | null
+  ) => ForzaAbsTuningConfiguration;
+  normalizeForzaThrottleTuning: (
+    tuning: Partial<ForzaThrottleTuningConfiguration> | undefined | null
+  ) => ForzaThrottleTuningConfiguration;
+  normalizeForzaShiftTuning: (
+    tuning: Partial<ForzaShiftTuningConfiguration> | undefined | null
+  ) => ForzaShiftTuningConfiguration;
+  normalizeForzaRevLimiterTuning: (
+    tuning: Partial<ForzaRevLimiterTuningConfiguration> | undefined | null
+  ) => ForzaRevLimiterTuningConfiguration;
 };
 
 type ProfileConfigSignatureOptions = DraftBuildOptions & {
@@ -57,6 +81,28 @@ type ProfileConfigSignatureOptions = DraftBuildOptions & {
 
 const cloneForzaEffects = (effects: ForzaEffectConfiguration[]): ForzaEffectConfiguration[] =>
   effects.map((effect) => ({ ...effect }));
+
+const cloneForzaAbsTuning = (tuning: ForzaAbsTuningConfiguration): ForzaAbsTuningConfiguration => ({
+  ...tuning
+});
+
+const cloneForzaThrottleTuning = (
+  tuning: ForzaThrottleTuningConfiguration
+): ForzaThrottleTuningConfiguration => ({
+  ...tuning
+});
+
+const cloneForzaShiftTuning = (
+  tuning: ForzaShiftTuningConfiguration
+): ForzaShiftTuningConfiguration => ({
+  ...tuning
+});
+
+const cloneForzaRevLimiterTuning = (
+  tuning: ForzaRevLimiterTuningConfiguration
+): ForzaRevLimiterTuningConfiguration => ({
+  ...tuning
+});
 
 export const normalizeForzaBodyRumbleMode = (mode: string | undefined | null): ForzaBodyRumbleMode =>
   mode === 'dscc_full_control' ? 'dscc_full_control' : 'native_passthrough';
@@ -155,14 +201,14 @@ export const normalizeInputBridgeConfig = (config: InputBridgeConfig | undefined
 export function baseForzaTriggerDefaults(): EditableControllerConfig['trigger'] {
   return {
     sameRange: false,
-    l2From: 0,
+    l2From: 6,
     l2To: 100,
     r2From: 4,
     r2To: 100,
     l2Curve: defaultTriggerCurve('l2'),
     r2Curve: defaultTriggerCurve('r2'),
-    l2CurvePoints: triggerCurvePointsFromCurve(defaultTriggerCurve('l2')),
-    r2CurvePoints: triggerCurvePointsFromCurve(defaultTriggerCurve('r2')),
+    l2CurvePoints: defaultTriggerCurvePoints('l2'),
+    r2CurvePoints: defaultTriggerCurvePoints('r2'),
     effect: 'Adaptive resistance',
     intensity: 'Strong (Standard)',
     vibration: 'Medium',
@@ -175,14 +221,14 @@ export function buildDefaultControllerConfig(options: DraftConfigOptions): Edita
     inputMode: 'native_dualsense',
     trigger: {
       sameRange: false,
-      l2From: 0,
+      l2From: 6,
       l2To: 100,
       r2From: 0,
       r2To: 100,
-      l2Curve: 1.35,
-      r2Curve: 2.25,
-      l2CurvePoints: triggerCurvePointsFromCurve(1.35),
-      r2CurvePoints: triggerCurvePointsFromCurve(2.25),
+      l2Curve: defaultTriggerCurve('l2'),
+      r2Curve: defaultTriggerCurve('r2'),
+      l2CurvePoints: defaultTriggerCurvePoints('l2'),
+      r2CurvePoints: defaultTriggerCurvePoints('r2'),
       effect: 'Adaptive resistance',
       intensity: 'Strong (Standard)',
       vibration: 'Medium',
@@ -196,7 +242,11 @@ export function buildDefaultControllerConfig(options: DraftConfigOptions): Edita
     },
     forza: {
       bodyRumbleMode: 'native_passthrough',
-      effects: cloneForzaEffects(options.defaultForzaEffects)
+      effects: cloneForzaEffects(options.defaultForzaEffects),
+      abs: cloneForzaAbsTuning(options.defaultForzaAbsTuning),
+      throttle: cloneForzaThrottleTuning(options.defaultForzaThrottleTuning),
+      shift: cloneForzaShiftTuning(options.defaultForzaShiftTuning),
+      revLimiter: cloneForzaRevLimiterTuning(options.defaultForzaRevLimiterTuning)
     },
     sticks: {
       leftCurve: 'Default',
@@ -245,7 +295,11 @@ export function buildBuiltInProfileConfig(options: DraftConfigOptions & {
     trigger: baseForzaTriggerDefaults(),
     forza: {
       bodyRumbleMode: 'native_passthrough',
-      effects: cloneForzaEffects(options.builtInForzaEffects)
+      effects: cloneForzaEffects(options.builtInForzaEffects),
+      abs: cloneForzaAbsTuning(options.defaultForzaAbsTuning),
+      throttle: cloneForzaThrottleTuning(options.defaultForzaThrottleTuning),
+      shift: cloneForzaShiftTuning(options.defaultForzaShiftTuning),
+      revLimiter: cloneForzaRevLimiterTuning(options.defaultForzaRevLimiterTuning)
     },
     profileAssignments: options.profileAssignments ?? []
   };
@@ -298,7 +352,11 @@ export function buildControllerConfigDraft(
     },
     forza: {
       bodyRumbleMode: normalizeForzaBodyRumbleMode(draft.forzaBodyRumbleMode),
-      effects: options.normalizeForzaEffects(draft.forzaEffects)
+      effects: options.normalizeForzaEffects(draft.forzaEffects),
+      abs: options.normalizeForzaAbsTuning(draft.forzaAbsTuning),
+      throttle: options.normalizeForzaThrottleTuning(draft.forzaThrottleTuning),
+      shift: options.normalizeForzaShiftTuning(draft.forzaShiftTuning),
+      revLimiter: options.normalizeForzaRevLimiterTuning(draft.forzaRevLimiterTuning)
     },
     sticks: {
       ...base.sticks,
@@ -349,7 +407,11 @@ export function profileConfigSignature(
         enabled: effect.enabled,
         intensity: options.forzaIntensityPercent(effect.intensity),
         route: effect.route
-      }))
+      })),
+      abs: options.normalizeForzaAbsTuning(config.forza?.abs),
+      throttle: options.normalizeForzaThrottleTuning(config.forza?.throttle),
+      shift: options.normalizeForzaShiftTuning(config.forza?.shift),
+      revLimiter: options.normalizeForzaRevLimiterTuning(config.forza?.revLimiter)
     },
     sticks: config.sticks,
     buttons: normalizeButtonAssignments(config.buttons, options.isEdge),

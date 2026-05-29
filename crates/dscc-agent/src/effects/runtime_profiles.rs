@@ -138,16 +138,26 @@ pub(crate) fn forza_runtime_profile(
     let r2_end = trigger.map_or(FORZA_THROTTLE_FULL_FORCE_AT, |trigger| {
         trigger_range_end_position(trigger.r2_from, trigger.r2_to)
     });
+    let throttle_tuning = forza.throttle.clone().normalized();
     let l2_has_overtravel_guard = brake_overtravel_guard_active(l2_end);
-    let l2_endstop_wall = brake_overtravel_wall_position(l2_start, l2_end);
-    let l2_overtravel_ramp_start = brake_overtravel_ramp_start(l2_start, l2_endstop_wall);
-    let r2_has_overtravel_guard = throttle_overtravel_guard_active(r2_end);
-    let r2_endstop_wall = throttle_overtravel_wall_position(r2_start, r2_end);
-    let r2_overtravel_ramp_start = throttle_overtravel_ramp_start(r2_start, r2_endstop_wall);
-    let l2_normal_end = if l2_has_overtravel_guard && l2_overtravel_ramp_start < l2_endstop_wall {
-        l2_overtravel_ramp_start
+    let l2_force_knee = brake_overtravel_wall_position(l2_start, l2_end);
+    let r2_has_overtravel_guard =
+        throttle_overtravel_guard_active(r2_end, throttle_tuning.guard_min_end);
+    let r2_endstop_wall = throttle_overtravel_wall_position(
+        r2_start,
+        r2_end,
+        throttle_tuning.wall_position,
+        throttle_tuning.guard_min_end,
+    );
+    let r2_overtravel_ramp_start =
+        throttle_overtravel_ramp_start(r2_start, r2_endstop_wall, throttle_tuning.ramp_width);
+    let l2_final_stop_input =
+        (l2_end - FORZA_BRAKE_FINAL_STOP_ARM_OFFSET).clamp(l2_force_knee, l2_end);
+    let l2_final_stop_position = (l2_end - FORZA_BRAKE_FINAL_STOP_OFFSET).clamp(l2_start, l2_end);
+    let l2_normal_end = if l2_has_overtravel_guard {
+        l2_force_knee
     } else {
-        l2_endstop_wall
+        l2_force_knee.min(l2_end)
     }
     .max(l2_start + 0.01);
     let r2_normal_end = if r2_has_overtravel_guard && r2_overtravel_ramp_start < r2_endstop_wall {
@@ -156,7 +166,6 @@ pub(crate) fn forza_runtime_profile(
         r2_endstop_wall
     }
     .max(r2_start + 0.01);
-    let abs_brake_threshold = abs_brake_threshold_for_range(l2_start, l2_end);
     let l2_curve_points = trigger
         .map(|trigger| trigger_curve_value_points(&trigger.l2_curve_points))
         .unwrap_or_else(|| trigger_curve_value_points(&default_l2_trigger_curve_points()));
@@ -165,6 +174,11 @@ pub(crate) fn forza_runtime_profile(
         .unwrap_or_else(|| trigger_curve_value_points(&default_r2_trigger_curve_points()));
     let brake = forza.effect("brake_resistance");
     let abs = forza.effect("abs_slip_pulse");
+    let abs_tuning = forza.abs.clone().normalized();
+    let shift_tuning = forza.shift.clone().normalized();
+    let rev_tuning = forza.rev_limiter.clone().normalized();
+    let abs_brake_threshold =
+        abs_brake_threshold_for_range(l2_start, l2_end, abs_tuning.brake_threshold_ratio);
     let handbrake = forza.effect("handbrake_wall");
     let throttle = forza.effect("throttle_resistance");
     let shift = forza.effect("gear_shift_thump");
@@ -178,67 +192,90 @@ pub(crate) fn forza_runtime_profile(
         brake.scalar() * trigger_scalar * FORZA_BRAKE_ENDSTOP_FORCE_BOOST,
     );
     let throttle_baseline_force = scaled_unit(
-        FORZA_THROTTLE_BASELINE_FORCE,
+        throttle_tuning.baseline_force,
         throttle.scalar() * trigger_scalar,
     );
     let throttle_normal_force = scaled_unit(
-        FORZA_THROTTLE_NORMAL_FORCE,
+        throttle_tuning.normal_force,
         throttle.scalar() * trigger_scalar,
     );
     let throttle_endstop_scalar =
-        throttle.scalar() * trigger_scalar * FORZA_THROTTLE_ENDSTOP_FORCE_BOOST;
-    let throttle_endstop_force = scaled_unit(FORZA_THROTTLE_ENDSTOP_FORCE, throttle_endstop_scalar);
-    let abs_amplitude = scaled_unit(FORZA_ABS_PULSE_AMPLITUDE, abs.scalar());
-    let rev_amplitude = scaled_unit(
-        FORZA_REV_LIMITER_PULSE_AMPLITUDE,
-        rev.scalar() * trigger_scalar,
-    );
+        throttle.scalar() * trigger_scalar * throttle_tuning.endstop_boost;
+    let throttle_endstop_force =
+        scaled_unit(throttle_tuning.endstop_force, throttle_endstop_scalar);
+    let abs_min_amplitude = scaled_unit(abs_tuning.min_strength, abs.scalar());
+    let abs_max_amplitude = scaled_unit(abs_tuning.max_strength, abs.scalar());
+    let rev_min_amplitude = scaled_unit(rev_tuning.min_strength, rev.scalar() * trigger_scalar);
+    let rev_max_amplitude = scaled_unit(rev_tuning.max_strength, rev.scalar() * trigger_scalar);
     let shift_amplitude = scaled_unit(1.0, shift.scalar());
 
     let baseline_condition = forza_baseline_trigger_condition();
     let mut rules = Vec::new();
 
     if abs.scalar() > 0.0 && route_has_l2(&abs.route) {
-        rules.push(EffectRule {
-            id: "forza-l2-abs-slip-pulse".to_string(),
-            smoothing: None,
-            hysteresis: None,
-            timeout: None,
-            target: EffectTarget::L2,
-            priority: 60,
-            condition: RuleCondition::All {
-                conditions: vec![
-                    number_condition(
-                        "input.brake",
-                        ComparisonOp::GreaterOrEqual,
-                        abs_brake_threshold,
-                    ),
-                    number_condition(
-                        "vehicle.speed_kmh",
-                        ComparisonOp::GreaterOrEqual,
-                        FORZA_ABS_MIN_SPEED_KMH,
-                    ),
-                    RuleCondition::Any {
-                        conditions: vec![
-                            number_condition(
-                                "tire.slip_ratio.max",
-                                ComparisonOp::GreaterOrEqual,
-                                FORZA_ABS_SLIP_THRESHOLD,
-                            ),
-                            number_condition(
-                                "wheel.slip.max",
-                                ComparisonOp::GreaterOrEqual,
-                                FORZA_ABS_SLIP_THRESHOLD,
-                            ),
-                        ],
-                    },
-                ],
-            },
-            effect: EffectTemplate::Pulse {
-                amplitude: ValueSource::constant(abs_amplitude),
-                frequency_hz: ValueSource::constant(FORZA_ABS_PULSE_FREQUENCY_HZ),
-            },
-        });
+        let abs_sources: Vec<(&str, &str, i32)> = match abs_tuning.slip_source.as_str() {
+            "front" => vec![("forza-l2-abs-front-slip-pulse", "wheel.slip.front_max", 62)],
+            "tire" => vec![("forza-l2-abs-tire-slip-pulse", "tire.slip_ratio.max", 61)],
+            "wheel" => vec![("forza-l2-abs-wheel-slip-pulse", "wheel.slip.max", 60)],
+            _ => vec![
+                ("forza-l2-abs-front-slip-pulse", "wheel.slip.front_max", 62),
+                ("forza-l2-abs-tire-slip-pulse", "tire.slip_ratio.max", 61),
+                ("forza-l2-abs-wheel-slip-pulse", "wheel.slip.max", 60),
+            ],
+        };
+
+        for (id, signal, priority) in abs_sources {
+            let strength = ValueSource::signal_curve(
+                signal,
+                abs_tuning.slip_threshold,
+                abs_tuning.slip_threshold + FORZA_ABS_SLIP_RANGE_WIDTH,
+                abs_min_amplitude,
+                abs_max_amplitude,
+                abs_tuning.curve,
+            );
+            let frequency_hz = ValueSource::constant(abs_tuning.frequency_hz);
+            let effect = if abs_tuning.mode == "fine_flutter" {
+                EffectTemplate::PulseAb {
+                    strength,
+                    frequency_hz,
+                    wall_zones: ValueSource::constant(FORZA_ABS_FINE_FLUTTER_WALL_ZONES),
+                }
+            } else {
+                EffectTemplate::Pulse {
+                    amplitude: strength,
+                    frequency_hz,
+                }
+            };
+
+            rules.push(EffectRule {
+                id: id.to_string(),
+                smoothing: None,
+                hysteresis: None,
+                timeout: None,
+                target: EffectTarget::L2,
+                priority,
+                condition: RuleCondition::All {
+                    conditions: vec![
+                        number_condition(
+                            "input.brake",
+                            ComparisonOp::GreaterOrEqual,
+                            abs_brake_threshold,
+                        ),
+                        number_condition(
+                            "vehicle.speed_kmh",
+                            ComparisonOp::GreaterOrEqual,
+                            abs_tuning.min_speed_kmh,
+                        ),
+                        number_condition(
+                            signal,
+                            ComparisonOp::GreaterOrEqual,
+                            abs_tuning.slip_threshold,
+                        ),
+                    ],
+                },
+                effect,
+            });
+        }
     }
 
     if handbrake.scalar() > 0.0 && route_has_l2(&handbrake.route) {
@@ -271,14 +308,14 @@ pub(crate) fn forza_runtime_profile(
             condition: number_condition(
                 "input.brake",
                 ComparisonOp::GreaterOrEqual,
-                l2_endstop_wall,
+                l2_final_stop_input,
             ),
             effect: EffectTemplate::AdaptiveResistance {
-                start_position: ValueSource::constant(l2_endstop_wall),
+                start_position: ValueSource::constant(l2_final_stop_position),
                 strength: ValueSource::constant(brake_endstop_force),
             },
         });
-        if l2_has_overtravel_guard && l2_overtravel_ramp_start < l2_endstop_wall {
+        if l2_has_overtravel_guard && l2_force_knee < l2_end {
             rules.push(EffectRule {
                 id: "forza-l2-brake-overtravel-ramp".to_string(),
                 smoothing: None,
@@ -289,14 +326,14 @@ pub(crate) fn forza_runtime_profile(
                 condition: number_condition(
                     "input.brake",
                     ComparisonOp::GreaterOrEqual,
-                    l2_overtravel_ramp_start,
+                    l2_force_knee,
                 ),
                 effect: EffectTemplate::AdaptiveResistance {
-                    start_position: ValueSource::constant(l2_overtravel_ramp_start),
+                    start_position: ValueSource::constant(l2_start),
                     strength: ValueSource::signal_curve(
                         "input.brake",
-                        l2_overtravel_ramp_start,
-                        l2_endstop_wall,
+                        l2_force_knee,
+                        l2_end,
                         brake_normal_force,
                         brake_endstop_force,
                         FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE,
@@ -329,17 +366,27 @@ pub(crate) fn forza_runtime_profile(
     push_rev_limiter_rules(
         &mut rules,
         &rev,
-        "forza-rev-limiter-buzz",
-        55,
-        number_condition(
-            "vehicle.rpm_ratio",
-            ComparisonOp::GreaterOrEqual,
-            FORZA_REV_LIMIT_RATIO,
-        ),
-        ValueSource::constant(rev_amplitude),
-        ValueSource::constant(FORZA_REV_LIMITER_FREQUENCY_HZ),
+        RevLimiterRuleShape {
+            id: "forza-rev-limiter-buzz",
+            priority: 55,
+            condition: number_condition(
+                "vehicle.rpm_ratio",
+                ComparisonOp::GreaterOrEqual,
+                rev_tuning.threshold_ratio,
+            ),
+            amplitude: ValueSource::signal_curve(
+                "vehicle.rpm_ratio",
+                rev_tuning.threshold_ratio,
+                1.0,
+                rev_min_amplitude,
+                rev_max_amplitude,
+                rev_tuning.curve,
+            ),
+            frequency_hz: ValueSource::constant(rev_tuning.frequency_hz),
+        },
+        &rev_tuning,
     );
-    push_shift_thump_rules(&mut rules, &shift, shift_amplitude);
+    push_shift_thump_rules(&mut rules, &shift, shift_amplitude, &shift_tuning);
 
     if throttle.scalar() > 0.0 && route_has_r2(&throttle.route) {
         rules.push(EffectRule {
@@ -380,7 +427,7 @@ pub(crate) fn forza_runtime_profile(
                         r2_endstop_wall,
                         throttle_normal_force,
                         throttle_endstop_force,
-                        FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE,
+                        throttle_tuning.ramp_curve,
                     ),
                 },
             });
@@ -422,14 +469,19 @@ fn forza_baseline_trigger_condition() -> RuleCondition {
     text_condition("game.state", ComparisonOp::Eq, "driving")
 }
 
-fn push_rev_limiter_rules(
-    rules: &mut Vec<EffectRule>,
-    tuning: &ForzaEffectConfig,
-    id: &str,
+struct RevLimiterRuleShape {
+    id: &'static str,
     priority: i32,
     condition: RuleCondition,
     amplitude: ValueSource,
     frequency_hz: ValueSource,
+}
+
+fn push_rev_limiter_rules(
+    rules: &mut Vec<EffectRule>,
+    tuning: &ForzaEffectConfig,
+    shape: RevLimiterRuleShape,
+    rev_tuning: &ForzaRevLimiterTuningConfig,
 ) {
     if tuning.scalar() <= 0.0 {
         return;
@@ -438,48 +490,48 @@ fn push_rev_limiter_rules(
     for target in routed_trigger_targets(&tuning.route) {
         let target_label = trigger_target_label(target);
         rules.push(EffectRule {
-            id: format!("{id}-{target_label}-wall-form"),
+            id: format!("{}-{target_label}-wall-form", shape.id),
             smoothing: None,
             hysteresis: None,
             timeout: None,
             target,
-            priority,
+            priority: shape.priority,
             condition: RuleCondition::All {
                 conditions: vec![
-                    condition.clone(),
+                    shape.condition.clone(),
                     number_condition(
                         "input.throttle",
                         ComparisonOp::GreaterOrEqual,
-                        FORZA_REV_LIMITER_WALL_FORM_THROTTLE_AT,
+                        rev_tuning.wall_form_throttle_at,
                     ),
                 ],
             },
             effect: EffectTemplate::PulseAb {
-                strength: amplitude.clone(),
-                frequency_hz: frequency_hz.clone(),
-                wall_zones: ValueSource::constant(FORZA_REV_LIMITER_WALL_ZONES),
+                strength: shape.amplitude.clone(),
+                frequency_hz: shape.frequency_hz.clone(),
+                wall_zones: ValueSource::constant(rev_tuning.wall_zones),
             },
         });
         rules.push(EffectRule {
-            id: format!("{id}-{target_label}-pulse"),
+            id: format!("{}-{target_label}-pulse", shape.id),
             smoothing: None,
             hysteresis: None,
             timeout: None,
             target,
-            priority,
+            priority: shape.priority,
             condition: RuleCondition::All {
                 conditions: vec![
-                    condition.clone(),
+                    shape.condition.clone(),
                     number_condition(
                         "input.throttle",
                         ComparisonOp::LessThan,
-                        FORZA_REV_LIMITER_WALL_FORM_THROTTLE_AT,
+                        rev_tuning.wall_form_throttle_at,
                     ),
                 ],
             },
             effect: EffectTemplate::Pulse {
-                amplitude: amplitude.clone(),
-                frequency_hz: frequency_hz.clone(),
+                amplitude: shape.amplitude.clone(),
+                frequency_hz: shape.frequency_hz.clone(),
             },
         });
     }
@@ -489,6 +541,7 @@ fn push_shift_thump_rules(
     rules: &mut Vec<EffectRule>,
     tuning: &ForzaEffectConfig,
     shift_amplitude: f64,
+    shift_tuning: &ForzaShiftTuningConfig,
 ) {
     if tuning.scalar() <= 0.0 {
         return;
@@ -510,11 +563,15 @@ fn push_shift_thump_rules(
             timeout: None,
             target,
             priority: 70,
-            condition: shift_thump_condition(pedal_signal, ComparisonOp::GreaterOrEqual),
+            condition: shift_thump_condition(
+                pedal_signal,
+                ComparisonOp::GreaterOrEqual,
+                shift_tuning.wall_form_at,
+            ),
             effect: EffectTemplate::PulseAb {
                 strength: ValueSource::constant(shift_amplitude),
-                frequency_hz: ValueSource::constant(FORZA_SHIFT_FREQUENCY_HZ),
-                wall_zones: ValueSource::constant(FORZA_SHIFT_WALL_ZONES),
+                frequency_hz: ValueSource::constant(shift_tuning.frequency_hz),
+                wall_zones: ValueSource::constant(shift_tuning.wall_zones),
             },
         });
         rules.push(EffectRule {
@@ -524,20 +581,28 @@ fn push_shift_thump_rules(
             timeout: None,
             target,
             priority: 70,
-            condition: shift_thump_condition(pedal_signal, ComparisonOp::LessThan),
+            condition: shift_thump_condition(
+                pedal_signal,
+                ComparisonOp::LessThan,
+                shift_tuning.wall_form_at,
+            ),
             effect: EffectTemplate::Pulse {
                 amplitude: ValueSource::constant(shift_amplitude),
-                frequency_hz: ValueSource::constant(FORZA_SHIFT_FREQUENCY_HZ),
+                frequency_hz: ValueSource::constant(shift_tuning.frequency_hz),
             },
         });
     }
 }
 
-fn shift_thump_condition(pedal_signal: &str, pedal_op: ComparisonOp) -> RuleCondition {
+fn shift_thump_condition(
+    pedal_signal: &str,
+    pedal_op: ComparisonOp,
+    wall_form_at: f64,
+) -> RuleCondition {
     RuleCondition::All {
         conditions: vec![
             text_condition("drivetrain.shift_event", ComparisonOp::NotEq, "none"),
-            number_condition(pedal_signal, pedal_op, FORZA_SHIFT_WALL_FORM_AT),
+            number_condition(pedal_signal, pedal_op, wall_form_at),
         ],
     }
 }
@@ -748,6 +813,14 @@ pub(crate) fn effect_mapping_statuses(
     let moving = speed_kmh > 3.0;
     let slip = snapshot.number("wheel.slip.max").unwrap_or_default();
     let front_slip = snapshot.number("wheel.slip.front_max").unwrap_or_default();
+    let tire_slip = snapshot.number("tire.slip_ratio.max").unwrap_or_default();
+    let abs_tuning = forza.abs.clone().normalized();
+    let abs_signal = match abs_tuning.slip_source.as_str() {
+        "front" => front_slip,
+        "tire" => tire_slip,
+        "wheel" => slip,
+        _ => front_slip.max(tire_slip).max(slip),
+    };
     let handbrake = snapshot.number("input.handbrake").unwrap_or_default();
     let gear = snapshot.number("drivetrain.gear").unwrap_or_default();
     let rpm_ratio = snapshot.number("vehicle.rpm_ratio").unwrap_or_default();
@@ -773,7 +846,9 @@ pub(crate) fn effect_mapping_statuses(
             "L2",
             "ABS / tire slip pulse",
             "wheel.slip.max",
-            brake > 0.10 && slip.max(front_slip) > 0.20,
+            brake >= abs_tuning.brake_threshold_ratio
+                && speed_kmh >= abs_tuning.min_speed_kmh
+                && abs_signal >= abs_tuning.slip_threshold,
             &forza,
         ),
         mapping_status(

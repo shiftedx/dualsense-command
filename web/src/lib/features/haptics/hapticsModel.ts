@@ -39,14 +39,14 @@ export function normalizeTriggerPercent(value: number | string) {
   return Math.max(0, Math.min(100, Math.round(numeric)));
 }
 
-export function normalizeTriggerCurve(value: number | string | undefined, fallback = 1.35) {
+export function normalizeTriggerCurve(value: number | string | undefined, fallback = 1.45) {
   const numeric = typeof value === 'number' ? value : Number.parseFloat(String(value ?? ''));
   if (!Number.isFinite(numeric)) return fallback;
   return Math.round(Math.max(0.5, Math.min(3.5, numeric)) * 100) / 100;
 }
 
 export function defaultTriggerCurve(side: 'l2' | 'r2') {
-  return side === 'l2' ? 1.35 : 2.25;
+  return side === 'l2' ? 1.45 : 2.25;
 }
 
 export function normalizeStickDeadzone(value: number | string | undefined | null) {
@@ -61,6 +61,19 @@ export function triggerCurvePointsFromCurve(curve: number): TriggerCurvePoint[] 
     input,
     output: Math.round(Math.pow(input / 100, normalized) * 100)
   }));
+}
+
+export function defaultTriggerCurvePoints(side: 'l2' | 'r2'): TriggerCurvePoint[] {
+  if (side === 'r2') return triggerCurvePointsFromCurve(defaultTriggerCurve(side));
+  return [
+    { input: 0, output: 0 },
+    { input: 12, output: 8 },
+    { input: 25, output: 22 },
+    { input: 40, output: 46 },
+    { input: 58, output: 70 },
+    { input: 78, output: 90 },
+    { input: 100, output: 100 }
+  ];
 }
 
 export function normalizeTriggerCurvePoints(

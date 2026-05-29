@@ -122,7 +122,7 @@ impl Default for TriggerConfig {
     fn default() -> Self {
         Self {
             same_range: false,
-            l2_from: 20,
+            l2_from: 6,
             l2_to: 100,
             r2_from: 0,
             r2_to: 100,
@@ -175,6 +175,10 @@ impl Default for ForzaTelemetryConfig {
         Self {
             body_rumble_mode: default_forza_body_rumble_mode(),
             effects: default_forza_effect_configs(),
+            abs: ForzaAbsTuningConfig::default(),
+            throttle: ForzaThrottleTuningConfig::default(),
+            shift: ForzaShiftTuningConfig::default(),
+            rev_limiter: ForzaRevLimiterTuningConfig::default(),
         }
     }
 }
@@ -217,6 +221,10 @@ impl ForzaTelemetryConfig {
         Self {
             body_rumble_mode,
             effects,
+            abs: self.abs.normalized(),
+            throttle: self.throttle.normalized(),
+            shift: self.shift.normalized(),
+            rev_limiter: self.rev_limiter.normalized(),
         }
     }
 
@@ -229,6 +237,394 @@ impl ForzaTelemetryConfig {
             .unwrap_or_else(|| default.clone())
             .normalized_with_default(&default)
     }
+}
+
+impl Default for ForzaAbsTuningConfig {
+    fn default() -> Self {
+        Self {
+            mode: default_forza_abs_mode(),
+            slip_source: default_forza_abs_slip_source(),
+            slip_threshold: default_forza_abs_slip_threshold(),
+            brake_threshold_ratio: default_forza_abs_brake_threshold_ratio(),
+            min_speed_kmh: default_forza_abs_min_speed_kmh(),
+            min_strength: default_forza_abs_min_strength(),
+            max_strength: default_forza_abs_max_strength(),
+            frequency_hz: default_forza_abs_frequency_hz(),
+            curve: default_forza_abs_curve(),
+        }
+    }
+}
+
+impl ForzaAbsTuningConfig {
+    pub(crate) fn normalized(mut self) -> Self {
+        if !forza_abs_modes().contains(&self.mode.as_str()) {
+            self.mode = default_forza_abs_mode();
+        }
+        if !forza_abs_slip_sources().contains(&self.slip_source.as_str()) {
+            self.slip_source = default_forza_abs_slip_source();
+        }
+        self.slip_threshold = finite_clamp(
+            self.slip_threshold,
+            0.05,
+            2.0,
+            default_forza_abs_slip_threshold(),
+        );
+        self.brake_threshold_ratio = finite_clamp(
+            self.brake_threshold_ratio,
+            0.0,
+            1.0,
+            default_forza_abs_brake_threshold_ratio(),
+        );
+        self.min_speed_kmh = finite_clamp(
+            self.min_speed_kmh,
+            0.0,
+            250.0,
+            default_forza_abs_min_speed_kmh(),
+        );
+        self.min_strength = finite_clamp(
+            self.min_strength,
+            0.0,
+            1.0,
+            default_forza_abs_min_strength(),
+        );
+        self.max_strength = finite_clamp(
+            self.max_strength,
+            self.min_strength,
+            1.0,
+            default_forza_abs_max_strength(),
+        );
+        self.frequency_hz = finite_clamp(
+            self.frequency_hz,
+            1.0,
+            80.0,
+            default_forza_abs_frequency_hz(),
+        );
+        self.curve = finite_clamp(self.curve, 0.4, 3.0, default_forza_abs_curve());
+        self
+    }
+}
+
+fn finite_clamp(value: f64, min: f64, max: f64, fallback: f64) -> f64 {
+    if value.is_finite() {
+        value.clamp(min, max)
+    } else {
+        fallback.clamp(min, max)
+    }
+}
+
+pub(crate) fn default_forza_abs_mode() -> String {
+    "strong_pulse".to_string()
+}
+
+pub(crate) fn default_forza_abs_slip_source() -> String {
+    "auto_front_first".to_string()
+}
+
+pub(crate) fn default_forza_abs_slip_threshold() -> f64 {
+    FORZA_ABS_SLIP_THRESHOLD
+}
+
+pub(crate) fn default_forza_abs_brake_threshold_ratio() -> f64 {
+    FORZA_ABS_RANGE_START_RATIO
+}
+
+pub(crate) fn default_forza_abs_min_speed_kmh() -> f64 {
+    FORZA_ABS_MIN_SPEED_KMH
+}
+
+pub(crate) fn default_forza_abs_min_strength() -> f64 {
+    FORZA_ABS_PULSE_MIN_AMPLITUDE
+}
+
+pub(crate) fn default_forza_abs_max_strength() -> f64 {
+    FORZA_ABS_PULSE_MAX_AMPLITUDE
+}
+
+pub(crate) fn default_forza_abs_frequency_hz() -> f64 {
+    FORZA_ABS_PULSE_FREQUENCY_HZ
+}
+
+pub(crate) fn default_forza_abs_curve() -> f64 {
+    1.0
+}
+
+pub(crate) fn forza_abs_modes() -> &'static [&'static str] {
+    &["strong_pulse", "fine_flutter"]
+}
+
+pub(crate) fn forza_abs_slip_sources() -> &'static [&'static str] {
+    &["auto_front_first", "front", "tire", "wheel"]
+}
+
+impl Default for ForzaThrottleTuningConfig {
+    fn default() -> Self {
+        Self {
+            baseline_force: default_forza_throttle_baseline_force(),
+            normal_force: default_forza_throttle_normal_force(),
+            endstop_force: default_forza_throttle_endstop_force(),
+            endstop_boost: default_forza_throttle_endstop_boost(),
+            wall_position: default_forza_throttle_wall_position(),
+            guard_min_end: default_forza_throttle_guard_min_end(),
+            ramp_width: default_forza_throttle_ramp_width(),
+            ramp_curve: default_forza_throttle_ramp_curve(),
+        }
+    }
+}
+
+impl ForzaThrottleTuningConfig {
+    pub(crate) fn normalized(mut self) -> Self {
+        self.baseline_force = finite_clamp(
+            self.baseline_force,
+            0.0,
+            1.0,
+            default_forza_throttle_baseline_force(),
+        );
+        self.normal_force = finite_clamp(
+            self.normal_force,
+            self.baseline_force,
+            1.0,
+            default_forza_throttle_normal_force(),
+        );
+        self.endstop_force = finite_clamp(
+            self.endstop_force,
+            0.0,
+            1.0,
+            default_forza_throttle_endstop_force(),
+        );
+        self.endstop_boost = finite_clamp(
+            self.endstop_boost,
+            0.0,
+            5.0,
+            default_forza_throttle_endstop_boost(),
+        );
+        self.wall_position = finite_clamp(
+            self.wall_position,
+            0.0,
+            1.0,
+            default_forza_throttle_wall_position(),
+        );
+        self.guard_min_end = finite_clamp(
+            self.guard_min_end,
+            0.0,
+            1.0,
+            default_forza_throttle_guard_min_end(),
+        );
+        self.ramp_width = finite_clamp(
+            self.ramp_width,
+            0.01,
+            0.80,
+            default_forza_throttle_ramp_width(),
+        );
+        self.ramp_curve = finite_clamp(
+            self.ramp_curve,
+            0.4,
+            4.0,
+            default_forza_throttle_ramp_curve(),
+        );
+        self
+    }
+}
+
+pub(crate) fn default_forza_throttle_baseline_force() -> f64 {
+    FORZA_THROTTLE_BASELINE_FORCE
+}
+
+pub(crate) fn default_forza_throttle_normal_force() -> f64 {
+    FORZA_THROTTLE_NORMAL_FORCE
+}
+
+pub(crate) fn default_forza_throttle_endstop_force() -> f64 {
+    FORZA_THROTTLE_ENDSTOP_FORCE
+}
+
+pub(crate) fn default_forza_throttle_endstop_boost() -> f64 {
+    FORZA_THROTTLE_ENDSTOP_FORCE_BOOST
+}
+
+pub(crate) fn default_forza_throttle_wall_position() -> f64 {
+    FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION
+}
+
+pub(crate) fn default_forza_throttle_guard_min_end() -> f64 {
+    FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION
+}
+
+pub(crate) fn default_forza_throttle_ramp_width() -> f64 {
+    FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH
+}
+
+pub(crate) fn default_forza_throttle_ramp_curve() -> f64 {
+    FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE
+}
+
+impl Default for ForzaShiftTuningConfig {
+    fn default() -> Self {
+        Self {
+            wall_form_at: default_forza_shift_wall_form_at(),
+            frequency_hz: default_forza_shift_frequency_hz(),
+            wall_zones: default_forza_shift_wall_zones(),
+            body_low_weight: default_forza_shift_body_low_weight(),
+            body_high_weight: default_forza_shift_body_high_weight(),
+        }
+    }
+}
+
+impl ForzaShiftTuningConfig {
+    pub(crate) fn normalized(mut self) -> Self {
+        self.wall_form_at = finite_clamp(
+            self.wall_form_at,
+            0.0,
+            1.0,
+            default_forza_shift_wall_form_at(),
+        );
+        self.frequency_hz = finite_clamp(
+            self.frequency_hz,
+            1.0,
+            80.0,
+            default_forza_shift_frequency_hz(),
+        );
+        self.wall_zones = finite_clamp(self.wall_zones, 1.0, 8.0, default_forza_shift_wall_zones());
+        self.body_low_weight = finite_clamp(
+            self.body_low_weight,
+            0.0,
+            1.5,
+            default_forza_shift_body_low_weight(),
+        );
+        self.body_high_weight = finite_clamp(
+            self.body_high_weight,
+            0.0,
+            1.5,
+            default_forza_shift_body_high_weight(),
+        );
+        self
+    }
+}
+
+pub(crate) fn default_forza_shift_wall_form_at() -> f64 {
+    FORZA_SHIFT_WALL_FORM_AT
+}
+
+pub(crate) fn default_forza_shift_frequency_hz() -> f64 {
+    FORZA_SHIFT_FREQUENCY_HZ
+}
+
+pub(crate) fn default_forza_shift_wall_zones() -> f64 {
+    FORZA_SHIFT_WALL_ZONES
+}
+
+pub(crate) fn default_forza_shift_body_low_weight() -> f64 {
+    0.92
+}
+
+pub(crate) fn default_forza_shift_body_high_weight() -> f64 {
+    0.84
+}
+
+impl Default for ForzaRevLimiterTuningConfig {
+    fn default() -> Self {
+        Self {
+            threshold_ratio: default_forza_rev_limiter_threshold_ratio(),
+            min_strength: default_forza_rev_limiter_min_strength(),
+            max_strength: default_forza_rev_limiter_max_strength(),
+            frequency_hz: default_forza_rev_limiter_frequency_hz(),
+            wall_form_throttle_at: default_forza_rev_limiter_wall_form_throttle_at(),
+            wall_zones: default_forza_rev_limiter_wall_zones(),
+            curve: default_forza_rev_limiter_curve(),
+            body_low_weight: default_forza_rev_limiter_body_low_weight(),
+            body_high_weight: default_forza_rev_limiter_body_high_weight(),
+        }
+    }
+}
+
+impl ForzaRevLimiterTuningConfig {
+    pub(crate) fn normalized(mut self) -> Self {
+        self.threshold_ratio = finite_clamp(
+            self.threshold_ratio,
+            0.5,
+            1.0,
+            default_forza_rev_limiter_threshold_ratio(),
+        );
+        self.min_strength = finite_clamp(
+            self.min_strength,
+            0.0,
+            1.0,
+            default_forza_rev_limiter_min_strength(),
+        );
+        self.max_strength = finite_clamp(
+            self.max_strength,
+            self.min_strength,
+            1.0,
+            default_forza_rev_limiter_max_strength(),
+        );
+        self.frequency_hz = finite_clamp(
+            self.frequency_hz,
+            1.0,
+            80.0,
+            default_forza_rev_limiter_frequency_hz(),
+        );
+        self.wall_form_throttle_at = finite_clamp(
+            self.wall_form_throttle_at,
+            0.0,
+            1.0,
+            default_forza_rev_limiter_wall_form_throttle_at(),
+        );
+        self.wall_zones = finite_clamp(
+            self.wall_zones,
+            1.0,
+            8.0,
+            default_forza_rev_limiter_wall_zones(),
+        );
+        self.curve = finite_clamp(self.curve, 0.4, 4.0, default_forza_rev_limiter_curve());
+        self.body_low_weight = finite_clamp(
+            self.body_low_weight,
+            0.0,
+            1.5,
+            default_forza_rev_limiter_body_low_weight(),
+        );
+        self.body_high_weight = finite_clamp(
+            self.body_high_weight,
+            0.0,
+            1.5,
+            default_forza_rev_limiter_body_high_weight(),
+        );
+        self
+    }
+}
+
+pub(crate) fn default_forza_rev_limiter_threshold_ratio() -> f64 {
+    FORZA_REV_LIMIT_RATIO
+}
+
+pub(crate) fn default_forza_rev_limiter_min_strength() -> f64 {
+    FORZA_REV_LIMITER_PULSE_AMPLITUDE
+}
+
+pub(crate) fn default_forza_rev_limiter_max_strength() -> f64 {
+    FORZA_REV_LIMITER_PULSE_AMPLITUDE
+}
+
+pub(crate) fn default_forza_rev_limiter_frequency_hz() -> f64 {
+    FORZA_REV_LIMITER_FREQUENCY_HZ
+}
+
+pub(crate) fn default_forza_rev_limiter_wall_form_throttle_at() -> f64 {
+    FORZA_REV_LIMITER_WALL_FORM_THROTTLE_AT
+}
+
+pub(crate) fn default_forza_rev_limiter_wall_zones() -> f64 {
+    FORZA_REV_LIMITER_WALL_ZONES
+}
+
+pub(crate) fn default_forza_rev_limiter_curve() -> f64 {
+    1.0
+}
+
+pub(crate) fn default_forza_rev_limiter_body_low_weight() -> f64 {
+    0.20
+}
+
+pub(crate) fn default_forza_rev_limiter_body_high_weight() -> f64 {
+    0.80
 }
 
 impl ForzaEffectConfig {

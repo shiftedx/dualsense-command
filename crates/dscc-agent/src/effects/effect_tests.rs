@@ -113,31 +113,30 @@ pub(crate) fn brake_overtravel_wall_position(start: f64, end: f64) -> f64 {
     endstop_wall_position(start, end)
 }
 
-pub(crate) fn brake_overtravel_ramp_start(start: f64, wall: f64) -> f64 {
-    (wall - FORZA_BRAKE_OVERTRAVEL_RAMP_WIDTH).clamp(start, wall)
+pub(crate) fn throttle_overtravel_guard_active(end: f64, guard_min_end: f64) -> bool {
+    end >= guard_min_end.clamp(0.0, 1.0)
 }
 
-pub(crate) fn throttle_overtravel_guard_active(end: f64) -> bool {
-    end >= FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION
-}
-
-pub(crate) fn throttle_overtravel_wall_position(start: f64, end: f64) -> f64 {
-    if throttle_overtravel_guard_active(end) {
-        return end
-            .min(FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION)
-            .clamp(start, end);
+pub(crate) fn throttle_overtravel_wall_position(
+    start: f64,
+    end: f64,
+    wall_position: f64,
+    guard_min_end: f64,
+) -> f64 {
+    if throttle_overtravel_guard_active(end, guard_min_end) {
+        return end.min(wall_position.clamp(0.0, 1.0)).clamp(start, end);
     }
 
     endstop_wall_position(start, end)
 }
 
-pub(crate) fn throttle_overtravel_ramp_start(start: f64, wall: f64) -> f64 {
-    let ramp_start = wall - FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH;
+pub(crate) fn throttle_overtravel_ramp_start(start: f64, wall: f64, ramp_width: f64) -> f64 {
+    let ramp_start = wall - ramp_width.clamp(0.01, 0.80);
     ((ramp_start * 1000.0).round() / 1000.0).clamp(start, wall)
 }
 
-pub(crate) fn abs_brake_threshold_for_range(start: f64, end: f64) -> f64 {
-    let threshold = start + (end - start) * FORZA_ABS_RANGE_START_RATIO;
+pub(crate) fn abs_brake_threshold_for_range(start: f64, end: f64, ratio: f64) -> f64 {
+    let threshold = start + (end - start) * ratio.clamp(0.0, 1.0);
     threshold.clamp(start, end)
 }
 

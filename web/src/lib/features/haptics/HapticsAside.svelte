@@ -5,9 +5,13 @@
   import ProfileConsole from '../profiles/ProfileConsole.svelte';
   import type {
     AppSnapshot,
+    ForzaAbsTuningConfiguration,
     ForzaBodyRumbleMode,
     ForzaEffectConfiguration,
     ForzaEffectRoute,
+    ForzaRevLimiterTuningConfiguration,
+    ForzaShiftTuningConfiguration,
+    ForzaThrottleTuningConfiguration,
     ProfileSummary
   } from '../../types';
   import type { ForzaEffectMeta, LightbarColorTarget } from './hapticsModel';
@@ -54,6 +58,45 @@
   export let forzaEffectsById: ReadonlyMap<string, ForzaEffectConfiguration> = new Map();
   export let effectStatusById: ReadonlyMap<string, { state?: string }> = new Map();
   export let forzaBodyRumbleMode: ForzaBodyRumbleMode = 'native_passthrough';
+  export let forzaAbsTuning: ForzaAbsTuningConfiguration = {
+    mode: 'strong_pulse',
+    slipSource: 'auto_front_first',
+    slipThreshold: 0.68,
+    brakeThresholdRatio: 0.38,
+    minSpeedKmh: 12,
+    minStrength: 48 / 63,
+    maxStrength: 1,
+    frequencyHz: 34,
+    curve: 1
+  };
+  export let forzaThrottleTuning: ForzaThrottleTuningConfiguration = {
+    baselineForce: 3 / 255,
+    normalForce: 28 / 255,
+    endstopForce: 106 / 255,
+    endstopBoost: 3,
+    wallPosition: 0.8,
+    guardMinEnd: 0.8,
+    rampWidth: 0.2,
+    rampCurve: 2.4
+  };
+  export let forzaShiftTuning: ForzaShiftTuningConfiguration = {
+    wallFormAt: 0.15,
+    frequencyHz: 34,
+    wallZones: 4,
+    bodyLowWeight: 0.92,
+    bodyHighWeight: 0.84
+  };
+  export let forzaRevLimiterTuning: ForzaRevLimiterTuningConfiguration = {
+    thresholdRatio: 0.93,
+    minStrength: 18 / 63,
+    maxStrength: 18 / 63,
+    frequencyHz: 42,
+    wallFormThrottleAt: 0.6,
+    wallZones: 4,
+    curve: 1,
+    bodyLowWeight: 0.2,
+    bodyHighWeight: 0.8
+  };
   export let bodyRumbleModeOptions: BodyRumbleModeOption[] = [];
   export let forzaRoutes: RouteOption[] = [];
   export let forzaEffect: (id: string) => ForzaEffectConfiguration = (id) => ({
@@ -64,6 +107,18 @@
   });
   export let toggleAllForzaEffects: () => void = noop;
   export let setForzaBodyRumbleMode: (value: ForzaBodyRumbleMode) => void = noop as (value: ForzaBodyRumbleMode) => void;
+  export let updateForzaAbsTuning: (patch: Partial<ForzaAbsTuningConfiguration>) => void = noop as (
+    patch: Partial<ForzaAbsTuningConfiguration>
+  ) => void;
+  export let updateForzaThrottleTuning: (patch: Partial<ForzaThrottleTuningConfiguration>) => void = noop as (
+    patch: Partial<ForzaThrottleTuningConfiguration>
+  ) => void;
+  export let updateForzaShiftTuning: (patch: Partial<ForzaShiftTuningConfiguration>) => void = noop as (
+    patch: Partial<ForzaShiftTuningConfiguration>
+  ) => void;
+  export let updateForzaRevLimiterTuning: (patch: Partial<ForzaRevLimiterTuningConfiguration>) => void = noop as (
+    patch: Partial<ForzaRevLimiterTuningConfiguration>
+  ) => void;
   export let updateForzaEffect: (id: string, patch: Partial<ForzaEffectConfiguration>) => void = noop as (
     id: string,
     patch: Partial<ForzaEffectConfiguration>
@@ -150,11 +205,19 @@
       {forzaEffectsById}
       {effectStatusById}
       {forzaBodyRumbleMode}
+      {forzaAbsTuning}
+      {forzaThrottleTuning}
+      {forzaShiftTuning}
+      {forzaRevLimiterTuning}
       {bodyRumbleModeOptions}
       {forzaRoutes}
       {forzaEffect}
       {toggleAllForzaEffects}
       {setForzaBodyRumbleMode}
+      {updateForzaAbsTuning}
+      {updateForzaThrottleTuning}
+      {updateForzaShiftTuning}
+      {updateForzaRevLimiterTuning}
       {updateForzaEffect}
       {intensityTooltip}
       {routeTooltip}
