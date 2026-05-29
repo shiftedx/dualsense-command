@@ -203,7 +203,7 @@ pub struct ProfileSummary {
     pub game_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ControllerConfig {
     pub controller_id: String,
@@ -224,7 +224,7 @@ pub struct ControllerConfig {
     pub profile_assignments: Vec<ProfileAssignmentConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileConfig {
     #[serde(default)]
@@ -256,7 +256,7 @@ pub struct TriggerCurve(u16);
 
 impl TriggerCurve {
     pub(crate) const fn default_l2() -> Self {
-        Self(135)
+        Self(145)
     }
 
     pub(crate) const fn default_r2() -> Self {
@@ -313,7 +313,36 @@ pub(crate) fn default_r2_trigger_curve() -> TriggerCurve {
 }
 
 pub(crate) fn default_l2_trigger_curve_points() -> Vec<TriggerCurvePoint> {
-    trigger_curve_points_from_curve(TriggerCurve::default_l2())
+    vec![
+        TriggerCurvePoint {
+            input: 0,
+            output: 0,
+        },
+        TriggerCurvePoint {
+            input: 12,
+            output: 8,
+        },
+        TriggerCurvePoint {
+            input: 25,
+            output: 22,
+        },
+        TriggerCurvePoint {
+            input: 40,
+            output: 46,
+        },
+        TriggerCurvePoint {
+            input: 58,
+            output: 70,
+        },
+        TriggerCurvePoint {
+            input: 78,
+            output: 90,
+        },
+        TriggerCurvePoint {
+            input: 100,
+            output: 100,
+        },
+    ]
 }
 
 pub(crate) fn default_r2_trigger_curve_points() -> Vec<TriggerCurvePoint> {
@@ -485,13 +514,103 @@ impl<'de> Deserialize<'de> for TriggerConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ForzaTelemetryConfig {
     #[serde(default = "default_forza_body_rumble_mode")]
     pub body_rumble_mode: String,
     #[serde(default)]
     pub effects: Vec<ForzaEffectConfig>,
+    #[serde(default)]
+    pub abs: ForzaAbsTuningConfig,
+    #[serde(default)]
+    pub throttle: ForzaThrottleTuningConfig,
+    #[serde(default)]
+    pub shift: ForzaShiftTuningConfig,
+    #[serde(default)]
+    pub rev_limiter: ForzaRevLimiterTuningConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ForzaAbsTuningConfig {
+    #[serde(default = "default_forza_abs_mode")]
+    pub mode: String,
+    #[serde(default = "default_forza_abs_slip_source")]
+    pub slip_source: String,
+    #[serde(default = "default_forza_abs_slip_threshold")]
+    pub slip_threshold: f64,
+    #[serde(default = "default_forza_abs_brake_threshold_ratio")]
+    pub brake_threshold_ratio: f64,
+    #[serde(default = "default_forza_abs_min_speed_kmh")]
+    pub min_speed_kmh: f64,
+    #[serde(default = "default_forza_abs_min_strength")]
+    pub min_strength: f64,
+    #[serde(default = "default_forza_abs_max_strength")]
+    pub max_strength: f64,
+    #[serde(default = "default_forza_abs_frequency_hz")]
+    pub frequency_hz: f64,
+    #[serde(default = "default_forza_abs_curve")]
+    pub curve: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ForzaThrottleTuningConfig {
+    #[serde(default = "default_forza_throttle_baseline_force")]
+    pub baseline_force: f64,
+    #[serde(default = "default_forza_throttle_normal_force")]
+    pub normal_force: f64,
+    #[serde(default = "default_forza_throttle_endstop_force")]
+    pub endstop_force: f64,
+    #[serde(default = "default_forza_throttle_endstop_boost")]
+    pub endstop_boost: f64,
+    #[serde(default = "default_forza_throttle_wall_position")]
+    pub wall_position: f64,
+    #[serde(default = "default_forza_throttle_guard_min_end")]
+    pub guard_min_end: f64,
+    #[serde(default = "default_forza_throttle_ramp_width")]
+    pub ramp_width: f64,
+    #[serde(default = "default_forza_throttle_ramp_curve")]
+    pub ramp_curve: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ForzaShiftTuningConfig {
+    #[serde(default = "default_forza_shift_wall_form_at")]
+    pub wall_form_at: f64,
+    #[serde(default = "default_forza_shift_frequency_hz")]
+    pub frequency_hz: f64,
+    #[serde(default = "default_forza_shift_wall_zones")]
+    pub wall_zones: f64,
+    #[serde(default = "default_forza_shift_body_low_weight")]
+    pub body_low_weight: f64,
+    #[serde(default = "default_forza_shift_body_high_weight")]
+    pub body_high_weight: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ForzaRevLimiterTuningConfig {
+    #[serde(default = "default_forza_rev_limiter_threshold_ratio")]
+    pub threshold_ratio: f64,
+    #[serde(default = "default_forza_rev_limiter_min_strength")]
+    pub min_strength: f64,
+    #[serde(default = "default_forza_rev_limiter_max_strength")]
+    pub max_strength: f64,
+    #[serde(default = "default_forza_rev_limiter_frequency_hz")]
+    pub frequency_hz: f64,
+    #[serde(default = "default_forza_rev_limiter_wall_form_throttle_at")]
+    pub wall_form_throttle_at: f64,
+    #[serde(default = "default_forza_rev_limiter_wall_zones")]
+    pub wall_zones: f64,
+    #[serde(default = "default_forza_rev_limiter_curve")]
+    pub curve: f64,
+    #[serde(default = "default_forza_rev_limiter_body_low_weight")]
+    pub body_low_weight: f64,
+    #[serde(default = "default_forza_rev_limiter_body_high_weight")]
+    pub body_high_weight: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -647,7 +766,7 @@ pub struct UpdateProfileRequest {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExportedProfile {
     pub schema: String,
     pub id: String,

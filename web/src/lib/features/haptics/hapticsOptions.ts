@@ -1,4 +1,4 @@
-import type { ForzaBodyRumbleMode, ForzaEffectRoute } from '../../types';
+import type { ForzaAbsMode, ForzaAbsSlipSource, ForzaBodyRumbleMode, ForzaEffectRoute } from '../../types';
 import type { ForzaEffectMeta } from './hapticsModel';
 export const forzaRoutes: Array<{ value: ForzaEffectRoute; label: string }> = [
     { value: 'body_both', label: 'Both grips' },
@@ -13,17 +13,18 @@ export const forzaRoutes: Array<{ value: ForzaEffectRoute; label: string }> = [
   ];
 export const FORZA_SHIFT_THUMP_DEFAULT_INTENSITY = 255;
 // Mirrors the backend Forza runtime profile so the graph shows felt force, not just exponent shape.
-export const FORZA_BRAKE_BASELINE_FORCE = 42 / 255;
-export const FORZA_BRAKE_NORMAL_FORCE = 164 / 255;
-export const FORZA_BRAKE_ENDSTOP_FORCE = 238 / 255;
+export const FORZA_BRAKE_BASELINE_FORCE = 30 / 255;
+export const FORZA_BRAKE_NORMAL_FORCE = 205 / 255;
+export const FORZA_BRAKE_ENDSTOP_FORCE = 255 / 255;
 export const FORZA_THROTTLE_BASELINE_FORCE = 3 / 255;
 export const FORZA_THROTTLE_NORMAL_FORCE = 28 / 255;
 export const FORZA_THROTTLE_ENDSTOP_FORCE = 106 / 255;
 export const FORZA_ENDSTOP_WALL_OFFSET = 0.03;
-export const FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET = 0.28;
-export const FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION = 0.70;
-export const FORZA_BRAKE_OVERTRAVEL_RAMP_WIDTH = 0.16;
-export const FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE = 2.0;
+export const FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET = 0.52;
+export const FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION = 0.48;
+export const FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE = 0.8;
+export const FORZA_BRAKE_FINAL_STOP_ARM_OFFSET = 0.06;
+export const FORZA_BRAKE_FINAL_STOP_OFFSET = 0.20;
 export const FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION = 0.80;
 export const FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION = 0.80;
 export const FORZA_BRAKE_ENDSTOP_FORCE_BOOST = 1.25;
@@ -114,6 +115,44 @@ export const bodyRumbleModeOptions: Array<{ value: ForzaBodyRumbleMode; label: s
     }
   ];
 
+export const forzaAbsModeOptions: Array<{ value: ForzaAbsMode; label: string; badge: string; help: string }> = [
+    {
+      value: 'strong_pulse',
+      label: 'Strong pulse',
+      badge: 'Direct',
+      help: 'Uses direct trigger pulse output for a clear ABS chatter when brake slip crosses the threshold.'
+    },
+    {
+      value: 'fine_flutter',
+      label: 'Fine flutter',
+      badge: 'Wall-form',
+      help: 'Uses the wall-form pulse mode for a sharper but more segmented ABS feel on some controllers.'
+    }
+  ];
+
+export const forzaAbsSlipSourceOptions: Array<{ value: ForzaAbsSlipSource; label: string; help: string }> = [
+    {
+      value: 'auto_front_first',
+      label: 'Auto',
+      help: 'Watches front slip first, then tire slip ratio and wheel slip as fallbacks.'
+    },
+    {
+      value: 'front',
+      label: 'Front slip',
+      help: 'Only uses front wheel slip for ABS activation.'
+    },
+    {
+      value: 'tire',
+      label: 'Tire ratio',
+      help: 'Only uses normalized tire slip ratio for ABS activation.'
+    },
+    {
+      value: 'wheel',
+      label: 'Wheel slip',
+      help: 'Only uses maximum wheel slip for ABS activation.'
+    }
+  ];
+
 export const forzaEffectMetas: ForzaEffectMeta[] = [
     {
       id: 'brake_resistance',
@@ -131,7 +170,7 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
       group: 'Trigger',
       defaultIntensity: 100,
       defaultRoute: 'l2',
-      help: 'Adds a quick L2 pulse when front tires lose grip under braking. It is useful for sensing ABS or front lockup without relying on screen or audio cues.'
+      help: 'Adds a strong, fast L2 trigger pulse when front tires lose grip under braking. It is tuned to be obvious enough to read as ABS modulation during hard braking.'
     },
     {
       id: 'handbrake_wall',

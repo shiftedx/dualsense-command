@@ -211,7 +211,9 @@
   .dm-global-feel-controls,
   .dm-pattern-grid,
   .dm-vibration-mode-grid,
-  .dm-body-mode-toggle {
+  .dm-body-mode-toggle,
+  .dm-effect-advanced-grid,
+  .dm-channel-signal-strip {
     grid-template-columns: 1fr;
   }
 

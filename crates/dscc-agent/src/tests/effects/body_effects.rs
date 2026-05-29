@@ -278,3 +278,61 @@ fn forza_shift_thump_uses_plain_pulse_near_idle() {
         other => panic!("expected plain shift pulse below wall threshold, got {other:?}"),
     }
 }
+
+#[test]
+fn forza_shift_advanced_tuning_moves_wall_form_threshold_and_frequency() {
+    let mut config = ControllerConfig::default_for("edge-forza", "DualSense Edge");
+    let shift = config
+        .forza
+        .effects
+        .iter_mut()
+        .find(|effect| effect.id == "gear_shift_thump")
+        .expect("default shift tuning exists");
+    shift.enabled = true;
+    shift.intensity = 100;
+    shift.route = "r2".to_string();
+    config.forza.shift.wall_form_at = 0.80;
+    config.forza.shift.frequency_hz = 48.0;
+    config.forza.shift.wall_zones = 6.0;
+    let profile = forza_runtime_profile("forza-horizon", "Forza", Some(&config));
+
+    let snapshot = |throttle| {
+        SignalSnapshot::from_updates([
+            signal_update("game.state", "driving"),
+            signal_update("input.throttle", throttle),
+            signal_update("input.brake", 0.0),
+            signal_update("input.handbrake", 0.0),
+            signal_update("vehicle.rpm_ratio", 0.70),
+            signal_update("vehicle.speed_kmh", 118.0),
+            signal_update("tire.slip_ratio.max", 0.0),
+            signal_update("wheel.slip.max", 0.0),
+            signal_update("drivetrain.shift_event", "shift"),
+        ])
+    };
+
+    let below_wall = EffectEngine::new().evaluate(&profile, &snapshot(0.70));
+    match below_wall.r2 {
+        TriggerOutput::Pulse {
+            amplitude,
+            frequency_hz,
+        } => {
+            assert!((frequency_hz - 48.0).abs() < f64::EPSILON);
+            assert!((0.99..=1.0).contains(&amplitude));
+        }
+        other => panic!("expected tuned plain shift pulse below wall threshold, got {other:?}"),
+    }
+
+    let above_wall = EffectEngine::new().evaluate(&profile, &snapshot(0.85));
+    match above_wall.r2 {
+        TriggerOutput::PulseAb {
+            strength,
+            frequency_hz,
+            wall_zones,
+        } => {
+            assert!((frequency_hz - 48.0).abs() < f64::EPSILON);
+            assert_eq!(wall_zones, 6);
+            assert!((0.99..=1.0).contains(&strength));
+        }
+        other => panic!("expected tuned wall-form shift pulse above threshold, got {other:?}"),
+    }
+}

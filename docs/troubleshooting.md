@@ -138,8 +138,10 @@ The fastest bug report is one with a sanitized support bundle.
 
 1. Open DSCC.
 2. Open the **Support** panel.
-3. Choose **Copy JSON** or **Export JSON** for the sanitized support bundle.
-4. Attach it to your GitHub issue, or paste it if it is short.
+3. Use **GitHub** to open the project repository when you need issues,
+   discussions, releases, or docs.
+4. Choose **Copy JSON** or **Export JSON** for the sanitized support bundle.
+5. Attach it to your GitHub issue, or paste it if it is short.
 
 If the web UI will not open but the local agent is running, run:
 

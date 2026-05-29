@@ -52,6 +52,10 @@
   gap: 8px;
 }
 
+.dm-support-actions a.dm-mini-button {
+  text-decoration: none;
+}
+
 .dm-support-message {
   grid-column: 1 / -1;
   color: #D8ECFF;

@@ -1,3 +1,51 @@
+# DualSense Command Center 0.3.5
+
+Release date: 2026-05-29
+
+0.3.5 expands game-profile haptic tuning while keeping the Standard installer
+lean and local-first.
+
+## Advanced Telemetry Haptics
+
+- Added advanced ABS controls for threshold, flutter strength, frequency, wall
+  shape, brake-speed scaling, and body blend.
+- Added advanced throttle controls for baseline force, ramp force, end-stop
+  force, overtravel guard, and response curve.
+- Added advanced shift-thump controls for wall trigger point, kick frequency,
+  wall zones, and body low/high motor blend.
+- Added advanced rev-limiter controls for RPM threshold, buzz strength range,
+  buzz frequency, wall trigger point, wall zones, ramp curve, and body blend.
+- Frontend trigger visuals and backend haptic settings now share a parity guard
+  so the graph and saved runtime values stay aligned.
+
+## Support And Release Trust
+
+- The in-app **Support** panel now includes a direct GitHub repository link
+  alongside the sanitized support-bundle copy/export actions.
+- README and troubleshooting docs now point users to the same repo, issues,
+  discussions, release, and support-bundle flow.
+- The Standard MSI remains the recommended installer for most users. Bridge
+  installers remain opt-in for non-Steam DSCC Input Bridge testing.
+- The MSI remains unsigned. Verify downloads from GitHub Releases with the
+  published SHA256 files.
+
+## Validation Gate
+
+This release was cut after a clean run of:
+
+```powershell
+cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
+cargo +stable-x86_64-pc-windows-gnu test --workspace
+cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warnings
+npm.cmd --prefix web run typecheck
+npm.cmd --prefix web run build
+npm.cmd --prefix web run test:haptics-graph
+npm.cmd --prefix web run test:button-map
+npm.cmd --prefix web run test:release-size
+npm.cmd --prefix web run test:source-audit
+npm.cmd --prefix web run test:visual-smoke
+```
+
 # DualSense Command Center 0.3.4
 
 Release date: 2026-05-27

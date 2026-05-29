@@ -1,17 +1,18 @@
 {
   "name": "dualsense-command-center-web",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "dev:mock": "vite --host 127.0.0.1 --mode mock",
-    "check": "npm run typecheck && npm run test:source-audit && npm run test:button-map && npm run build && npm run test:release-size && npm run test:visual-smoke",
+    "check": "npm run typecheck && npm run test:source-audit && npm run test:button-map && npm run test:haptics-graph && npm run build && npm run test:release-size && npm run test:visual-smoke",
     "build": "vite build",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json",
     "preview": "vite preview --host 127.0.0.1",
     "test:button-map": "node --experimental-strip-types scripts/button-mapping-p95.mjs",
+    "test:haptics-graph": "node --experimental-strip-types scripts/haptics-graph-parity.mjs",
     "test:release-size": "node scripts/release-web-budget.mjs",
     "test:source-audit": "node scripts/source-audit.mjs",
     "test:visual-smoke": "node scripts/visual-smoke.mjs"

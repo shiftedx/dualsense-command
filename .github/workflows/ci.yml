@@ -50,6 +50,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:source-audit
       - run: npm run test:button-map
+      - run: npm run test:haptics-graph
       - run: npm run build
       - run: npm run test:release-size
       - run: npm run test:visual-smoke
