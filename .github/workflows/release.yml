@@ -72,7 +72,7 @@ jobs:
       - run: npm run build
       - run: npm run test:release-size
       - run: npm run test:visual-smoke
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: release-web-dist
           path: web/dist/**
@@ -232,7 +232,7 @@ jobs:
               "$hash  $($_.Name)"
             } |
             Set-Content -LiteralPath $checksumPath -Encoding ASCII
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-unsigned-beta
           path: target/release-artifacts/windows/*
@@ -316,7 +316,7 @@ jobs:
             cd "$artifact_root"
             sha256sum * > SHA256SUMS-linux.txt
           )
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-bundled-beta
           path: target/release-artifacts/linux/*
