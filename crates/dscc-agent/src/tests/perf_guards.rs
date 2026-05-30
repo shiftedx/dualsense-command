@@ -151,10 +151,20 @@ fn telemetry_materialization_perf_guard() {
             black_box(1.0),
             black_box(&config.trigger.vibration_mode),
         ));
-        black_box(forza_lightbar_output(
+        black_box(forza_lightbar_output(black_box(Some(&config))));
+        black_box(forza_redline_light_output(
             black_box(Some(&config)),
             black_box(&snapshot),
             black_box(1.0),
+            black_box(
+                config
+                    .forza
+                    .rev_limiter
+                    .clone()
+                    .normalized()
+                    .threshold_ratio,
+            ),
+            black_box(true),
         ));
     }
     assert_under(

@@ -218,7 +218,7 @@
 <div class="dm-rgb-console" aria-label="RGB output controls">
   <div class="dm-console-title">
     <span>RGB Controls</span>
-    <strong>{selectedTuningScope === 'global' ? 'Lightbar' : 'Lightbar & RPM'}</strong>
+    <strong>{selectedTuningScope === 'global' ? 'Lightbar' : 'Lightbar & Redline'}</strong>
   </div>
   <div class="dm-led-controls">
     <div class="dm-led-row">
@@ -309,7 +309,7 @@
     </div>
     {#if selectedTuningScope === 'game'}
       <div class="dm-led-row">
-        <span>Max RPM</span>
+        <span>Redline blink</span>
         <div class="ops-lightbar-popover-wrap">
           <button
             bind:this={rpmPillEl}
@@ -319,14 +319,14 @@
             class:disabled={!lightbarEnabled}
             class:open={pickerOpen && pickerTarget === 'rpm'}
             disabled={!lightbarEnabled}
-            aria-label="Max RPM indicator color"
+            aria-label="Redline blink color"
             aria-expanded={pickerOpen && pickerTarget === 'rpm'}
             aria-haspopup="dialog"
             style="--lb-color: {rpmColor}; --lb-alpha: {lightbarEnabled ? lightbarBrightness / 100 : 0};"
             onclick={() => togglePicker('rpm')}
           ><span class="ops-lightbar-glow" aria-hidden="true"></span></button>
           {#if pickerOpen && pickerTarget === 'rpm'}
-            <div bind:this={pickerEl} class="ops-color-popover" role="dialog" aria-label="Max RPM color picker">
+            <div bind:this={pickerEl} class="ops-color-popover" role="dialog" aria-label="Redline blink color picker">
               <div
                 class="ops-color-sv"
                 style="background-color: hsl({pickerHue}, 100%, 50%);"
@@ -381,7 +381,7 @@
           max="100"
           min="0"
           type="range"
-          aria-label="Max RPM indicator brightness"
+          aria-label="Redline blink brightness"
           oninput={(event) => setLightbarBrightness(event.currentTarget.valueAsNumber)}
         />
         <code>{normalizeTriggerPercent(lightbarBrightness).toString().padStart(3, '0')}</code>
@@ -389,7 +389,7 @@
           class:active={lightbarEnabled}
           class="dm-toggle"
           type="button"
-          aria-label="Toggle Max RPM indicator"
+          aria-label="Toggle redline blink"
           aria-pressed={lightbarEnabled}
           onclick={() => setLightbarEnabled(!lightbarEnabled)}
         ><span></span></button>

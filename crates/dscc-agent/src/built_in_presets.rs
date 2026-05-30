@@ -63,7 +63,7 @@ pub(crate) fn forza_horizon_preset() -> ForzaTelemetryConfig {
         ("tire_slip", false, 65, "body_right"),
         ("puddle_drag", false, 50, "body_left"),
         ("suspension_impact", false, 70, "body_both"),
-        ("rpm_leds", false, 100, "light_led"),
+        ("rpm_leds", true, 100, "light_led"),
     ];
 
     let effects = entries
@@ -79,7 +79,7 @@ pub(crate) fn forza_horizon_preset() -> ForzaTelemetryConfig {
     ForzaTelemetryConfig {
         body_rumble_mode: default_forza_body_rumble_mode(),
         effects,
-        abs: ForzaAbsTuningConfig::default(),
+        abs: forza_horizon_abs_tuning(),
         throttle: ForzaThrottleTuningConfig::default(),
         shift: ForzaShiftTuningConfig::default(),
         rev_limiter: ForzaRevLimiterTuningConfig::default(),
@@ -91,7 +91,8 @@ pub(crate) fn forza_horizon_preset() -> ForzaTelemetryConfig {
 /// preset, then adds low-to-mid body layers for slip, curbs, puddles, and
 /// suspension. Sustained tire slip stays restrained so it does not blur the
 /// controller, while suspension impact is treated as a stronger event cue for
-/// landing thumps. Gear LEDs and the RPM bar stay off unless the user opts in.
+/// landing thumps. The redline blink stays on because it is event-only and
+/// avoids the old constant gear/RPM light show.
 pub(crate) fn forza_horizon_immersive_preset() -> ForzaTelemetryConfig {
     // (id, enabled, intensity 0..=255, route)
     //
@@ -100,7 +101,7 @@ pub(crate) fn forza_horizon_immersive_preset() -> ForzaTelemetryConfig {
     //   - Puddle drag -> left grip, so water feels different from throttle load.
     //   - Suspension -> both grips with enough headroom to stand out on landings.
     //   - Rumble strips -> both grips, but below shift and impact events.
-    //   - RPM LEDs -> disabled; visual gear/RPM overlays should be opt-in.
+    //   - Redline blink -> enabled; it only fires near shift RPM.
     let entries: &[(&str, bool, u8, &str)] = &[
         ("brake_resistance", true, 100, "l2"),
         ("throttle_resistance", true, 100, "r2"),
@@ -118,7 +119,7 @@ pub(crate) fn forza_horizon_immersive_preset() -> ForzaTelemetryConfig {
         ("tire_slip", true, 30, "body_right"),
         ("puddle_drag", true, 32, "body_left"),
         ("suspension_impact", true, 82, "body_both"),
-        ("rpm_leds", false, 100, "light_led"),
+        ("rpm_leds", true, 100, "light_led"),
     ];
 
     let effects = entries
@@ -134,7 +135,7 @@ pub(crate) fn forza_horizon_immersive_preset() -> ForzaTelemetryConfig {
     ForzaTelemetryConfig {
         body_rumble_mode: default_forza_body_rumble_mode(),
         effects,
-        abs: ForzaAbsTuningConfig::default(),
+        abs: forza_horizon_immersive_abs_tuning(),
         throttle: ForzaThrottleTuningConfig::default(),
         shift: ForzaShiftTuningConfig::default(),
         rev_limiter: ForzaRevLimiterTuningConfig::default(),
@@ -162,7 +163,7 @@ pub(crate) fn assetto_corsa_rally_preset() -> ForzaTelemetryConfig {
         ("tire_slip", true, 62, "body_right"),
         ("puddle_drag", false, 28, "body_left"),
         ("suspension_impact", true, 64, "body_both"),
-        ("rpm_leds", false, 100, "light_led"),
+        ("rpm_leds", true, 100, "light_led"),
     ];
 
     let effects = entries
@@ -203,6 +204,36 @@ pub(crate) fn forza_horizon_trigger_preset() -> TriggerConfig {
         intensity: "Strong (Standard)".to_string(),
         vibration: "Medium".to_string(),
         vibration_mode: "Balanced".to_string(),
+    }
+    .normalized()
+}
+
+fn forza_horizon_abs_tuning() -> ForzaAbsTuningConfig {
+    ForzaAbsTuningConfig {
+        mode: "strong_pulse".to_string(),
+        slip_source: "auto_front_first".to_string(),
+        slip_threshold: 0.58,
+        brake_threshold_ratio: 0.28,
+        min_speed_kmh: 8.0,
+        min_strength: 0.84,
+        max_strength: 1.0,
+        frequency_hz: 30.0,
+        curve: 0.65,
+    }
+    .normalized()
+}
+
+fn forza_horizon_immersive_abs_tuning() -> ForzaAbsTuningConfig {
+    ForzaAbsTuningConfig {
+        mode: "strong_pulse".to_string(),
+        slip_source: "auto_front_first".to_string(),
+        slip_threshold: 0.50,
+        brake_threshold_ratio: 0.24,
+        min_speed_kmh: 6.0,
+        min_strength: 0.95,
+        max_strength: 1.0,
+        frequency_hz: 26.0,
+        curve: 0.55,
     }
     .normalized()
 }

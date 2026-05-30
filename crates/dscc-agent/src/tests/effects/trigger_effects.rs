@@ -60,8 +60,8 @@ fn forza_trigger_resistance_uses_tensioned_throttle_curve() {
         } => {
             assert!((start_position - 0.06).abs() < f64::EPSILON);
             assert!(
-                (0.09..0.11).contains(&strength),
-                "idle brake should have light but noticeable pedal tension, got {strength}"
+                (0.24..0.27).contains(&strength),
+                "idle brake should have a firm preload before pedal travel builds, got {strength}"
             );
         }
         other => panic!("expected baseline brake tension, got {other:?}"),
@@ -94,10 +94,10 @@ fn forza_trigger_resistance_uses_tensioned_throttle_curve() {
             start_position,
             strength,
         } => {
-            assert!((start_position - 0.06).abs() < f64::EPSILON);
+            assert!((start_position - 0.80).abs() < f64::EPSILON);
             assert!(
-                (0.88..0.93).contains(&strength),
-                "partial brake should build smoothly into a very firm pedal load, got {strength}"
+                (0.99..=1.0).contains(&strength),
+                "partial brake should hold a throttle-like wall through the final travel, got {strength}"
             );
         }
         other => panic!("expected brake resistance, got {other:?}"),
@@ -303,7 +303,7 @@ fn forza_throttle_advanced_tuning_moves_ramp_and_force_levels() {
 }
 
 #[test]
-fn forza_brake_load_stays_continuous_near_high_end_point() {
+fn forza_brake_load_uses_global_wall_in_final_travel() {
     let mut config = forza_horizon_controller_config();
     config.trigger.l2_to = 90;
     let profile = forza_runtime_profile("forza-horizon", "Forza", Some(&config));
@@ -330,7 +330,7 @@ fn forza_brake_load_stays_continuous_near_high_end_point() {
         } => {
             assert!((start_position - 0.06).abs() < f64::EPSILON);
             assert!(
-                (0.64..0.71).contains(&strength),
+                (0.84..0.87).contains(&strength),
                 "brake should already have clear mid-pedal force before the end-load ramp, got {strength}"
             );
         }
@@ -343,13 +343,13 @@ fn forza_brake_load_stays_continuous_near_high_end_point() {
             start_position,
             strength,
         } => {
-            assert!((start_position - 0.06).abs() < f64::EPSILON);
+            assert!((start_position - 0.70).abs() < f64::EPSILON);
             assert!(
-                (0.95..0.98).contains(&strength),
-                "brake should get heavy near the end without a sudden start-position bump, got {strength}"
+                (0.99..=1.0).contains(&strength),
+                "brake should hold a throttle-like wall through the final travel, got {strength}"
             );
         }
-        other => panic!("expected continuous heavy brake load, got {other:?}"),
+        other => panic!("expected brake final-travel wall, got {other:?}"),
     }
 
     let full = EffectEngine::new().evaluate(&profile, &snapshot(0.94));

@@ -39,7 +39,7 @@ pub(crate) fn apply_forza_output_enhancements(
 ) {
     if !telemetry_live || snapshot.text("game.state") != Some("driving") {
         output.rumble = None;
-        output.player_leds = None;
+        output.player_leds = Some(PlayerLedsOutput { count: 0 });
         return;
     }
 
@@ -60,20 +60,23 @@ pub(crate) fn apply_forza_output_enhancements(
     }
 
     if config.map(|config| config.lightbar.enabled).unwrap_or(true) {
-        let rpm_leds = forza.effect("rpm_leds");
-        let rpm_led_scalar = if rpm_leds.route == "light_led" {
-            rpm_leds.scalar()
+        let redline_blink = forza.effect("rpm_leds");
+        let redline_blink_scalar = if redline_blink.route == "light_led" {
+            redline_blink.scalar()
         } else {
             0.0
         };
-        output.lightbar = Some(forza_lightbar_output(config, snapshot, rpm_led_scalar));
-        output.player_leds = if rpm_led_scalar > 0.0 {
-            Some(PlayerLedsOutput {
-                count: forza_gear_player_led_count(snapshot),
-            })
-        } else {
-            None
-        };
+        let redline = forza_redline_light_output(
+            config,
+            snapshot,
+            redline_blink_scalar,
+            forza.rev_limiter.normalized().threshold_ratio,
+            forza_redline_blink_on(current_timestamp_millis()),
+        );
+        output.lightbar = Some(redline.lightbar);
+        output.player_leds = redline.player_leds;
+    } else {
+        output.player_leds = Some(PlayerLedsOutput { count: 0 });
     }
 }
 
@@ -248,46 +251,55 @@ fn add_forza_rumble_component(
     *high += signal * high_weight * high_mix;
 }
 
-pub(crate) fn forza_lightbar_output(
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ForzaRedlineLightOutput {
+    pub(crate) lightbar: LightbarOutput,
+    pub(crate) player_leds: Option<PlayerLedsOutput>,
+}
+
+pub(crate) fn forza_lightbar_output(config: Option<&ControllerConfig>) -> LightbarOutput {
+    let configured = config
+        .map(|config| config.lightbar.clone().normalized())
+        .unwrap_or_default();
+    LightbarOutput {
+        color: configured.rgb(),
+        brightness: clamp_unit(f64::from(configured.brightness) / 100.0),
+    }
+}
+
+pub(crate) fn forza_redline_light_output(
     config: Option<&ControllerConfig>,
     snapshot: &SignalSnapshot,
-    rpm_led_scalar: f64,
-) -> LightbarOutput {
+    redline_blink_scalar: f64,
+    redline_threshold: f64,
+    blink_on: bool,
+) -> ForzaRedlineLightOutput {
     let configured = config
         .map(|config| config.lightbar.clone().normalized())
         .unwrap_or_default();
     let rpm = signal_unit_value(snapshot, "vehicle.rpm_ratio");
-    let base = configured.rgb();
-    let redline = configured.rpm_rgb();
-    let rpm_blend = clamp_unit(rpm * rpm_led_scalar);
-    let color = blend_rgb(base, redline, rpm_blend);
-    let brightness =
-        clamp_unit(f64::from(configured.brightness) / 100.0 + rpm * 0.12 * rpm_led_scalar);
+    let mut lightbar = forza_lightbar_output(config);
 
-    LightbarOutput { color, brightness }
-}
-
-fn blend_rgb(from: RgbColor, to: RgbColor, amount: f64) -> RgbColor {
-    fn blend_channel(from: u8, to: u8, amount: f64) -> u8 {
-        (f64::from(from) + (f64::from(to) - f64::from(from)) * amount)
-            .round()
-            .clamp(0.0, 255.0) as u8
+    let redline_active =
+        redline_blink_scalar > 0.0 && rpm >= redline_threshold.clamp(0.0, 1.0) && blink_on;
+    if redline_active {
+        lightbar.color = configured.rpm_rgb();
     }
 
-    let amount = clamp_unit(amount);
-    RgbColor {
-        red: blend_channel(from.red, to.red, amount),
-        green: blend_channel(from.green, to.green, amount),
-        blue: blend_channel(from.blue, to.blue, amount),
+    ForzaRedlineLightOutput {
+        lightbar,
+        player_leds: Some(PlayerLedsOutput {
+            count: if redline_active {
+                FORZA_REDLINE_PLAYER_LED_COUNT
+            } else {
+                0
+            },
+        }),
     }
 }
 
-pub(crate) fn forza_gear_player_led_count(snapshot: &SignalSnapshot) -> u8 {
-    snapshot
-        .number("drivetrain.gear")
-        .and_then(signal_gear_to_u8)
-        .unwrap_or_default()
-        .clamp(0, 5)
+pub(crate) fn forza_redline_blink_on(now_ms: u64) -> bool {
+    (now_ms / FORZA_REDLINE_BLINK_HALF_PERIOD_MS) % 2 == 0
 }
 
 fn signal_unit_value(snapshot: &SignalSnapshot, name: &str) -> f64 {

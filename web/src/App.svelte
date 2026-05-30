@@ -2770,7 +2770,7 @@
   };
 
   const previewLightbar = async () => previewLightbarColor(lightbarColor, 'Lightbar');
-  const previewRpmColor = async () => previewLightbarColor(rpmColor, 'Max RPM');
+  const previewRpmColor = async () => previewLightbarColor(rpmColor, 'Redline Blink');
 
   const startAppRuntime = () => {
     if (typeof window === 'undefined' || appRuntime?.isStarted()) return;
@@ -2811,12 +2811,9 @@
     return stopAppRuntime;
   });
 
-  // Live trigger polling only feeds the haptics curve cursor (l2LivePress /
-  // r2LivePress). On the Games tab and Button Mapping tab those values aren't
-  // consumed, so running the 25Hz poll there just thrashes the renderer and
-  // makes unrelated clicks (e.g. the controller card's Show details) feel
-  // laggy. Restrict polling to the haptics view; the base-feel test runs
-  // inside that view too so its needs are covered.
+  // Live trigger polling feeds the haptics curve cursor and the base-feel test.
+  // It is intentionally limited to the visible Haptics view so inactive routes
+  // do not spend the 25Hz input budget or trigger extra DOM work.
   $: if (controller?.id && activeView === 'haptics') {
     startTriggerInputPolling();
   } else {
