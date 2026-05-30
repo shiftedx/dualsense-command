@@ -10,7 +10,7 @@ test-mocks = ["dscc-device/test-mocks", "dscc-virtual-output/test-mocks"]
 
 [dependencies]
 anyhow = "1"
-axum = { version = "0.7", features = ["json", "ws"] }
+axum = { version = "0.8", features = ["json", "ws"] }
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 directories = "6"
 dscc-adapters = { workspace = true }
