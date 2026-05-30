@@ -67,11 +67,11 @@ export function defaultTriggerCurvePoints(side: 'l2' | 'r2'): TriggerCurvePoint[
   if (side === 'r2') return triggerCurvePointsFromCurve(defaultTriggerCurve(side));
   return [
     { input: 0, output: 0 },
-    { input: 12, output: 8 },
-    { input: 25, output: 22 },
-    { input: 40, output: 46 },
-    { input: 58, output: 70 },
-    { input: 78, output: 90 },
+    { input: 12, output: 18 },
+    { input: 25, output: 44 },
+    { input: 40, output: 68 },
+    { input: 58, output: 86 },
+    { input: 78, output: 96 },
     { input: 100, output: 100 }
   ];
 }

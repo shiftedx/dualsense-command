@@ -47,7 +47,7 @@ async fn detected_forza_auto_loads_profile_without_ui_apply() {
 
     assert!(effect_enabled("abs_slip_pulse"));
     assert!(effect_enabled("gear_shift_thump"));
-    assert!(!effect_enabled("rpm_leds"));
+    assert!(effect_enabled("rpm_leds"));
     assert!(effect_enabled("road_texture"));
     assert_eq!(config.trigger.l2_from, 6);
     assert_eq!(config.trigger.r2_from, 4);
@@ -106,7 +106,7 @@ async fn cleared_forza_detection_unloads_auto_profile() {
 
     assert!(effect_enabled("abs_slip_pulse"));
     assert!(effect_enabled("gear_shift_thump"));
-    assert!(!effect_enabled("rpm_leds"));
+    assert!(effect_enabled("rpm_leds"));
     assert!(effect_enabled("road_texture"));
     assert!(effect_enabled("brake_resistance"));
 }

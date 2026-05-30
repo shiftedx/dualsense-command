@@ -1,22 +1,38 @@
 # DualSense Command Center 0.3.5
 
-Release date: 2026-05-29
+Release date: 2026-05-30
 
-0.3.5 expands game-profile haptic tuning while keeping the Standard installer
-lean and local-first.
+0.3.5 tunes L2 braking, adds Jlu's redline blink request, and keeps live
+controller visuals active only when the UI needs them.
 
-## Advanced Telemetry Haptics
+## Brake, ABS, And Throttle Feel
 
-- Added advanced ABS controls for threshold, flutter strength, frequency, wall
-  shape, brake-speed scaling, and body blend.
-- Added advanced throttle controls for baseline force, ramp force, end-stop
+- DSCC increases L2 brake resistance across the full pull, with a stronger
+  end-range ramp for every profile.
+- DSCC makes ABS feedback stronger in the Standard immersive tune.
+- DSCC adds advanced throttle controls for baseline force, ramp force, end-stop
   force, overtravel guard, and response curve.
-- Added advanced shift-thump controls for wall trigger point, kick frequency,
+- DSCC adds advanced ABS controls for threshold, flutter strength, frequency, wall
+  shape, brake-speed scaling, and body blend.
+- DSCC adds advanced shift-thump controls for wall trigger point, kick frequency,
   wall zones, and body low/high motor blend.
-- Added advanced rev-limiter controls for RPM threshold, buzz strength range,
+- DSCC adds advanced rev-limiter controls for RPM threshold, buzz strength range,
   buzz frequency, wall trigger point, wall zones, ramp curve, and body blend.
-- Frontend trigger visuals and backend haptic settings now share a parity guard
-  so the graph and saved runtime values stay aligned.
+
+## Redline Lighting
+
+- DSCC replaces the continuous RPM lightbar with a blinking redline alert.
+- DSCC blinks player LEDs at redline for a clearer shift cue.
+- Thanks to **Jlu** for recommending the blinking RPM cue.
+
+## UI Responsiveness
+
+- Trigger curve live markers update on browser animation frames and stop outside
+  the visible Haptics view or active base-feel test.
+- Controllers live input coalesces stick, trigger, and button updates to the
+  browser frame loop and ignores stale route/controller responses.
+- The haptics graph parity guard keeps trigger visuals aligned with backend
+  runtime math.
 
 ## Support And Release Trust
 
@@ -31,7 +47,7 @@ lean and local-first.
 
 ## Validation Gate
 
-This release was cut after a clean run of:
+This release passed:
 
 ```powershell
 cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check

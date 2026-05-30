@@ -156,6 +156,19 @@ fn trigger_config_derives_point_arrays_from_ratio_curves() {
 }
 
 #[test]
+fn trigger_config_migrates_previous_soft_default_brake_curve() {
+    let trigger = TriggerConfig {
+        l2_curve: TriggerCurve::from_ratio(1.45),
+        l2_curve_points: legacy_soft_l2_trigger_curve_points(),
+        ..TriggerConfig::default()
+    }
+    .normalized();
+
+    assert_eq!(trigger.l2_curve, TriggerCurve::default_l2());
+    assert_eq!(trigger.l2_curve_points, default_l2_trigger_curve_points());
+}
+
+#[test]
 fn base_feel_test_uses_custom_trigger_curve_points() {
     let trigger = TriggerConfig {
         l2_from: 0,

@@ -32,6 +32,9 @@ const emptyTriggerInputState = (): TriggerInputPollerState => ({
   r2: 0
 });
 
+const sameTriggerInputState = (left: TriggerInputPollerState, right: TriggerInputPollerState) =>
+  left.fresh === right.fresh && left.l2 === right.l2 && left.r2 === right.r2;
+
 const now = () =>
   typeof performance !== 'undefined' && typeof performance.now === 'function'
     ? performance.now()
@@ -39,16 +42,46 @@ const now = () =>
 
 export function createTriggerInputPoller(options: TriggerInputPollerOptions) {
   let pollTimer: number | undefined;
+  let frame: number | undefined;
+  let pendingState: TriggerInputPollerState | undefined;
   let busy = false;
   let state = emptyTriggerInputState();
 
-  const publish = (next: TriggerInputPollerState) => {
+  const clearFrame = () => {
+    if (frame !== undefined && typeof window !== 'undefined') {
+      window.cancelAnimationFrame(frame);
+    }
+    frame = undefined;
+  };
+
+  const commit = (next: TriggerInputPollerState) => {
+    if (sameTriggerInputState(state, next)) return;
     state = next;
     options.onState(state);
   };
 
+  const flushPendingState = () => {
+    frame = undefined;
+    const next = pendingState;
+    pendingState = undefined;
+    if (next) commit(next);
+  };
+
+  const publish = (next: TriggerInputPollerState) => {
+    pendingState = next;
+    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+      flushPendingState();
+      return;
+    }
+    if (frame === undefined) {
+      frame = window.requestAnimationFrame(flushPendingState);
+    }
+  };
+
   const reset = () => {
-    publish(emptyTriggerInputState());
+    pendingState = undefined;
+    clearFrame();
+    commit(emptyTriggerInputState());
   };
 
   const stop = () => {
@@ -68,7 +101,13 @@ export function createTriggerInputPoller(options: TriggerInputPollerOptions) {
     busy = true;
     try {
       const input = await options.getControllerInput(requestedControllerId);
-      if (input.controllerId !== requestedControllerId || options.getControllerId() !== requestedControllerId) return;
+      if (
+        !options.shouldPoll() ||
+        input.controllerId !== requestedControllerId ||
+        options.getControllerId() !== requestedControllerId
+      ) {
+        return;
+      }
       if (input.available) {
         publish({
           fresh: true,
@@ -79,6 +118,7 @@ export function createTriggerInputPoller(options: TriggerInputPollerOptions) {
         publish({ ...state, fresh: false });
       }
     } catch {
+      if (!options.shouldPoll()) return;
       publish({ ...state, fresh: false });
     } finally {
       busy = false;
@@ -87,8 +127,8 @@ export function createTriggerInputPoller(options: TriggerInputPollerOptions) {
 
   const start = () => {
     if (!options.shouldPoll() || typeof window === 'undefined') return;
-    void poll();
     if (pollTimer !== undefined) return;
+    void poll();
     pollTimer = window.setInterval(() => void poll(), options.intervalMs);
   };
 

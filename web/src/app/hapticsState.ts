@@ -204,7 +204,7 @@ export const forzaPresetEffects = (preset: 'base' | 'immersive'): ForzaEffectCon
           ['tire_slip', true, 30, 'body_right'],
           ['puddle_drag', true, 32, 'body_left'],
           ['suspension_impact', true, 82, 'body_both'],
-          ['rpm_leds', false, 100, 'light_led']
+          ['rpm_leds', true, 100, 'light_led']
         ]
       : [
           ['brake_resistance', true, 100, 'l2'],
@@ -218,7 +218,7 @@ export const forzaPresetEffects = (preset: 'base' | 'immersive'): ForzaEffectCon
           ['tire_slip', false, 65, 'body_right'],
           ['puddle_drag', false, 50, 'body_left'],
           ['suspension_impact', false, 70, 'body_both'],
-          ['rpm_leds', false, 100, 'light_led']
+          ['rpm_leds', true, 100, 'light_led']
         ];
   return normalizeForzaEffects(entries.map(([id, enabled, intensity, route]) => ({ id, enabled, intensity, route })));
 };

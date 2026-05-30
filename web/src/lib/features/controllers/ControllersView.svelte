@@ -83,6 +83,8 @@
   let inputFresh = false;
   let inputBusy = false;
   let inputPollTimer: number | undefined;
+  let inputFrame: number | undefined;
+  let pendingInputState: ControllerInputState | null = null;
   let observedForController = '';
   let observed = emptyObservedInputRange();
 
@@ -102,8 +104,7 @@
   $: if ((controller?.id ?? '') !== observedForController) {
     observedForController = controller?.id ?? '';
     observed = emptyObservedInputRange();
-    inputState = null;
-    inputFresh = false;
+    resetInputState();
   }
   $: syncInputPolling();
 
@@ -140,8 +141,8 @@
 
   function startInputPolling() {
     if (!shouldPollInput()) return;
-    void pollInput();
     if (inputPollTimer !== undefined) return;
+    void pollInput();
     inputPollTimer = window.setInterval(() => void pollInput(), LIVE_INPUT_POLL_INTERVAL_MS);
   }
 
@@ -150,6 +151,8 @@
       window.clearInterval(inputPollTimer);
       inputPollTimer = undefined;
     }
+    clearInputFrame();
+    pendingInputState = null;
     inputBusy = false;
   }
 
@@ -165,15 +168,51 @@
     inputBusy = true;
     try {
       const next = await getControllerInput(requestedControllerId);
-      if (next.controllerId !== requestedControllerId || controller?.id !== requestedControllerId) return;
-      inputState = next;
-      inputFresh = next.available;
-      if (next.available) recordObservedInput(next);
+      if (!shouldPollInput() || next.controllerId !== requestedControllerId || controller?.id !== requestedControllerId) {
+        return;
+      }
+      queueInputState(next);
     } catch {
+      if (!shouldPollInput()) return;
       inputFresh = false;
     } finally {
       inputBusy = false;
     }
+  }
+
+  function clearInputFrame() {
+    if (inputFrame !== undefined && typeof window !== 'undefined') {
+      window.cancelAnimationFrame(inputFrame);
+    }
+    inputFrame = undefined;
+  }
+
+  function resetInputState() {
+    pendingInputState = null;
+    clearInputFrame();
+    inputState = null;
+    inputFresh = false;
+  }
+
+  function queueInputState(next: ControllerInputState) {
+    pendingInputState = next;
+    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+      flushInputState();
+      return;
+    }
+    if (inputFrame === undefined) {
+      inputFrame = window.requestAnimationFrame(flushInputState);
+    }
+  }
+
+  function flushInputState() {
+    inputFrame = undefined;
+    const next = pendingInputState;
+    pendingInputState = null;
+    if (!next || !shouldPollInput() || next.controllerId !== controller?.id) return;
+    inputState = next;
+    inputFresh = next.available;
+    if (next.available) recordObservedInput(next);
   }
 
   function recordObservedInput(input: ControllerInputState) {

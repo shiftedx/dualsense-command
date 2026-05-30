@@ -423,7 +423,7 @@ async fn live_forza_effects_preserve_native_rumble_by_default_and_can_full_contr
     assert!(response.output.lightbar.is_some());
     assert_eq!(
         response.output.player_leds,
-        Some(PlayerLedsOutput { count: 4 })
+        Some(PlayerLedsOutput { count: 0 })
     );
     assert!(response
         .parity_effects

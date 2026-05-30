@@ -38,19 +38,19 @@ export const mockForzaEffects: ForzaEffectConfiguration[] = [
   { id: 'tire_slip', enabled: true, intensity: 92, route: 'body_right' },
   { id: 'puddle_drag', enabled: true, intensity: 58, route: 'body_left' },
   { id: 'suspension_impact', enabled: true, intensity: 110, route: 'body_both' },
-  { id: 'rpm_leds', enabled: false, intensity: 100, route: 'light_led' }
+  { id: 'rpm_leds', enabled: true, intensity: 100, route: 'light_led' }
 ];
 
 export const mockForzaAbsTuning: ForzaAbsTuningConfiguration = {
   mode: 'strong_pulse',
   slipSource: 'auto_front_first',
-  slipThreshold: 0.68,
-  brakeThresholdRatio: 0.38,
-  minSpeedKmh: 12,
-  minStrength: 48 / 63,
+  slipThreshold: 0.5,
+  brakeThresholdRatio: 0.24,
+  minSpeedKmh: 6,
+  minStrength: 0.95,
   maxStrength: 1,
-  frequencyHz: 34,
-  curve: 1
+  frequencyHz: 26,
+  curve: 0.55
 };
 
 export const mockForzaThrottleTuning: ForzaThrottleTuningConfiguration = {
@@ -159,15 +159,15 @@ export const mockControllerConfig: ControllerConfiguration = {
     l2To: 100,
     r2From: 2,
     r2To: 100,
-    l2Curve: 1.45,
+    l2Curve: 1,
     r2Curve: 2.1,
     l2CurvePoints: [
       { input: 0, output: 0 },
-      { input: 12, output: 8 },
-      { input: 25, output: 22 },
-      { input: 40, output: 46 },
-      { input: 58, output: 70 },
-      { input: 78, output: 90 },
+      { input: 12, output: 18 },
+      { input: 25, output: 44 },
+      { input: 40, output: 68 },
+      { input: 58, output: 86 },
+      { input: 78, output: 96 },
       { input: 100, output: 100 }
     ],
     r2CurvePoints: [

@@ -13,8 +13,8 @@ export const forzaRoutes: Array<{ value: ForzaEffectRoute; label: string }> = [
   ];
 export const FORZA_SHIFT_THUMP_DEFAULT_INTENSITY = 255;
 // Mirrors the backend Forza runtime profile so the graph shows felt force, not just exponent shape.
-export const FORZA_BRAKE_BASELINE_FORCE = 30 / 255;
-export const FORZA_BRAKE_NORMAL_FORCE = 205 / 255;
+export const FORZA_BRAKE_BASELINE_FORCE = 76 / 255;
+export const FORZA_BRAKE_NORMAL_FORCE = 1;
 export const FORZA_BRAKE_ENDSTOP_FORCE = 255 / 255;
 export const FORZA_THROTTLE_BASELINE_FORCE = 3 / 255;
 export const FORZA_THROTTLE_NORMAL_FORCE = 28 / 255;
@@ -23,7 +23,7 @@ export const FORZA_ENDSTOP_WALL_OFFSET = 0.03;
 export const FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET = 0.52;
 export const FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION = 0.48;
 export const FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE = 0.8;
-export const FORZA_BRAKE_FINAL_STOP_ARM_OFFSET = 0.06;
+export const FORZA_BRAKE_FINAL_STOP_ARM_OFFSET = 0.20;
 export const FORZA_BRAKE_FINAL_STOP_OFFSET = 0.20;
 export const FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION = 0.80;
 export const FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION = 0.80;
@@ -206,7 +206,7 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
       group: 'Cue',
       defaultIntensity: 120,
       defaultRoute: 'r2',
-      help: 'Adds a high-RPM buzz as the engine approaches the limiter. It is meant as a shift cue, so keep intensity moderate if you already use RPM LEDs.'
+      help: 'Adds a high-RPM buzz as the engine approaches the limiter. It is meant as a shift cue, so keep intensity moderate if you already use the redline blink.'
     },
     {
       id: 'road_texture',
@@ -255,11 +255,11 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
     },
     {
       id: 'rpm_leds',
-      label: 'Gear LEDs + RPM bar',
+      label: 'Redline blink',
       signal: 'vehicle.rpm_ratio',
       group: 'Light',
       defaultIntensity: 100,
       defaultRoute: 'light_led',
-      help: 'Maps current gear to the five touchpad LEDs and blends the lightbar toward red as RPM approaches redline. Disabled leaves the lightbar on the user-selected profile color.'
+      help: 'Flashes the lightbar and all five player LEDs at the rev-limiter threshold. Below redline, the lightbar stays on the selected profile color instead of acting like a constant RPM bar.'
     }
   ];

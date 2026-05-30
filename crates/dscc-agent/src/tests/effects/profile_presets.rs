@@ -70,6 +70,13 @@ fn forza_horizon_preset_preserves_native_body_rumble_by_default() {
         abs.intensity, 100,
         "ABS preset intensity should preserve the 20-unit reference pulse"
     );
+    assert_eq!(preset.abs.mode, "strong_pulse");
+    assert!((preset.abs.slip_threshold - 0.58).abs() < f64::EPSILON);
+    assert!((preset.abs.brake_threshold_ratio - 0.28).abs() < f64::EPSILON);
+    assert!((preset.abs.min_speed_kmh - 8.0).abs() < f64::EPSILON);
+    assert!((preset.abs.min_strength - 0.84).abs() < f64::EPSILON);
+    assert!((preset.abs.frequency_hz - 30.0).abs() < f64::EPSILON);
+    assert!((preset.abs.curve - 0.65).abs() < f64::EPSILON);
 
     let shift = preset
         .effects
@@ -86,8 +93,8 @@ fn forza_horizon_preset_preserves_native_body_rumble_by_default() {
         .find(|effect| effect.id == "rpm_leds")
         .expect("preset must contain 'rpm_leds'");
     assert!(
-        !rpm_leds.enabled,
-        "Base should leave gear LEDs disabled and keep only the user lightbar color"
+        rpm_leds.enabled,
+        "Base should enable the event-only redline blink instead of the old constant RPM lighting"
     );
 
     // Unknown profile ids have no preset — activation is a no-op for
@@ -149,11 +156,18 @@ fn forza_horizon_immersive_preset_layers_detail_without_stealing_core_cues() {
 
     let rpm_leds = effect("rpm_leds");
     assert!(
-        !rpm_leds.enabled,
-        "Immersive should keep gear LEDs and the RPM bar disabled by default"
+        rpm_leds.enabled,
+        "Immersive should enable the event-only redline blink by default"
     );
     assert_eq!(rpm_leds.intensity, 100);
     assert_eq!(rpm_leds.route, "light_led");
+    assert_eq!(preset.abs.mode, "strong_pulse");
+    assert!((preset.abs.slip_threshold - 0.50).abs() < f64::EPSILON);
+    assert!((preset.abs.brake_threshold_ratio - 0.24).abs() < f64::EPSILON);
+    assert!((preset.abs.min_speed_kmh - 6.0).abs() < f64::EPSILON);
+    assert!((preset.abs.min_strength - 0.95).abs() < f64::EPSILON);
+    assert!((preset.abs.frequency_hz - 26.0).abs() < f64::EPSILON);
+    assert!((preset.abs.curve - 0.55).abs() < f64::EPSILON);
 }
 
 #[test]
@@ -374,7 +388,7 @@ async fn activating_forza_profile_writes_preset_into_controller_config() {
         .iter()
         .find(|effect| effect.id == "rpm_leds")
         .expect("rpm_leds present after activation");
-    assert!(!rpm_leds.enabled);
+    assert!(rpm_leds.enabled);
     assert_eq!(config.trigger.l2_from, 6);
     assert_eq!(config.trigger.r2_from, 4);
     assert_eq!(config.trigger.l2_to, 100);
@@ -445,8 +459,8 @@ async fn activating_immersive_forza_profile_writes_layered_preset() {
     assert!(effect("puddle_drag").enabled);
     assert_eq!(effect("puddle_drag").route, "body_left");
     assert!(
-        !effect("rpm_leds").enabled,
-        "Immersive should leave gear LEDs and the RPM bar disabled"
+        effect("rpm_leds").enabled,
+        "Immersive should enable the redline blink"
     );
     assert_eq!(config.trigger.l2_from, 6);
     assert_eq!(config.trigger.r2_from, 4);

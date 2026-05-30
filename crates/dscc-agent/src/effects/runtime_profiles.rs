@@ -822,8 +822,8 @@ pub(crate) fn effect_mapping_statuses(
         _ => front_slip.max(tire_slip).max(slip),
     };
     let handbrake = snapshot.number("input.handbrake").unwrap_or_default();
-    let gear = snapshot.number("drivetrain.gear").unwrap_or_default();
     let rpm_ratio = snapshot.number("vehicle.rpm_ratio").unwrap_or_default();
+    let rev_tuning = forza.rev_limiter.clone().normalized();
     let shift = snapshot.text("drivetrain.shift_event").unwrap_or("none");
     let rumble_strip = snapshot
         .number("surface.rumble_strip.max")
@@ -880,7 +880,7 @@ pub(crate) fn effect_mapping_statuses(
             "R2",
             "Rev limiter buzz",
             "vehicle.rpm_ratio",
-            rpm_ratio >= 0.965,
+            rpm_ratio >= rev_tuning.threshold_ratio,
             &forza,
         ),
         mapping_status(
@@ -926,9 +926,9 @@ pub(crate) fn effect_mapping_statuses(
         mapping_status(
             "rpm_leds",
             "LED",
-            "Gear LEDs / RPM lightbar",
-            "drivetrain.gear + vehicle.rpm_ratio",
-            gear > 0.0 || rpm_ratio > 0.20,
+            "Redline blink",
+            "vehicle.rpm_ratio",
+            rpm_ratio >= rev_tuning.threshold_ratio,
             &forza,
         ),
     ]
