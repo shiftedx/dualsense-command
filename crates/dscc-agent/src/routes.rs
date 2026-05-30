@@ -15,20 +15,23 @@ pub fn app(state: AgentState) -> Router {
         .route("/api/snapshot", get(get_snapshot))
         .route("/api/controllers", get(list_controllers))
         .route(
-            "/api/controllers/:id",
+            "/api/controllers/{id}",
             get(get_controller).put(update_controller),
         )
         .route(
-            "/api/controllers/:id/config",
+            "/api/controllers/{id}/config",
             get(get_controller_config).put(update_controller_config),
         )
-        .route("/api/controllers/:id/input", get(get_controller_input))
-        .route("/api/controllers/:id/edge-profiles", get(get_edge_profiles))
+        .route("/api/controllers/{id}/input", get(get_controller_input))
         .route(
-            "/api/controllers/:id/edge-profiles/:slot",
+            "/api/controllers/{id}/edge-profiles",
+            get(get_edge_profiles),
+        )
+        .route(
+            "/api/controllers/{id}/edge-profiles/{slot}",
             put(write_edge_profile),
         )
-        .route("/api/controllers/:id/test-effect", post(test_effect))
+        .route("/api/controllers/{id}/test-effect", post(test_effect))
         .route(
             "/api/controllers/current/test-effect",
             post(test_current_effect),
@@ -40,14 +43,14 @@ pub fn app(state: AgentState) -> Router {
         .route("/api/profiles", get(list_profiles).post(create_profile))
         .route("/api/profiles/import", post(import_profile))
         .route(
-            "/api/profiles/:id",
+            "/api/profiles/{id}",
             get(get_profile).put(update_profile).delete(delete_profile),
         )
-        .route("/api/profiles/:id/config", put(update_profile_config))
-        .route("/api/profiles/:id/export", get(export_profile))
-        .route("/api/profiles/:id/activate", post(activate_profile))
+        .route("/api/profiles/{id}/config", put(update_profile_config))
+        .route("/api/profiles/{id}/export", get(export_profile))
+        .route("/api/profiles/{id}/activate", post(activate_profile))
         .route("/api/adapters", get(list_adapters))
-        .route("/api/adapters/:id", put(update_adapter))
+        .route("/api/adapters/{id}", put(update_adapter))
         .route("/api/steam-input", get(get_steam_input_status))
         .route(
             "/api/steam-input/bindings",
@@ -63,27 +66,30 @@ pub fn app(state: AgentState) -> Router {
             post(write_input_bridge_binding),
         )
         .route(
-            "/api/input-bridge/sessions/:controller_id",
+            "/api/input-bridge/sessions/{controller_id}",
             get(get_input_bridge_session),
         )
         .route(
-            "/api/input-bridge/sessions/:controller_id/start",
+            "/api/input-bridge/sessions/{controller_id}/start",
             post(start_input_bridge_session),
         )
         .route(
-            "/api/input-bridge/sessions/:controller_id/stop",
+            "/api/input-bridge/sessions/{controller_id}/stop",
             post(stop_input_bridge_session),
         )
         .route("/api/modules", get(list_modules))
         .route("/api/games/detected", get(get_detected_game))
-        .route("/api/games/art/:game_id/:kind", get(get_game_art))
-        .route("/api/games/steam-art/:app_id/:kind", get(get_steam_app_art))
+        .route("/api/games/art/{game_id}/{kind}", get(get_game_art))
+        .route(
+            "/api/games/steam-art/{app_id}/{kind}",
+            get(get_steam_app_art),
+        )
         .route("/api/games/steam-library", get(list_steam_library))
         .route("/api/games/steam-library/browse", get(browse_steam_library))
         .route("/api/games/local/validate", post(validate_local_game))
         .route("/api/games/local", post(add_local_game))
         .route("/api/games/custom", post(add_custom_game))
-        .route("/api/games/custom/:game_id", delete(remove_custom_game))
+        .route("/api/games/custom/{game_id}", delete(remove_custom_game))
         .route("/api/effects/current", get(get_current_effect))
         .route("/api/profile-resolution", get(get_profile_resolution))
         .route(

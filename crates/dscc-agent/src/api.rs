@@ -239,7 +239,7 @@ pub(crate) async fn websocket_session(mut socket: WebSocket, state: AgentState) 
     });
 
     if socket
-        .send(Message::Text(payload.to_string()))
+        .send(Message::Text(payload.to_string().into()))
         .await
         .is_err()
     {
@@ -261,7 +261,7 @@ pub(crate) async fn websocket_session(mut socket: WebSocket, state: AgentState) 
                         let Ok(text) = serde_json::to_string(&event) else {
                             continue;
                         };
-                        if socket.send(Message::Text(text)).await.is_err() {
+                        if socket.send(Message::Text(text.into())).await.is_err() {
                             break;
                         }
                     }
@@ -272,5 +272,5 @@ pub(crate) async fn websocket_session(mut socket: WebSocket, state: AgentState) 
         }
     }
 
-    let _ = socket.close().await;
+    let _ = socket.send(Message::Close(None)).await;
 }
