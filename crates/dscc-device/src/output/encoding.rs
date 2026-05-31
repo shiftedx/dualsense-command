@@ -7,7 +7,7 @@ pub(super) const BT_REPORT_ID: u8 = 0x31;
 pub(super) const BT_OUTPUT_TAG: u8 = 0x10;
 const OUTPUT_CRC32_SEED: u8 = 0xa2;
 
-pub(super) const USB_REPORT_LEN: usize = 63;
+pub(super) const USB_REPORT_LEN: usize = 48;
 pub(super) const BT_REPORT_LEN: usize = 78;
 pub(super) const BT_CRC_OFFSET: usize = BT_REPORT_LEN - 4;
 const USB_COMMON_OFFSET: usize = 1;

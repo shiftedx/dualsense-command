@@ -40,6 +40,7 @@ fn usb_report_encodes_trigger_blocks_and_lightbar() {
     let report = encode_controller_output_frame(&frame, DeviceTransportKind::Usb, 0).unwrap();
 
     assert_eq!(report.kind, OutputReportKind::Usb);
+    assert_eq!(USB_REPORT_LEN, 48);
     assert_eq!(report.bytes.len(), USB_REPORT_LEN);
     assert_eq!(report.bytes[0], USB_REPORT_ID);
     assert_eq!(
@@ -420,7 +421,7 @@ fn output_manager_rejects_partial_hid_write_and_releases_session() {
         .expect_err("short write should be rejected");
 
     assert!(matches!(error, DeviceError::TransportFault(_)));
-    assert!(error.to_string().contains("expected 63 bytes"));
+    assert!(error.to_string().contains("expected 48 bytes"));
     transport.fail_open(
         raw_id,
         DeviceError::TransportFault("session reopened after short write".to_string()),

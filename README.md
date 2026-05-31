@@ -21,7 +21,7 @@ lightbar controls, and racing telemetry without Python setup or scripts.
 
 Get the latest Windows installer from [GitHub Releases](https://github.com/shiftedx/dualsense-command/releases/latest).
 
-- Current release: `0.3.5`
+- Current release: `0.3.6`
 - Recommended download: **DSCC Standard** Windows x86_64 MSI
 - Linux builds: beta archive with bundled web UI
 

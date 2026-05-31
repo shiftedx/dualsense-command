@@ -1,3 +1,39 @@
+# DualSense Command Center 0.3.6
+
+Release date: 2026-05-31
+
+0.3.6 is a focused hotfix for USB DualSense output writes and clearer setup
+errors.
+
+## USB Output Hotfix
+
+- DSCC now sends the DualSense USB output report as 48 bytes, matching the
+  Windows HID write accepted by affected controllers.
+- DSCC keeps the Bluetooth output path unchanged.
+- DSCC adds regression coverage so a valid 48-byte USB write is not treated as a
+  short hardware write.
+
+## Support Messages
+
+- Failed hardware actions now show the useful agent message without dumping the
+  full JSON response into the UI.
+- Troubleshooting now covers stale browser/API tabs and the common "game is
+  detected, but no UDP packets are arriving" setup state.
+
+## Validation Gate
+
+This release passed:
+
+```powershell
+cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
+cargo +stable-x86_64-pc-windows-gnu test -p dscc-device
+cargo +stable-x86_64-pc-windows-gnu clippy -p dscc-device --all-targets -- -D warnings
+npm.cmd --prefix web run typecheck
+npm.cmd --prefix web run build
+npm.cmd --prefix web run test:button-map
+npm.cmd --prefix web run test:release-size
+```
+
 # DualSense Command Center 0.3.5
 
 Release date: 2026-05-30

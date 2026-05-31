@@ -6,6 +6,7 @@ export const jsonHeaders = {
 };
 
 const MOCK_STORAGE_KEY = 'dscc.mockApi.enabled';
+const AGENT_HOME_URL = 'http://127.0.0.1:43473/';
 
 type MockApiModule = typeof import('../mock/api');
 let mockApiPromise: Promise<MockApiModule> | null = null;
@@ -40,15 +41,12 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     });
   } catch (caught) {
     const detail = caught instanceof Error ? caught.message : 'network request failed';
-    throw new ApiRequestError(`API request failed: ${detail}`, null, true);
+    throw new ApiRequestError(apiNetworkFailureMessage(detail), null, true);
   }
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
-    throw new ApiRequestError(
-      `API request failed: ${response.status} ${response.statusText}${detail ? ` / ${detail}` : ''}`,
-      response.status
-    );
+    throw new ApiRequestError(apiHttpFailureMessage(response, detail), response.status);
   }
 
   if (response.status === 204) {
@@ -70,16 +68,13 @@ export async function apiAction(path: string, init?: RequestInit): Promise<Actio
     });
   } catch (caught) {
     const detail = caught instanceof Error ? caught.message : 'network request failed';
-    throw new ApiRequestError(`API request failed: ${detail}`, null, true);
+    throw new ApiRequestError(apiNetworkFailureMessage(detail), null, true);
   }
 
   const text = await response.text().catch(() => '');
   const parsed = parseActionAccepted(text);
   if (!response.ok && !parsed) {
-    throw new ApiRequestError(
-      `API request failed: ${response.status} ${response.statusText}${text ? ` / ${text}` : ''}`,
-      response.status
-    );
+    throw new ApiRequestError(apiHttpFailureMessage(response, text), response.status);
   }
 
   return (
@@ -107,6 +102,38 @@ export function webSocketUrl(path: string): string {
   const url = new URL(`${API_BASE}${path}`, window.location.href);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   return url.toString();
+}
+
+function apiNetworkFailureMessage(detail: string): string {
+  return `DSCC agent is not reachable. ${browserLocationHint()} Details: ${detail}`;
+}
+
+function apiHttpFailureMessage(response: Response, detail: string): string {
+  if (response.status === 403) {
+    return `DSCC blocked this request because the browser address does not match the local agent. Open DSCC from the tray or ${AGENT_HOME_URL}, then try again.`;
+  }
+
+  const action = parseActionAccepted(detail);
+  if (action?.message) return action.message;
+
+  return `API request failed: ${response.status} ${response.statusText}${detail ? ` / ${detail}` : ''}`;
+}
+
+function browserLocationHint(): string {
+  if (typeof window === 'undefined') {
+    return `Start DSCC and open ${AGENT_HOME_URL}.`;
+  }
+
+  if (window.location.protocol === 'file:') {
+    return `The UI was opened from a file. Open DSCC from the tray or use ${AGENT_HOME_URL}.`;
+  }
+
+  const allowedHosts = new Set(['127.0.0.1:43473', 'localhost:43473']);
+  if (!allowedHosts.has(window.location.host)) {
+    return `This page is running at ${window.location.host}. Open the packaged DSCC UI from the tray or use ${AGENT_HOME_URL}.`;
+  }
+
+  return `Start DSCC from the Start menu, then open ${AGENT_HOME_URL}.`;
 }
 
 function parseActionAccepted(text: string): ActionAccepted | null {
