@@ -1,5 +1,16 @@
 # DualSense Command Center
 
+[![Latest release](https://img.shields.io/github/v/release/shiftedx/dualsense-command?style=for-the-badge&label=release)](https://github.com/shiftedx/dualsense-command/releases/latest)
+[![Release downloads](https://img.shields.io/github/downloads/shiftedx/dualsense-command/total?style=for-the-badge&label=downloads)](https://github.com/shiftedx/dualsense-command/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/shiftedx/dualsense-command/ci.yml?branch=main&style=for-the-badge&label=ci)](https://github.com/shiftedx/dualsense-command/actions/workflows/ci.yml)
+[![Stars](https://img.shields.io/github/stars/shiftedx/dualsense-command?style=for-the-badge)](https://github.com/shiftedx/dualsense-command/stargazers)
+[![License](https://img.shields.io/github/license/shiftedx/dualsense-command?style=for-the-badge)](LICENSE)
+
+Thanks to the early DSCC users testing builds, reporting rough edges, and asking
+for the features that matter. Your feedback is helping shape DSCC into the
+strongest adaptive-trigger and telemetry force-feedback app for DualSense
+controllers on PC.
+
 DualSense Command Center (DSCC) is a Windows app for PlayStation DualSense and
 DualSense Edge controllers. It gives you adaptive triggers, haptics, profiles,
 lightbar controls, and racing telemetry without Python setup or scripts.
