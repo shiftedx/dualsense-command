@@ -49,6 +49,11 @@ In the game settings, enable **Data Out** or **UDP Race Telemetry**:
 Only one app can usually listen on the same UDP port. Close other telemetry
 tools if DSCC shows no packets.
 
+If DSCC detects the game but shows no live packets, adaptive triggers and
+telemetry haptics stay neutral by design. Enter a driving session, confirm the
+game is sending to `127.0.0.1:5300`, allow DSCC through Windows Firewall, and
+close any other telemetry tool using UDP port `5300`.
+
 ## Triggers Feel Neutral In Game
 
 DSCC keeps triggers and rumble neutral until it sees:
@@ -59,6 +64,17 @@ DSCC keeps triggers and rumble neutral until it sees:
 
 DSCC uses this guard to avoid taking over the controller while you are outside
 the car.
+
+## API Errors Everywhere
+
+Open DSCC from the tray icon or go to `http://127.0.0.1:43473/`. Do not use a
+saved dev-server tab, a copied `file://` page, or a browser address from another
+machine unless LAN Access was enabled and the app was restarted.
+
+If the Support panel can export a bundle and the `api` check says `ok`, the
+local API is running. In that case, include the exact failed action, the error
+text, and the support bundle. The failure is likely a specific setup issue, not
+a dead agent.
 
 ## Battery Drops Faster Than Expected
 
