@@ -131,7 +131,7 @@ pub(crate) fn forza_rumble_output(
     } else {
         0.0
     };
-    let clutch_uncouple = 1.0 - clutch * 0.78;
+    let clutch_uncouple = 1.0 - clutch * shift_tuning.clutch_body_cut;
     let drivetrain = (rpm * rpm * (0.35 + throttle * 0.65) * clutch_uncouple).clamp(0.0, 1.0);
 
     let mut low = 0.0;

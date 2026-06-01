@@ -557,6 +557,7 @@ export interface ForzaShiftTuningConfiguration {
   withoutClutchStrength: number;
   withClutchDurationMs: number;
   withoutClutchDurationMs: number;
+  clutchBodyCut: number;
 }
 
 export interface ForzaRevLimiterTuningConfiguration {

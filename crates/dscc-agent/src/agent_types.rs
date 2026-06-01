@@ -656,6 +656,8 @@ pub struct ForzaShiftTuningConfig {
     pub with_clutch_duration_ms: f64,
     #[serde(default = "default_forza_shift_without_clutch_duration_ms")]
     pub without_clutch_duration_ms: f64,
+    #[serde(default = "default_forza_shift_clutch_body_cut")]
+    pub clutch_body_cut: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

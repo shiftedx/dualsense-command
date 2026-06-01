@@ -573,6 +573,7 @@ impl Default for ForzaShiftTuningConfig {
             without_clutch_strength: default_forza_shift_without_clutch_strength(),
             with_clutch_duration_ms: default_forza_shift_with_clutch_duration_ms(),
             without_clutch_duration_ms: default_forza_shift_without_clutch_duration_ms(),
+            clutch_body_cut: default_forza_shift_clutch_body_cut(),
         }
     }
 }
@@ -635,6 +636,12 @@ impl ForzaShiftTuningConfig {
             500.0,
             default_forza_shift_without_clutch_duration_ms(),
         );
+        self.clutch_body_cut = finite_clamp(
+            self.clutch_body_cut,
+            0.0,
+            1.0,
+            default_forza_shift_clutch_body_cut(),
+        );
         self
     }
 }
@@ -681,6 +688,10 @@ pub(crate) fn default_forza_shift_with_clutch_duration_ms() -> f64 {
 
 pub(crate) fn default_forza_shift_without_clutch_duration_ms() -> f64 {
     FORZA_SHIFT_WITHOUT_CLUTCH_DURATION_MS
+}
+
+pub(crate) fn default_forza_shift_clutch_body_cut() -> f64 {
+    FORZA_SHIFT_CLUTCH_BODY_CUT
 }
 
 pub(crate) fn normalize_forza_shift_clutch_mode(mode: &str) -> &'static str {
