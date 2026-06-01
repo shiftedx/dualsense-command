@@ -281,11 +281,24 @@ pub(crate) fn forza_redline_light_output(
         .unwrap_or_default();
     let rpm = signal_unit_value(snapshot, "vehicle.rpm_ratio");
     let mut lightbar = forza_lightbar_output(config);
+    let rpm_color = configured.rpm_rgb();
+    let redline_threshold = redline_threshold.clamp(0.0, 1.0);
 
-    let redline_active =
-        redline_blink_scalar > 0.0 && rpm >= redline_threshold.clamp(0.0, 1.0) && blink_on;
+    if redline_blink_scalar > 0.0 {
+        let fade_start = (redline_threshold - FORZA_REDLINE_FADE_WIDTH).max(0.0);
+        let heat = signal_scaled_value(rpm, fade_start, redline_threshold);
+        lightbar.color = blend_rgb(lightbar.color, rpm_color, heat);
+    }
+
+    let redline_active = redline_blink_scalar > 0.0 && rpm >= redline_threshold && blink_on;
     if redline_active {
-        lightbar.color = configured.rpm_rgb();
+        lightbar.color = rpm_color;
+    } else if redline_blink_scalar > 0.0 && rpm >= redline_threshold {
+        lightbar.color = blend_rgb(
+            forza_lightbar_output(config).color,
+            rpm_color,
+            FORZA_REDLINE_BLINK_DIM_BLEND,
+        );
     }
 
     ForzaRedlineLightOutput {
@@ -302,6 +315,19 @@ pub(crate) fn forza_redline_light_output(
 
 pub(crate) fn forza_redline_blink_on(now_ms: u64) -> bool {
     (now_ms / FORZA_REDLINE_BLINK_HALF_PERIOD_MS) % 2 == 0
+}
+
+fn blend_rgb(start: RgbColor, end: RgbColor, amount: f64) -> RgbColor {
+    let amount = clamp_unit(amount);
+    RgbColor {
+        red: blend_channel(start.red, end.red, amount),
+        green: blend_channel(start.green, end.green, amount),
+        blue: blend_channel(start.blue, end.blue, amount),
+    }
+}
+
+fn blend_channel(start: u8, end: u8, amount: f64) -> u8 {
+    (f64::from(start) + (f64::from(end) - f64::from(start)) * amount).round() as u8
 }
 
 fn signal_unit_value(snapshot: &SignalSnapshot, name: &str) -> f64 {

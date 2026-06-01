@@ -945,7 +945,7 @@ pub(crate) fn effect_mapping_statuses(
         mapping_status(
             "rpm_leds",
             "LED",
-            "Redline blink",
+            "Redline ramp",
             "vehicle.rpm_ratio",
             rpm_ratio >= rev_tuning.threshold_ratio,
             &forza,

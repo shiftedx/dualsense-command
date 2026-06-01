@@ -94,7 +94,7 @@ fn forza_horizon_preset_preserves_native_body_rumble_by_default() {
         .expect("preset must contain 'rpm_leds'");
     assert!(
         rpm_leds.enabled,
-        "Base should enable the event-only redline blink instead of the old constant RPM lighting"
+        "Base should enable the redline ramp without restoring the old constant RPM lighting"
     );
 
     // Unknown profile ids have no preset — activation is a no-op for
@@ -157,7 +157,7 @@ fn forza_horizon_immersive_preset_layers_detail_without_stealing_core_cues() {
     let rpm_leds = effect("rpm_leds");
     assert!(
         rpm_leds.enabled,
-        "Immersive should enable the event-only redline blink by default"
+        "Immersive should enable the redline ramp by default"
     );
     assert_eq!(rpm_leds.intensity, 100);
     assert_eq!(rpm_leds.route, "light_led");
@@ -460,7 +460,7 @@ async fn activating_immersive_forza_profile_writes_layered_preset() {
     assert_eq!(effect("puddle_drag").route, "body_left");
     assert!(
         effect("rpm_leds").enabled,
-        "Immersive should enable the redline blink"
+        "Immersive should enable the redline ramp"
     );
     assert_eq!(config.trigger.l2_from, 6);
     assert_eq!(config.trigger.r2_from, 4);

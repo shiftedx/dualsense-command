@@ -205,7 +205,7 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
       group: 'Cue',
       defaultIntensity: 120,
       defaultRoute: 'r2',
-      help: 'Adds a high-RPM buzz as the engine approaches the limiter. It is meant as a shift cue, so keep intensity moderate if you already use the redline blink.'
+      help: 'Adds a high-RPM buzz as the engine approaches the limiter. The redline ramp uses the same RPM threshold, so visual and trigger shift cues line up.'
     },
     {
       id: 'road_texture',
@@ -254,11 +254,11 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
     },
     {
       id: 'rpm_leds',
-      label: 'Redline blink',
+      label: 'Redline ramp',
       signal: 'vehicle.rpm_ratio',
       group: 'Light',
       defaultIntensity: 100,
       defaultRoute: 'light_led',
-      help: 'Flashes the lightbar and all five player LEDs at the rev-limiter threshold. Below redline, the lightbar stays on the selected profile color instead of acting like a constant RPM bar.'
+      help: 'Gradually warms the lightbar toward the redline color before the limiter, then blinks the lightbar and player LEDs at the rev-limiter buzz threshold.'
     }
   ];
