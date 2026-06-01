@@ -20,11 +20,10 @@ export const FORZA_THROTTLE_BASELINE_FORCE = 3 / 255;
 export const FORZA_THROTTLE_NORMAL_FORCE = 28 / 255;
 export const FORZA_THROTTLE_ENDSTOP_FORCE = 106 / 255;
 export const FORZA_ENDSTOP_WALL_OFFSET = 0.03;
-export const FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET = 0.52;
-export const FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION = 0.48;
+export const FORZA_BRAKE_OVERTRAVEL_WALL_POSITION = 0.48;
+export const FORZA_BRAKE_OVERTRAVEL_MIN_POSITION = 0.48;
 export const FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE = 0.8;
-export const FORZA_BRAKE_FINAL_STOP_ARM_OFFSET = 0.20;
-export const FORZA_BRAKE_FINAL_STOP_OFFSET = 0.20;
+export const FORZA_BRAKE_FULL_FORCE_INPUT = 0.80;
 export const FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION = 0.80;
 export const FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION = 0.80;
 export const FORZA_BRAKE_ENDSTOP_FORCE_BOOST = 1.25;
@@ -161,7 +160,7 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
       group: 'Trigger',
       defaultIntensity: 100,
       defaultRoute: 'l2',
-      help: 'Maps brake input to L2 resistance. Higher intensity makes the brake trigger push back harder as braking increases; best left on L2 for a natural brake pedal feel.'
+      help: 'Maps brake input to L2 resistance. Advanced tuning controls initial force, ramp force, wall position, full-force point, and ramp shape; best left on L2 for a natural brake pedal feel.'
     },
     {
       id: 'abs_slip_pulse',
@@ -197,7 +196,7 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
       group: 'Cue',
       defaultIntensity: FORZA_SHIFT_THUMP_DEFAULT_INTENSITY,
       defaultRoute: 'r2_and_body',
-      help: 'Fires a short kick when DSCC detects a gear change. The Base route uses R2 plus a slightly reduced body thump so shifts feel physical without hitting both triggers.'
+      help: 'Fires a short kick when DSCC detects a gear change. When clutch telemetry is present, DSCC can make clutch-assisted shifts smoother and no-clutch shifts harsher.'
     },
     {
       id: 'rev_limiter_buzz',

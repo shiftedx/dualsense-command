@@ -2,9 +2,11 @@ import type {
   ForzaAbsMode,
   ForzaAbsSlipSource,
   ForzaAbsTuningConfiguration,
+  ForzaBrakeTuningConfiguration,
   ForzaEffectConfiguration,
   ForzaEffectRoute,
   ForzaRevLimiterTuningConfiguration,
+  ForzaShiftClutchMode,
   ForzaShiftTuningConfiguration,
   ForzaThrottleTuningConfiguration
 } from '../lib/types';
@@ -76,6 +78,36 @@ export const normalizeForzaAbsTuning = (
   };
 };
 
+export function defaultForzaBrakeTuning(): ForzaBrakeTuningConfiguration {
+  return {
+    baselineForce: 76 / 255,
+    normalForce: 1,
+    endstopForce: 1,
+    endstopBoost: 1.25,
+    wallPosition: 0.48,
+    guardMinEnd: 0.48,
+    fullForceAt: 0.8,
+    rampCurve: 0.8
+  };
+}
+
+export const normalizeForzaBrakeTuning = (
+  tuning: Partial<ForzaBrakeTuningConfiguration> | undefined | null
+): ForzaBrakeTuningConfiguration => {
+  const defaults = defaultForzaBrakeTuning();
+  const baselineForce = finiteClamp(tuning?.baselineForce, 0, 1, defaults.baselineForce);
+  return {
+    baselineForce,
+    normalForce: finiteClamp(tuning?.normalForce, baselineForce, 1, defaults.normalForce),
+    endstopForce: finiteClamp(tuning?.endstopForce, 0, 1, defaults.endstopForce),
+    endstopBoost: finiteClamp(tuning?.endstopBoost, 0, 5, defaults.endstopBoost),
+    wallPosition: finiteClamp(tuning?.wallPosition, 0, 1, defaults.wallPosition),
+    guardMinEnd: finiteClamp(tuning?.guardMinEnd, 0, 1, defaults.guardMinEnd),
+    fullForceAt: finiteClamp(tuning?.fullForceAt, 0, 1, defaults.fullForceAt),
+    rampCurve: finiteClamp(tuning?.rampCurve, 0.4, 4, defaults.rampCurve)
+  };
+};
+
 export function defaultForzaThrottleTuning(): ForzaThrottleTuningConfiguration {
   return {
     baselineForce: 3 / 255,
@@ -112,9 +144,20 @@ export function defaultForzaShiftTuning(): ForzaShiftTuningConfiguration {
     frequencyHz: 34,
     wallZones: 4,
     bodyLowWeight: 0.92,
-    bodyHighWeight: 0.84
+    bodyHighWeight: 0.84,
+    clutchMode: 'auto',
+    clutchThreshold: 0.4,
+    withClutchStrength: 0.58,
+    withoutClutchStrength: 1,
+    withClutchDurationMs: 130,
+    withoutClutchDurationMs: 240
   };
 }
+
+const normalizeForzaShiftClutchMode = (
+  mode: ForzaShiftTuningConfiguration['clutchMode'] | undefined
+): ForzaShiftClutchMode =>
+  mode === 'off' || mode === 'manual_clutch' || mode === 'auto' ? mode : 'auto';
 
 export const normalizeForzaShiftTuning = (
   tuning: Partial<ForzaShiftTuningConfiguration> | undefined | null
@@ -125,7 +168,28 @@ export const normalizeForzaShiftTuning = (
     frequencyHz: finiteClamp(tuning?.frequencyHz, 1, 80, defaults.frequencyHz),
     wallZones: finiteClamp(tuning?.wallZones, 1, 8, defaults.wallZones),
     bodyLowWeight: finiteClamp(tuning?.bodyLowWeight, 0, 1.5, defaults.bodyLowWeight),
-    bodyHighWeight: finiteClamp(tuning?.bodyHighWeight, 0, 1.5, defaults.bodyHighWeight)
+    bodyHighWeight: finiteClamp(tuning?.bodyHighWeight, 0, 1.5, defaults.bodyHighWeight),
+    clutchMode: normalizeForzaShiftClutchMode(tuning?.clutchMode),
+    clutchThreshold: finiteClamp(tuning?.clutchThreshold, 0, 1, defaults.clutchThreshold),
+    withClutchStrength: finiteClamp(tuning?.withClutchStrength, 0, 1, defaults.withClutchStrength),
+    withoutClutchStrength: finiteClamp(
+      tuning?.withoutClutchStrength,
+      0,
+      1,
+      defaults.withoutClutchStrength
+    ),
+    withClutchDurationMs: finiteClamp(
+      tuning?.withClutchDurationMs,
+      40,
+      400,
+      defaults.withClutchDurationMs
+    ),
+    withoutClutchDurationMs: finiteClamp(
+      tuning?.withoutClutchDurationMs,
+      40,
+      500,
+      defaults.withoutClutchDurationMs
+    )
   };
 };
 

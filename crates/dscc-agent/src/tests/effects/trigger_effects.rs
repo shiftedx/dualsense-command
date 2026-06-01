@@ -343,7 +343,7 @@ fn forza_brake_load_uses_global_wall_in_final_travel() {
             start_position,
             strength,
         } => {
-            assert!((start_position - 0.70).abs() < f64::EPSILON);
+            assert!((start_position - 0.80).abs() < f64::EPSILON);
             assert!(
                 (0.99..=1.0).contains(&strength),
                 "brake should hold a throttle-like wall through the final travel, got {strength}"
@@ -358,13 +358,86 @@ fn forza_brake_load_uses_global_wall_in_final_travel() {
             start_position,
             strength,
         } => {
-            assert!((start_position - 0.70).abs() < f64::EPSILON);
+            assert!((start_position - 0.80).abs() < f64::EPSILON);
             assert!(
                 strength > 0.98 && strength <= 1.0,
                 "brake should reach throttle-wall-level force near the configured end point, got {strength}"
             );
         }
         other => panic!("expected max brake force at the configured end point, got {other:?}"),
+    }
+}
+
+#[test]
+fn forza_brake_advanced_tuning_moves_wall_and_force_levels() {
+    let mut config = forza_horizon_controller_config();
+    config.forza.brake.baseline_force = 0.40;
+    config.forza.brake.normal_force = 0.70;
+    config.forza.brake.endstop_force = 0.80;
+    config.forza.brake.endstop_boost = 1.20;
+    config.forza.brake.guard_min_end = 0.50;
+    config.forza.brake.wall_position = 0.58;
+    config.forza.brake.full_force_at = 0.86;
+    config.forza.brake.ramp_curve = 1.0;
+    let profile = forza_runtime_profile("forza-horizon", "Forza", Some(&config));
+
+    let snapshot = |brake| {
+        SignalSnapshot::from_updates([
+            signal_update("game.state", "driving"),
+            signal_update("input.throttle", 0.0),
+            signal_update("input.brake", brake),
+            signal_update("input.handbrake", 0.0),
+            signal_update("vehicle.rpm_ratio", 0.40),
+            signal_update("vehicle.speed_kmh", 90.0),
+            signal_update("tire.slip_ratio.max", 0.0),
+            signal_update("wheel.slip.max", 0.0),
+            signal_update("drivetrain.shift_event", "none"),
+        ])
+    };
+
+    let before_wall = EffectEngine::new().evaluate(&profile, &snapshot(0.55));
+    match before_wall.l2 {
+        TriggerOutput::AdaptiveResistance {
+            start_position,
+            strength,
+        } => {
+            assert!((start_position - 0.06).abs() < f64::EPSILON);
+            assert!(
+                (0.59..0.61).contains(&strength),
+                "custom brake curve should hold the configured pedal force before the wall, got {strength}"
+            );
+        }
+        other => panic!("expected custom brake load before the wall, got {other:?}"),
+    }
+
+    let ramp = EffectEngine::new().evaluate(&profile, &snapshot(0.72));
+    match ramp.l2 {
+        TriggerOutput::AdaptiveResistance {
+            start_position,
+            strength,
+        } => {
+            assert!((start_position - 0.06).abs() < f64::EPSILON);
+            assert!(
+                (0.70..0.73).contains(&strength),
+                "custom brake wall should begin ramping toward boosted force, got {strength}"
+            );
+        }
+        other => panic!("expected custom brake wall ramp, got {other:?}"),
+    }
+
+    let full = EffectEngine::new().evaluate(&profile, &snapshot(0.88));
+    match full.l2 {
+        TriggerOutput::AdaptiveResistance {
+            start_position,
+            strength,
+        } => {
+            assert!((start_position - 0.86).abs() < f64::EPSILON);
+            assert!(
+                (0.82..0.84).contains(&strength),
+                "custom brake full-force point should use the configured boosted force, got {strength}"
+            );
+        }
+        other => panic!("expected custom brake full-force point, got {other:?}"),
     }
 }
 
@@ -395,7 +468,7 @@ fn forza_trigger_range_end_controls_full_force_point() {
             start_position,
             strength,
         } => {
-            assert!((start_position - 0.40).abs() < f64::EPSILON);
+            assert!((start_position - 0.60).abs() < f64::EPSILON);
             assert!(
                 strength > 0.98 && strength <= 1.0,
                 "custom brake end point should arm full force at 60%, got {strength}"

@@ -71,6 +71,17 @@ pub(crate) fn racing_effect_toggles(inner: &AgentStateInner) -> RacingEffectTogg
     toggles
 }
 
+pub(crate) fn racing_shift_tuning(inner: &AgentStateInner) -> ForzaShiftTuningConfig {
+    inner
+        .controllers
+        .summaries()
+        .into_iter()
+        .find(|controller| controller.connected)
+        .and_then(|controller| inner.controller_configs.get(&controller.id))
+        .map(|config| config.forza.shift.clone().normalized())
+        .unwrap_or_default()
+}
+
 fn forza_effect_enabled(config: &ControllerConfig, effect_id: &str) -> bool {
     let default = default_forza_effect(effect_id);
     config
@@ -304,6 +315,7 @@ fn waiting_telemetry_response(
         ),
         telemetry_signal("input.throttle", 0.0, None, age_ms),
         telemetry_signal("input.brake", 0.0, None, age_ms),
+        telemetry_signal("input.clutch", 0.0, None, age_ms),
         telemetry_signal("input.handbrake", 0.0, None, age_ms),
         telemetry_signal("vehicle.rpm_ratio", 0.0, None, age_ms),
         telemetry_signal("vehicle.speed_kmh", 0.0, Some("km/h"), age_ms),
@@ -351,6 +363,7 @@ fn waiting_signal_snapshot(
         ),
         signal_update("input.throttle", 0.0),
         signal_update("input.brake", 0.0),
+        signal_update("input.clutch", 0.0),
         signal_update("input.handbrake", 0.0),
         signal_update("vehicle.rpm_ratio", 0.0),
         signal_update("vehicle.speed_kmh", 0.0),
@@ -424,7 +437,10 @@ pub(crate) fn current_effect_snapshot(
         let mut snapshot = inner.telemetry.clone();
         if let Some(shift_event) = inner.forza_effect_runtime.latched_shift_event(now) {
             snapshot.apply_update(signal_update("drivetrain.shift_event", shift_event));
-            snapshot.apply_update(signal_update("drivetrain.shift_pulse", 1.0));
+            snapshot.apply_update(signal_update(
+                "drivetrain.shift_pulse",
+                inner.forza_effect_runtime.latched_shift_pulse(now),
+            ));
         } else {
             snapshot.apply_update(signal_update("drivetrain.shift_event", "none"));
             snapshot.apply_update(signal_update("drivetrain.shift_pulse", 0.0));

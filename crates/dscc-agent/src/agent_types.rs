@@ -555,6 +555,8 @@ pub struct ForzaTelemetryConfig {
     #[serde(default)]
     pub effects: Vec<ForzaEffectConfig>,
     #[serde(default)]
+    pub brake: ForzaBrakeTuningConfig,
+    #[serde(default)]
     pub abs: ForzaAbsTuningConfig,
     #[serde(default)]
     pub throttle: ForzaThrottleTuningConfig,
@@ -562,6 +564,27 @@ pub struct ForzaTelemetryConfig {
     pub shift: ForzaShiftTuningConfig,
     #[serde(default)]
     pub rev_limiter: ForzaRevLimiterTuningConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ForzaBrakeTuningConfig {
+    #[serde(default = "default_forza_brake_baseline_force")]
+    pub baseline_force: f64,
+    #[serde(default = "default_forza_brake_normal_force")]
+    pub normal_force: f64,
+    #[serde(default = "default_forza_brake_endstop_force")]
+    pub endstop_force: f64,
+    #[serde(default = "default_forza_brake_endstop_boost")]
+    pub endstop_boost: f64,
+    #[serde(default = "default_forza_brake_wall_position")]
+    pub wall_position: f64,
+    #[serde(default = "default_forza_brake_guard_min_end")]
+    pub guard_min_end: f64,
+    #[serde(default = "default_forza_brake_full_force_at")]
+    pub full_force_at: f64,
+    #[serde(default = "default_forza_brake_ramp_curve")]
+    pub ramp_curve: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -621,6 +644,18 @@ pub struct ForzaShiftTuningConfig {
     pub body_low_weight: f64,
     #[serde(default = "default_forza_shift_body_high_weight")]
     pub body_high_weight: f64,
+    #[serde(default = "default_forza_shift_clutch_mode")]
+    pub clutch_mode: String,
+    #[serde(default = "default_forza_shift_clutch_threshold")]
+    pub clutch_threshold: f64,
+    #[serde(default = "default_forza_shift_with_clutch_strength")]
+    pub with_clutch_strength: f64,
+    #[serde(default = "default_forza_shift_without_clutch_strength")]
+    pub without_clutch_strength: f64,
+    #[serde(default = "default_forza_shift_with_clutch_duration_ms")]
+    pub with_clutch_duration_ms: f64,
+    #[serde(default = "default_forza_shift_without_clutch_duration_ms")]
+    pub without_clutch_duration_ms: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

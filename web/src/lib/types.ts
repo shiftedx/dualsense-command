@@ -497,6 +497,7 @@ interface LightbarConfiguration {
 interface ForzaTelemetryConfiguration {
   bodyRumbleMode?: ForzaBodyRumbleMode;
   effects: ForzaEffectConfiguration[];
+  brake?: ForzaBrakeTuningConfiguration;
   abs?: ForzaAbsTuningConfiguration;
   throttle?: ForzaThrottleTuningConfiguration;
   shift?: ForzaShiftTuningConfiguration;
@@ -507,6 +508,17 @@ export type ForzaBodyRumbleMode = 'native_passthrough' | 'dscc_full_control';
 
 export type ForzaAbsMode = 'strong_pulse' | 'fine_flutter';
 export type ForzaAbsSlipSource = 'auto_front_first' | 'front' | 'tire' | 'wheel';
+
+export interface ForzaBrakeTuningConfiguration {
+  baselineForce: number;
+  normalForce: number;
+  endstopForce: number;
+  endstopBoost: number;
+  wallPosition: number;
+  guardMinEnd: number;
+  fullForceAt: number;
+  rampCurve: number;
+}
 
 export interface ForzaAbsTuningConfiguration {
   mode: ForzaAbsMode;
@@ -531,12 +543,20 @@ export interface ForzaThrottleTuningConfiguration {
   rampCurve: number;
 }
 
+export type ForzaShiftClutchMode = 'off' | 'auto' | 'manual_clutch';
+
 export interface ForzaShiftTuningConfiguration {
   wallFormAt: number;
   frequencyHz: number;
   wallZones: number;
   bodyLowWeight: number;
   bodyHighWeight: number;
+  clutchMode: ForzaShiftClutchMode;
+  clutchThreshold: number;
+  withClutchStrength: number;
+  withoutClutchStrength: number;
+  withClutchDurationMs: number;
+  withoutClutchDurationMs: number;
 }
 
 export interface ForzaRevLimiterTuningConfiguration {

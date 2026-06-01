@@ -4,10 +4,12 @@
     ForzaAbsMode,
     ForzaAbsSlipSource,
     ForzaAbsTuningConfiguration,
+    ForzaBrakeTuningConfiguration,
     ForzaBodyRumbleMode,
     ForzaEffectConfiguration,
     ForzaEffectRoute,
     ForzaRevLimiterTuningConfiguration,
+    ForzaShiftClutchMode,
     ForzaShiftTuningConfiguration,
     ForzaThrottleTuningConfiguration
   } from '../../types';
@@ -41,6 +43,16 @@
   export let forzaEffectsById: ReadonlyMap<string, ForzaEffectConfiguration> = new Map();
   export let effectStatusById: ReadonlyMap<string, { state?: string }> = new Map();
   export let forzaBodyRumbleMode: ForzaBodyRumbleMode = 'native_passthrough';
+  export let forzaBrakeTuning: ForzaBrakeTuningConfiguration = {
+    baselineForce: 76 / 255,
+    normalForce: 1,
+    endstopForce: 1,
+    endstopBoost: 1.25,
+    wallPosition: 0.48,
+    guardMinEnd: 0.48,
+    fullForceAt: 0.8,
+    rampCurve: 0.8
+  };
   export let forzaAbsTuning: ForzaAbsTuningConfiguration = {
     mode: 'strong_pulse',
     slipSource: 'auto_front_first',
@@ -67,7 +79,13 @@
     frequencyHz: 34,
     wallZones: 4,
     bodyLowWeight: 0.92,
-    bodyHighWeight: 0.84
+    bodyHighWeight: 0.84,
+    clutchMode: 'auto',
+    clutchThreshold: 0.4,
+    withClutchStrength: 0.58,
+    withoutClutchStrength: 1,
+    withClutchDurationMs: 130,
+    withoutClutchDurationMs: 240
   };
   export let forzaRevLimiterTuning: ForzaRevLimiterTuningConfiguration = {
     thresholdRatio: 0.93,
@@ -85,6 +103,9 @@
   export let forzaEffect: (id: string) => ForzaEffectConfiguration = defaultEffect;
   export let toggleAllForzaEffects: () => void = noop;
   export let setForzaBodyRumbleMode: (value: ForzaBodyRumbleMode) => void = noop as (value: ForzaBodyRumbleMode) => void;
+  export let updateForzaBrakeTuning: (patch: Partial<ForzaBrakeTuningConfiguration>) => void = noop as (
+    patch: Partial<ForzaBrakeTuningConfiguration>
+  ) => void;
   export let updateForzaAbsTuning: (patch: Partial<ForzaAbsTuningConfiguration>) => void = noop as (
     patch: Partial<ForzaAbsTuningConfiguration>
   ) => void;
@@ -121,6 +142,21 @@
     updateForzaAbsTuning(patch);
   };
 
+  const updateBrakePercent = (
+    key: 'baselineForce' | 'normalForce' | 'endstopForce' | 'wallPosition' | 'guardMinEnd' | 'fullForceAt',
+    value: number | string
+  ) => {
+    const patch: Partial<ForzaBrakeTuningConfiguration> = {};
+    patch[key] = inputNumber(value, percentValue(forzaBrakeTuning[key])) / 100;
+    updateForzaBrakeTuning(patch);
+  };
+
+  const updateBrakeNumber = (key: 'endstopBoost' | 'rampCurve', value: number | string) => {
+    const patch: Partial<ForzaBrakeTuningConfiguration> = {};
+    patch[key] = inputNumber(value, forzaBrakeTuning[key]);
+    updateForzaBrakeTuning(patch);
+  };
+
   const updateThrottlePercent = (
     key: 'baselineForce' | 'normalForce' | 'endstopForce' | 'wallPosition' | 'guardMinEnd' | 'rampWidth',
     value: number | string
@@ -137,7 +173,13 @@
   };
 
   const updateShiftPercent = (
-    key: 'wallFormAt' | 'bodyLowWeight' | 'bodyHighWeight',
+    key:
+      | 'wallFormAt'
+      | 'bodyLowWeight'
+      | 'bodyHighWeight'
+      | 'clutchThreshold'
+      | 'withClutchStrength'
+      | 'withoutClutchStrength',
     value: number | string
   ) => {
     const patch: Partial<ForzaShiftTuningConfiguration> = {};
@@ -145,10 +187,17 @@
     updateForzaShiftTuning(patch);
   };
 
-  const updateShiftNumber = (key: 'frequencyHz' | 'wallZones', value: number | string) => {
+  const updateShiftNumber = (
+    key: 'frequencyHz' | 'wallZones' | 'withClutchDurationMs' | 'withoutClutchDurationMs',
+    value: number | string
+  ) => {
     const patch: Partial<ForzaShiftTuningConfiguration> = {};
     patch[key] = inputNumber(value, forzaShiftTuning[key]);
     updateForzaShiftTuning(patch);
+  };
+
+  const updateShiftClutchMode = (mode: ForzaShiftClutchMode) => {
+    updateForzaShiftTuning({ clutchMode: mode });
   };
 
   const updateRevPercent = (
@@ -279,7 +328,106 @@
           </select>
         </label>
       </Tooltip>
-      {#if advancedOpen && meta.id === 'abs_slip_pulse'}
+      {#if advancedOpen && meta.id === 'brake_resistance'}
+        <div class="dm-channel-advanced dm-effect-advanced-grid" aria-label="Advanced brake pressure tuning">
+          <label>
+            <span>Initial force %</span>
+            <input
+              class="dm-fader-value"
+              max="100"
+              min="0"
+              step="1"
+              type="number"
+              value={percentValue(forzaBrakeTuning.baselineForce)}
+              oninput={(event) => updateBrakePercent('baselineForce', event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            <span>Pedal force %</span>
+            <input
+              class="dm-fader-value"
+              max="100"
+              min="0"
+              step="1"
+              type="number"
+              value={percentValue(forzaBrakeTuning.normalForce)}
+              oninput={(event) => updateBrakePercent('normalForce', event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            <span>Max input %</span>
+            <input
+              class="dm-fader-value"
+              max="100"
+              min="0"
+              step="1"
+              type="number"
+              value={percentValue(forzaBrakeTuning.endstopForce)}
+              oninput={(event) => updateBrakePercent('endstopForce', event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            <span>Max boost %</span>
+            <input
+              class="dm-fader-value"
+              max="500"
+              min="0"
+              step="5"
+              type="number"
+              value={Math.round(forzaBrakeTuning.endstopBoost * 100)}
+              oninput={(event) => updateBrakeNumber('endstopBoost', inputNumber(event.currentTarget.value, forzaBrakeTuning.endstopBoost * 100) / 100)}
+            />
+          </label>
+          <label>
+            <span>Guard from %</span>
+            <input
+              class="dm-fader-value"
+              max="100"
+              min="0"
+              step="1"
+              type="number"
+              value={percentValue(forzaBrakeTuning.guardMinEnd)}
+              oninput={(event) => updateBrakePercent('guardMinEnd', event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            <span>Wall at %</span>
+            <input
+              class="dm-fader-value"
+              max="100"
+              min="0"
+              step="1"
+              type="number"
+              value={percentValue(forzaBrakeTuning.wallPosition)}
+              oninput={(event) => updateBrakePercent('wallPosition', event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            <span>Full force %</span>
+            <input
+              class="dm-fader-value"
+              max="100"
+              min="0"
+              step="1"
+              type="number"
+              value={percentValue(forzaBrakeTuning.fullForceAt)}
+              oninput={(event) => updateBrakePercent('fullForceAt', event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            <span>Ramp curve</span>
+            <input
+              class="dm-fader-value"
+              max="4"
+              min="0.4"
+              step="0.05"
+              type="number"
+              value={forzaBrakeTuning.rampCurve}
+              oninput={(event) => updateBrakeNumber('rampCurve', event.currentTarget.value)}
+            />
+          </label>
+        </div>
+      {:else if advancedOpen && meta.id === 'abs_slip_pulse'}
         <div class="dm-channel-advanced dm-effect-advanced-grid" aria-label="Advanced ABS tuning">
           <label>
             <span>Mode</span>
@@ -525,6 +673,78 @@
               type="number"
               value={Math.round(forzaShiftTuning.wallZones)}
               oninput={(event) => updateShiftNumber('wallZones', event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            <span>Clutch mode</span>
+            <select
+              class="dm-fader-value"
+              value={forzaShiftTuning.clutchMode}
+              onchange={(event) => updateShiftClutchMode(event.currentTarget.value as ForzaShiftClutchMode)}
+            >
+              <option value="auto">Auto</option>
+              <option value="manual_clutch">Manual clutch</option>
+              <option value="off">Off</option>
+            </select>
+          </label>
+          <label>
+            <span>Clutch at %</span>
+            <input
+              class="dm-fader-value"
+              max="100"
+              min="0"
+              step="1"
+              type="number"
+              value={percentValue(forzaShiftTuning.clutchThreshold)}
+              oninput={(event) => updateShiftPercent('clutchThreshold', event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            <span>With clutch %</span>
+            <input
+              class="dm-fader-value"
+              max="100"
+              min="0"
+              step="1"
+              type="number"
+              value={percentValue(forzaShiftTuning.withClutchStrength)}
+              oninput={(event) => updateShiftPercent('withClutchStrength', event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            <span>With clutch ms</span>
+            <input
+              class="dm-fader-value"
+              max="400"
+              min="40"
+              step="5"
+              type="number"
+              value={Math.round(forzaShiftTuning.withClutchDurationMs)}
+              oninput={(event) => updateShiftNumber('withClutchDurationMs', event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            <span>No clutch %</span>
+            <input
+              class="dm-fader-value"
+              max="100"
+              min="0"
+              step="1"
+              type="number"
+              value={percentValue(forzaShiftTuning.withoutClutchStrength)}
+              oninput={(event) => updateShiftPercent('withoutClutchStrength', event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            <span>No clutch ms</span>
+            <input
+              class="dm-fader-value"
+              max="500"
+              min="40"
+              step="5"
+              type="number"
+              value={Math.round(forzaShiftTuning.withoutClutchDurationMs)}
+              oninput={(event) => updateShiftNumber('withoutClutchDurationMs', event.currentTarget.value)}
             />
           </label>
           <label>

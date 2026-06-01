@@ -179,6 +179,7 @@ impl Default for ForzaTelemetryConfig {
         Self {
             body_rumble_mode: default_forza_body_rumble_mode(),
             effects: default_forza_effect_configs(),
+            brake: ForzaBrakeTuningConfig::default(),
             abs: ForzaAbsTuningConfig::default(),
             throttle: ForzaThrottleTuningConfig::default(),
             shift: ForzaShiftTuningConfig::default(),
@@ -225,6 +226,7 @@ impl ForzaTelemetryConfig {
         Self {
             body_rumble_mode,
             effects,
+            brake: self.brake.normalized(),
             abs: self.abs.normalized(),
             throttle: self.throttle.normalized(),
             shift: self.shift.normalized(),
@@ -241,6 +243,102 @@ impl ForzaTelemetryConfig {
             .unwrap_or_else(|| default.clone())
             .normalized_with_default(&default)
     }
+}
+
+impl Default for ForzaBrakeTuningConfig {
+    fn default() -> Self {
+        Self {
+            baseline_force: default_forza_brake_baseline_force(),
+            normal_force: default_forza_brake_normal_force(),
+            endstop_force: default_forza_brake_endstop_force(),
+            endstop_boost: default_forza_brake_endstop_boost(),
+            wall_position: default_forza_brake_wall_position(),
+            guard_min_end: default_forza_brake_guard_min_end(),
+            full_force_at: default_forza_brake_full_force_at(),
+            ramp_curve: default_forza_brake_ramp_curve(),
+        }
+    }
+}
+
+impl ForzaBrakeTuningConfig {
+    pub(crate) fn normalized(mut self) -> Self {
+        self.baseline_force = finite_clamp(
+            self.baseline_force,
+            0.0,
+            1.0,
+            default_forza_brake_baseline_force(),
+        );
+        self.normal_force = finite_clamp(
+            self.normal_force,
+            self.baseline_force,
+            1.0,
+            default_forza_brake_normal_force(),
+        );
+        self.endstop_force = finite_clamp(
+            self.endstop_force,
+            0.0,
+            1.0,
+            default_forza_brake_endstop_force(),
+        );
+        self.endstop_boost = finite_clamp(
+            self.endstop_boost,
+            0.0,
+            5.0,
+            default_forza_brake_endstop_boost(),
+        );
+        self.wall_position = finite_clamp(
+            self.wall_position,
+            0.0,
+            1.0,
+            default_forza_brake_wall_position(),
+        );
+        self.guard_min_end = finite_clamp(
+            self.guard_min_end,
+            0.0,
+            1.0,
+            default_forza_brake_guard_min_end(),
+        );
+        self.full_force_at = finite_clamp(
+            self.full_force_at,
+            0.0,
+            1.0,
+            default_forza_brake_full_force_at(),
+        );
+        self.ramp_curve = finite_clamp(self.ramp_curve, 0.4, 4.0, default_forza_brake_ramp_curve());
+        self
+    }
+}
+
+pub(crate) fn default_forza_brake_baseline_force() -> f64 {
+    FORZA_BRAKE_BASELINE_FORCE
+}
+
+pub(crate) fn default_forza_brake_normal_force() -> f64 {
+    FORZA_BRAKE_NORMAL_FORCE
+}
+
+pub(crate) fn default_forza_brake_endstop_force() -> f64 {
+    FORZA_BRAKE_ENDSTOP_FORCE
+}
+
+pub(crate) fn default_forza_brake_endstop_boost() -> f64 {
+    FORZA_BRAKE_ENDSTOP_FORCE_BOOST
+}
+
+pub(crate) fn default_forza_brake_wall_position() -> f64 {
+    FORZA_BRAKE_OVERTRAVEL_WALL_POSITION
+}
+
+pub(crate) fn default_forza_brake_guard_min_end() -> f64 {
+    FORZA_BRAKE_OVERTRAVEL_MIN_POSITION
+}
+
+pub(crate) fn default_forza_brake_full_force_at() -> f64 {
+    FORZA_BRAKE_FULL_FORCE_INPUT
+}
+
+pub(crate) fn default_forza_brake_ramp_curve() -> f64 {
+    FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE
 }
 
 impl Default for ForzaAbsTuningConfig {
@@ -469,6 +567,12 @@ impl Default for ForzaShiftTuningConfig {
             wall_zones: default_forza_shift_wall_zones(),
             body_low_weight: default_forza_shift_body_low_weight(),
             body_high_weight: default_forza_shift_body_high_weight(),
+            clutch_mode: default_forza_shift_clutch_mode(),
+            clutch_threshold: default_forza_shift_clutch_threshold(),
+            with_clutch_strength: default_forza_shift_with_clutch_strength(),
+            without_clutch_strength: default_forza_shift_without_clutch_strength(),
+            with_clutch_duration_ms: default_forza_shift_with_clutch_duration_ms(),
+            without_clutch_duration_ms: default_forza_shift_without_clutch_duration_ms(),
         }
     }
 }
@@ -500,6 +604,37 @@ impl ForzaShiftTuningConfig {
             1.5,
             default_forza_shift_body_high_weight(),
         );
+        self.clutch_mode = normalize_forza_shift_clutch_mode(&self.clutch_mode).to_string();
+        self.clutch_threshold = finite_clamp(
+            self.clutch_threshold,
+            0.0,
+            1.0,
+            default_forza_shift_clutch_threshold(),
+        );
+        self.with_clutch_strength = finite_clamp(
+            self.with_clutch_strength,
+            0.0,
+            1.0,
+            default_forza_shift_with_clutch_strength(),
+        );
+        self.without_clutch_strength = finite_clamp(
+            self.without_clutch_strength,
+            0.0,
+            1.0,
+            default_forza_shift_without_clutch_strength(),
+        );
+        self.with_clutch_duration_ms = finite_clamp(
+            self.with_clutch_duration_ms,
+            40.0,
+            400.0,
+            default_forza_shift_with_clutch_duration_ms(),
+        );
+        self.without_clutch_duration_ms = finite_clamp(
+            self.without_clutch_duration_ms,
+            40.0,
+            500.0,
+            default_forza_shift_without_clutch_duration_ms(),
+        );
         self
     }
 }
@@ -522,6 +657,38 @@ pub(crate) fn default_forza_shift_body_low_weight() -> f64 {
 
 pub(crate) fn default_forza_shift_body_high_weight() -> f64 {
     0.84
+}
+
+pub(crate) fn default_forza_shift_clutch_mode() -> String {
+    "auto".to_string()
+}
+
+pub(crate) fn default_forza_shift_clutch_threshold() -> f64 {
+    FORZA_SHIFT_CLUTCH_THRESHOLD
+}
+
+pub(crate) fn default_forza_shift_with_clutch_strength() -> f64 {
+    FORZA_SHIFT_WITH_CLUTCH_STRENGTH
+}
+
+pub(crate) fn default_forza_shift_without_clutch_strength() -> f64 {
+    FORZA_SHIFT_WITHOUT_CLUTCH_STRENGTH
+}
+
+pub(crate) fn default_forza_shift_with_clutch_duration_ms() -> f64 {
+    FORZA_SHIFT_WITH_CLUTCH_DURATION_MS
+}
+
+pub(crate) fn default_forza_shift_without_clutch_duration_ms() -> f64 {
+    FORZA_SHIFT_WITHOUT_CLUTCH_DURATION_MS
+}
+
+pub(crate) fn normalize_forza_shift_clutch_mode(mode: &str) -> &'static str {
+    match mode {
+        "off" => "off",
+        "manual_clutch" => "manual_clutch",
+        _ => "auto",
+    }
 }
 
 impl Default for ForzaRevLimiterTuningConfig {

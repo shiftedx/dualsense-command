@@ -123,6 +123,7 @@
     clamp,
     clampForzaIntensity,
     defaultForzaAbsTuning,
+    defaultForzaBrakeTuning,
     defaultForzaEffects,
     defaultForzaRevLimiterTuning,
     defaultForzaShiftTuning,
@@ -132,6 +133,7 @@
     forzaPresetEffects,
     normalizeEffectId,
     normalizeForzaAbsTuning,
+    normalizeForzaBrakeTuning,
     normalizeForzaEffects,
     normalizeForzaRevLimiterTuning,
     normalizeForzaShiftTuning,
@@ -212,6 +214,7 @@
     EffectTestRequest,
     ExportedProfile,
     ForzaAbsTuningConfiguration,
+    ForzaBrakeTuningConfiguration,
     ForzaBodyRumbleMode,
     ForzaEffectConfiguration,
     ForzaRevLimiterTuningConfiguration,
@@ -342,6 +345,7 @@
   let vibrationMode = 'Balanced';
   let forzaBodyRumbleMode: ForzaBodyRumbleMode = 'native_passthrough';
   let forzaAbsTuning: ForzaAbsTuningConfiguration = defaultForzaAbsTuning();
+  let forzaBrakeTuning: ForzaBrakeTuningConfiguration = defaultForzaBrakeTuning();
   let forzaThrottleTuning: ForzaThrottleTuningConfiguration = defaultForzaThrottleTuning();
   let forzaShiftTuning: ForzaShiftTuningConfiguration = defaultForzaShiftTuning();
   let forzaRevLimiterTuning: ForzaRevLimiterTuningConfiguration = defaultForzaRevLimiterTuning();
@@ -1465,6 +1469,7 @@
     createDefaultControllerConfig({
       isEdge: isEdgeController(),
       defaultForzaEffects: defaultForzaEffects(),
+      defaultForzaBrakeTuning: defaultForzaBrakeTuning(),
       defaultForzaAbsTuning: defaultForzaAbsTuning(),
       defaultForzaThrottleTuning: defaultForzaThrottleTuning(),
       defaultForzaShiftTuning: defaultForzaShiftTuning(),
@@ -1474,6 +1479,7 @@
   const profileConfigSignature = (config: EditableControllerConfig | ControllerConfiguration): string =>
     createProfileConfigSignature(config, {
       isEdge: isEdgeController(),
+      normalizeForzaBrakeTuning,
       normalizeForzaEffects,
       normalizeForzaAbsTuning,
       normalizeForzaThrottleTuning,
@@ -1533,6 +1539,14 @@
     scheduleLiveControllerConfigSync();
   };
 
+  const updateForzaBrakeTuning = (patch: Partial<ForzaBrakeTuningConfiguration>) => {
+    forzaBrakeTuning = normalizeForzaBrakeTuning({
+      ...forzaBrakeTuning,
+      ...patch
+    });
+    scheduleLiveControllerConfigSync();
+  };
+
   const updateForzaThrottleTuning = (patch: Partial<ForzaThrottleTuningConfiguration>) => {
     forzaThrottleTuning = normalizeForzaThrottleTuning({
       ...forzaThrottleTuning,
@@ -1573,19 +1587,19 @@
 
   const triggerCurveValue = (side: TriggerSide, position: number) =>
     side === 'l2'
-      ? triggerCurveValueFor(side, position, l2From, l2To, l2Curve, l2CurvePoints, defaultTriggerCurve('l2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects, forzaThrottleTuning)
-      : triggerCurveValueFor(side, position, r2From, r2To, r2Curve, r2CurvePoints, defaultTriggerCurve('r2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects, forzaThrottleTuning);
+      ? triggerCurveValueFor(side, position, l2From, l2To, l2Curve, l2CurvePoints, defaultTriggerCurve('l2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects, forzaBrakeTuning, forzaThrottleTuning)
+      : triggerCurveValueFor(side, position, r2From, r2To, r2Curve, r2CurvePoints, defaultTriggerCurve('r2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects, forzaBrakeTuning, forzaThrottleTuning);
 
-  $: l2CurveShape = triggerCurveShapeView('l2', l2From, l2To, l2Curve, l2CurvePoints, defaultTriggerCurve('l2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects, forzaThrottleTuning);
-  $: r2CurveShape = triggerCurveShapeView('r2', r2From, r2To, r2Curve, r2CurvePoints, defaultTriggerCurve('r2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects, forzaThrottleTuning);
-  $: l2CurveLive = triggerCurveLiveView('l2', l2From, l2To, l2Curve, l2CurvePoints, defaultTriggerCurve('l2'), l2LivePress, triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects, forzaThrottleTuning);
-  $: r2CurveLive = triggerCurveLiveView('r2', r2From, r2To, r2Curve, r2CurvePoints, defaultTriggerCurve('r2'), r2LivePress, triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects, forzaThrottleTuning);
+  $: l2CurveShape = triggerCurveShapeView('l2', l2From, l2To, l2Curve, l2CurvePoints, defaultTriggerCurve('l2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects, forzaBrakeTuning, forzaThrottleTuning);
+  $: r2CurveShape = triggerCurveShapeView('r2', r2From, r2To, r2Curve, r2CurvePoints, defaultTriggerCurve('r2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects, forzaBrakeTuning, forzaThrottleTuning);
+  $: l2CurveLive = triggerCurveLiveView('l2', l2From, l2To, l2Curve, l2CurvePoints, defaultTriggerCurve('l2'), l2LivePress, triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects, forzaBrakeTuning, forzaThrottleTuning);
+  $: r2CurveLive = triggerCurveLiveView('r2', r2From, r2To, r2Curve, r2CurvePoints, defaultTriggerCurve('r2'), r2LivePress, triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects, forzaBrakeTuning, forzaThrottleTuning);
   $: triggerRangeTooltipForCurrentTuning = (
     side: 'L2' | 'R2',
     edge: 'from' | 'to',
     value: number,
     startValue = 0
-  ) => triggerRangeTooltip(side, edge, value, startValue, forzaThrottleTuning);
+  ) => triggerRangeTooltip(side, edge, value, startValue, forzaBrakeTuning, forzaThrottleTuning);
 
   const showTriggerPress = (_side: 'l2' | 'r2', value: number) =>
     baseFeelTestActive || clampUnit(value) > 0.01;
@@ -1617,8 +1631,8 @@
     if (triggerCurveDisplayMode === 'forza') {
       const model =
         side === 'l2'
-          ? forzaTriggerForceModelFor(side, l2From, l2To, l2Curve, l2CurvePoints, defaultTriggerCurve(side), triggerEffect, triggerIntensity, forzaEffects, forzaThrottleTuning)
-          : forzaTriggerForceModelFor(side, r2From, r2To, r2Curve, r2CurvePoints, defaultTriggerCurve(side), triggerEffect, triggerIntensity, forzaEffects, forzaThrottleTuning);
+          ? forzaTriggerForceModelFor(side, l2From, l2To, l2Curve, l2CurvePoints, defaultTriggerCurve(side), triggerEffect, triggerIntensity, forzaEffects, forzaBrakeTuning, forzaThrottleTuning)
+          : forzaTriggerForceModelFor(side, r2From, r2To, r2Curve, r2CurvePoints, defaultTriggerCurve(side), triggerEffect, triggerIntensity, forzaEffects, forzaBrakeTuning, forzaThrottleTuning);
       if (model && model.normalForce > model.baselineForce) {
         const editableEnd = model.rampStart ?? model.wall;
         const editableInput = clamp(input, model.start + 0.0001, Math.max(model.start + 0.0001, editableEnd - 0.0001));
@@ -1815,6 +1829,7 @@
     rightStickDeadzone = normalizeStickDeadzone(config.sticks?.rightDeadzone ?? 0);
     forzaBodyRumbleMode = normalizeForzaBodyRumbleMode(config.forza?.bodyRumbleMode);
     forzaEffects = normalizeForzaEffects(config.forza?.effects);
+    forzaBrakeTuning = normalizeForzaBrakeTuning(config.forza?.brake);
     forzaAbsTuning = normalizeForzaAbsTuning(config.forza?.abs);
     forzaThrottleTuning = normalizeForzaThrottleTuning(config.forza?.throttle);
     forzaShiftTuning = normalizeForzaShiftTuning(config.forza?.shift);
@@ -1926,6 +1941,7 @@
       profileId,
       isEdge: isEdgeController(),
       defaultForzaEffects: defaultForzaEffects(),
+      defaultForzaBrakeTuning: defaultForzaBrakeTuning(),
       defaultForzaAbsTuning: defaultForzaAbsTuning(),
       defaultForzaThrottleTuning: defaultForzaThrottleTuning(),
       defaultForzaShiftTuning: defaultForzaShiftTuning(),
@@ -1938,6 +1954,7 @@
     createEditableConfigFromProfileExport(config, {
       isEdge: isEdgeController(),
       defaultForzaEffects: defaultForzaEffects(),
+      defaultForzaBrakeTuning: defaultForzaBrakeTuning(),
       defaultForzaAbsTuning: defaultForzaAbsTuning(),
       defaultForzaThrottleTuning: defaultForzaThrottleTuning(),
       defaultForzaShiftTuning: defaultForzaShiftTuning(),
@@ -2000,6 +2017,7 @@
     lightbarBrightness,
     forzaBodyRumbleMode,
     forzaEffects,
+    forzaBrakeTuning,
     forzaAbsTuning,
     forzaThrottleTuning,
     forzaShiftTuning,
@@ -2015,6 +2033,7 @@
 
     return buildControllerConfigDraft(base, currentProfileDraftValues(), {
       isEdge: isEdgeController(),
+      normalizeForzaBrakeTuning,
       normalizeForzaEffects,
       normalizeForzaAbsTuning,
       normalizeForzaThrottleTuning,
@@ -3106,6 +3125,7 @@
         {forzaEffectsById}
         {effectStatusById}
         {forzaBodyRumbleMode}
+        {forzaBrakeTuning}
         {forzaAbsTuning}
         {forzaThrottleTuning}
         {forzaShiftTuning}
@@ -3115,6 +3135,7 @@
         {forzaEffect}
         {toggleAllForzaEffects}
         {setForzaBodyRumbleMode}
+        {updateForzaBrakeTuning}
         {updateForzaAbsTuning}
         {updateForzaThrottleTuning}
         {updateForzaShiftTuning}

@@ -5,6 +5,7 @@ import type {
   CurrentEffectState,
   ExportedProfile,
   ForzaAbsTuningConfiguration,
+  ForzaBrakeTuningConfiguration,
   ForzaEffectConfiguration,
   ForzaRevLimiterTuningConfiguration,
   ForzaShiftTuningConfiguration,
@@ -53,6 +54,17 @@ export const mockForzaAbsTuning: ForzaAbsTuningConfiguration = {
   curve: 0.55
 };
 
+export const mockForzaBrakeTuning: ForzaBrakeTuningConfiguration = {
+  baselineForce: 76 / 255,
+  normalForce: 1,
+  endstopForce: 1,
+  endstopBoost: 1.25,
+  wallPosition: 0.48,
+  guardMinEnd: 0.48,
+  fullForceAt: 0.8,
+  rampCurve: 0.8
+};
+
 export const mockForzaThrottleTuning: ForzaThrottleTuningConfiguration = {
   baselineForce: 3 / 255,
   normalForce: 28 / 255,
@@ -69,7 +81,13 @@ export const mockForzaShiftTuning: ForzaShiftTuningConfiguration = {
   frequencyHz: 34,
   wallZones: 4,
   bodyLowWeight: 0.92,
-  bodyHighWeight: 0.84
+  bodyHighWeight: 0.84,
+  clutchMode: 'auto',
+  clutchThreshold: 0.4,
+  withClutchStrength: 0.58,
+  withoutClutchStrength: 1,
+  withClutchDurationMs: 130,
+  withoutClutchDurationMs: 240
 };
 
 export const mockForzaRevLimiterTuning: ForzaRevLimiterTuningConfiguration = {
@@ -191,6 +209,7 @@ export const mockControllerConfig: ControllerConfiguration = {
   forza: {
     bodyRumbleMode: 'native_passthrough',
     effects: mockForzaEffects,
+    brake: mockForzaBrakeTuning,
     abs: mockForzaAbsTuning,
     throttle: mockForzaThrottleTuning,
     shift: mockForzaShiftTuning,
@@ -276,6 +295,11 @@ export const mockProfileConfigs: Record<string, MockEditableControllerConfig> = 
         ...mockForzaAbsTuning,
         minStrength: 0.62,
         frequencyHz: 30
+      },
+      brake: {
+        ...mockForzaBrakeTuning,
+        wallPosition: 0.52,
+        fullForceAt: 0.84
       },
       throttle: {
         ...mockForzaThrottleTuning,
@@ -540,6 +564,7 @@ export const mockAppSnapshot: AppSnapshot = {
   telemetry: [
     { name: 'input.brake', value: 0.34, updatedMsAgo: 12 },
     { name: 'input.throttle', value: 0.68, updatedMsAgo: 12 },
+    { name: 'input.clutch', value: 0.12, updatedMsAgo: 12 },
     { name: 'input.handbrake', value: 0, updatedMsAgo: 12 },
     { name: 'wheel.slip.front_max', value: 0.18, updatedMsAgo: 12 },
     { name: 'wheel.slip.max', value: 0.22, updatedMsAgo: 12 },
@@ -548,7 +573,7 @@ export const mockAppSnapshot: AppSnapshot = {
     { name: 'surface.puddle.max', value: 0.03, updatedMsAgo: 12 },
     { name: 'vehicle.acceleration.magnitude', value: 1.42, unit: 'g', updatedMsAgo: 12 },
     { name: 'vehicle.rpm_ratio', value: 0.72, updatedMsAgo: 12 },
-    { name: 'drivetrain.shift_pulse', value: false, updatedMsAgo: 12 }
+    { name: 'drivetrain.shift_pulse', value: 0, updatedMsAgo: 12 }
   ],
   logs: [
     { level: 'info', time: '12:00:00', source: 'mock', message: 'Mock DSCC snapshot loaded.' },
