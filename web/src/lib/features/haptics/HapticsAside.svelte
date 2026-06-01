@@ -6,6 +6,7 @@
   import type {
     AppSnapshot,
     ForzaAbsTuningConfiguration,
+    ForzaBrakeTuningConfiguration,
     ForzaBodyRumbleMode,
     ForzaEffectConfiguration,
     ForzaEffectRoute,
@@ -58,6 +59,16 @@
   export let forzaEffectsById: ReadonlyMap<string, ForzaEffectConfiguration> = new Map();
   export let effectStatusById: ReadonlyMap<string, { state?: string }> = new Map();
   export let forzaBodyRumbleMode: ForzaBodyRumbleMode = 'native_passthrough';
+  export let forzaBrakeTuning: ForzaBrakeTuningConfiguration = {
+    baselineForce: 76 / 255,
+    normalForce: 1,
+    endstopForce: 1,
+    endstopBoost: 1.25,
+    wallPosition: 0.48,
+    guardMinEnd: 0.48,
+    fullForceAt: 0.8,
+    rampCurve: 0.8
+  };
   export let forzaAbsTuning: ForzaAbsTuningConfiguration = {
     mode: 'strong_pulse',
     slipSource: 'auto_front_first',
@@ -84,7 +95,13 @@
     frequencyHz: 34,
     wallZones: 4,
     bodyLowWeight: 0.92,
-    bodyHighWeight: 0.84
+    bodyHighWeight: 0.84,
+    clutchMode: 'auto',
+    clutchThreshold: 0.4,
+    withClutchStrength: 0.58,
+    withoutClutchStrength: 1,
+    withClutchDurationMs: 130,
+    withoutClutchDurationMs: 240
   };
   export let forzaRevLimiterTuning: ForzaRevLimiterTuningConfiguration = {
     thresholdRatio: 0.93,
@@ -107,6 +124,9 @@
   });
   export let toggleAllForzaEffects: () => void = noop;
   export let setForzaBodyRumbleMode: (value: ForzaBodyRumbleMode) => void = noop as (value: ForzaBodyRumbleMode) => void;
+  export let updateForzaBrakeTuning: (patch: Partial<ForzaBrakeTuningConfiguration>) => void = noop as (
+    patch: Partial<ForzaBrakeTuningConfiguration>
+  ) => void;
   export let updateForzaAbsTuning: (patch: Partial<ForzaAbsTuningConfiguration>) => void = noop as (
     patch: Partial<ForzaAbsTuningConfiguration>
   ) => void;
@@ -205,6 +225,7 @@
       {forzaEffectsById}
       {effectStatusById}
       {forzaBodyRumbleMode}
+      {forzaBrakeTuning}
       {forzaAbsTuning}
       {forzaThrottleTuning}
       {forzaShiftTuning}
@@ -214,6 +235,7 @@
       {forzaEffect}
       {toggleAllForzaEffects}
       {setForzaBodyRumbleMode}
+      {updateForzaBrakeTuning}
       {updateForzaAbsTuning}
       {updateForzaThrottleTuning}
       {updateForzaShiftTuning}

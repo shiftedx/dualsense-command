@@ -226,6 +226,7 @@ fn forza_shift_thump_wins_over_rev_limiter_on_r2() {
         signal_update("tire.slip_ratio.max", 0.0),
         signal_update("wheel.slip.max", 0.0),
         signal_update("drivetrain.shift_event", "shift"),
+        signal_update("drivetrain.shift_pulse", 1.0),
     ]);
     let profile = forza_runtime_profile("forza-horizon", "Forza", Some(&config));
     let frame = EffectEngine::new().evaluate(&profile, &snapshot);
@@ -260,6 +261,7 @@ fn forza_shift_thump_uses_plain_pulse_near_idle() {
         signal_update("tire.slip_ratio.max", 0.0),
         signal_update("wheel.slip.max", 0.0),
         signal_update("drivetrain.shift_event", "shift"),
+        signal_update("drivetrain.shift_pulse", 1.0),
     ]);
     let profile = forza_runtime_profile("forza-horizon", "Forza", Some(&config));
     let frame = EffectEngine::new().evaluate(&profile, &snapshot);
@@ -307,6 +309,7 @@ fn forza_shift_advanced_tuning_moves_wall_form_threshold_and_frequency() {
             signal_update("tire.slip_ratio.max", 0.0),
             signal_update("wheel.slip.max", 0.0),
             signal_update("drivetrain.shift_event", "shift"),
+            signal_update("drivetrain.shift_pulse", 1.0),
         ])
     };
 

@@ -99,18 +99,25 @@ fn endstop_wall_position(start: f64, end: f64) -> f64 {
     (end - FORZA_ENDSTOP_WALL_OFFSET).clamp(start, end)
 }
 
-pub(crate) fn brake_overtravel_guard_active(end: f64) -> bool {
-    end >= FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION
+pub(crate) fn brake_overtravel_guard_active(end: f64, guard_min_end: f64) -> bool {
+    end >= guard_min_end.clamp(0.0, 1.0)
 }
 
-pub(crate) fn brake_overtravel_wall_position(start: f64, end: f64) -> f64 {
-    if brake_overtravel_guard_active(end) {
-        return (end - FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET)
-            .max(FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION)
-            .clamp(start, end);
+pub(crate) fn brake_overtravel_wall_position(
+    start: f64,
+    end: f64,
+    wall_position: f64,
+    guard_min_end: f64,
+) -> f64 {
+    if brake_overtravel_guard_active(end, guard_min_end) {
+        return end.min(wall_position.clamp(0.0, 1.0)).clamp(start, end);
     }
 
     endstop_wall_position(start, end)
+}
+
+pub(crate) fn brake_full_force_position(wall: f64, end: f64, full_force_at: f64) -> f64 {
+    full_force_at.clamp(wall, end)
 }
 
 pub(crate) fn throttle_overtravel_guard_active(end: f64, guard_min_end: f64) -> bool {

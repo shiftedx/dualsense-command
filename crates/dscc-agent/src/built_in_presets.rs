@@ -79,6 +79,7 @@ pub(crate) fn forza_horizon_preset() -> ForzaTelemetryConfig {
     ForzaTelemetryConfig {
         body_rumble_mode: default_forza_body_rumble_mode(),
         effects,
+        brake: ForzaBrakeTuningConfig::default(),
         abs: forza_horizon_abs_tuning(),
         throttle: ForzaThrottleTuningConfig::default(),
         shift: ForzaShiftTuningConfig::default(),
@@ -135,6 +136,7 @@ pub(crate) fn forza_horizon_immersive_preset() -> ForzaTelemetryConfig {
     ForzaTelemetryConfig {
         body_rumble_mode: default_forza_body_rumble_mode(),
         effects,
+        brake: ForzaBrakeTuningConfig::default(),
         abs: forza_horizon_immersive_abs_tuning(),
         throttle: ForzaThrottleTuningConfig::default(),
         shift: ForzaShiftTuningConfig::default(),
@@ -179,6 +181,7 @@ pub(crate) fn assetto_corsa_rally_preset() -> ForzaTelemetryConfig {
     ForzaTelemetryConfig {
         body_rumble_mode: default_forza_body_rumble_mode(),
         effects,
+        brake: ForzaBrakeTuningConfig::default(),
         abs: ForzaAbsTuningConfig::default(),
         throttle: ForzaThrottleTuningConfig::default(),
         shift: ForzaShiftTuningConfig::default(),

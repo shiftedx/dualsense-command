@@ -1,3 +1,56 @@
+# DualSense Command Center 0.3.7
+
+Release date: 2026-06-01
+
+0.3.7 adds clutch-aware shift feedback for racing telemetry profiles and keeps
+the 0.3.6 USB output hotfix.
+
+## Clutch-Aware Shift Feel
+
+- DSCC now reads clutch telemetry when the game provides it.
+- Paddle shift thump can tell smooth clutch-assisted shifts from harsher
+  no-clutch shifts.
+- Clutch-assisted shifts use a shorter, softer kick.
+- No-clutch shifts use a stronger, longer kick so missed clutch timing feels
+  more mechanical.
+- DSCC still uses the plain shift thump when clutch telemetry is missing, so
+  older telemetry paths do not feel broken.
+- Thanks to **ゾアン・ファンイ** for the clutch idea and the clear driver-feel notes
+  behind it.
+
+## Advanced Tuning
+
+- The Haptics advanced panel now exposes clutch mode, clutch threshold,
+  with-clutch strength, with-clutch duration, no-clutch strength, and no-clutch
+  duration.
+- The settings are saved with the same typed profile config as the other Forza
+  haptics controls.
+- The mock telemetry path now includes clutch and numeric shift-pulse values for
+  UI testing only.
+
+## Runtime Behavior
+
+- Pressing the clutch reduces DSCC-generated drivetrain body load, so the car
+  feels more uncoupled during shifts.
+- Shift pulse strength now flows through the same effect rules that drive R2 and
+  body rumble.
+- The 0.3.6 USB output report fix remains in this release.
+
+## Validation Gate
+
+This release passed:
+
+```powershell
+cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
+cargo +stable-x86_64-pc-windows-gnu test --workspace
+cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warnings
+npm.cmd --prefix web run typecheck
+npm.cmd --prefix web run build
+npm.cmd --prefix web run test:haptics-graph
+npm.cmd --prefix web run test:button-map
+npm.cmd --prefix web run test:release-size
+```
+
 # DualSense Command Center 0.3.6
 
 Release date: 2026-05-31

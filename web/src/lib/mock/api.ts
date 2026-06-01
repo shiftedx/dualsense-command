@@ -659,6 +659,8 @@ function normalizeProfileGameId(gameId: string | null | undefined): string | nul
 function updateMockTelemetry(): void {
   const seconds = (Date.now() - mockStartedAt) / 1000;
   const shiftPulse = Math.floor(seconds) % 8 === 0;
+  const clutchPressed = Math.floor(seconds + 2) % 10 === 0;
+  const shiftPulseValue = shiftPulse ? (clutchPressed ? 0.58 : 1) : 0;
   state.snapshot.status.uptime = formatDuration(860 + Math.floor(seconds));
   state.snapshot.adapters = state.snapshot.adapters.map((adapter) =>
     adapter.id === 'forza-data-out'
@@ -668,6 +670,7 @@ function updateMockTelemetry(): void {
   state.snapshot.telemetry = [
     { name: 'input.brake', value: roundedUnit(wave(seconds, 0.18, 0.72, 0.25)), updatedMsAgo: 10 },
     { name: 'input.throttle', value: roundedUnit(wave(seconds, 0.28, 0.96, 1.15)), updatedMsAgo: 10 },
+    { name: 'input.clutch', value: clutchPressed ? 0.86 : 0.04, updatedMsAgo: 10 },
     { name: 'input.handbrake', value: shiftPulse ? 1 : 0, updatedMsAgo: 10 },
     { name: 'wheel.slip.front_max', value: roundedUnit(wave(seconds, 0.04, 0.28, 2.2)), updatedMsAgo: 10 },
     { name: 'wheel.slip.max', value: roundedUnit(wave(seconds, 0.08, 0.46, 1.7)), updatedMsAgo: 10 },
@@ -681,7 +684,7 @@ function updateMockTelemetry(): void {
       updatedMsAgo: 10
     },
     { name: 'vehicle.rpm_ratio', value: roundedUnit(wave(seconds, 0.42, 0.98, 1.9)), updatedMsAgo: 10 },
-    { name: 'drivetrain.shift_pulse', value: shiftPulse, updatedMsAgo: 10 }
+    { name: 'drivetrain.shift_pulse', value: shiftPulseValue, updatedMsAgo: 10 }
   ];
   state.snapshot.effectState.parityEffects = state.snapshot.effectState.parityEffects.map((effect) =>
     effect.id === 'gear_shift_thump' || effect.id === 'rumble_strip'

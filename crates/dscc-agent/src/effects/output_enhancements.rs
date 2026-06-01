@@ -88,6 +88,7 @@ pub(crate) fn forza_rumble_output(
 ) -> Option<RumbleOutput> {
     let throttle = signal_unit_value(snapshot, "input.throttle");
     let brake = signal_unit_value(snapshot, "input.brake");
+    let clutch = signal_unit_value(snapshot, "input.clutch");
     let handbrake = signal_unit_value(snapshot, "input.handbrake");
     let rpm = signal_unit_value(snapshot, "vehicle.rpm_ratio");
     let speed = signal_scaled(snapshot, "vehicle.speed_kmh", 12.0, 280.0);
@@ -130,7 +131,8 @@ pub(crate) fn forza_rumble_output(
     } else {
         0.0
     };
-    let drivetrain = (rpm * rpm * (0.35 + throttle * 0.65)).clamp(0.0, 1.0);
+    let clutch_uncouple = 1.0 - clutch * 0.78;
+    let drivetrain = (rpm * rpm * (0.35 + throttle * 0.65) * clutch_uncouple).clamp(0.0, 1.0);
 
     let mut low = 0.0;
     let mut high = 0.0;

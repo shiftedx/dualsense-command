@@ -138,9 +138,15 @@ pub(crate) fn forza_runtime_profile(
     let r2_end = trigger.map_or(FORZA_THROTTLE_FULL_FORCE_AT, |trigger| {
         trigger_range_end_position(trigger.r2_from, trigger.r2_to)
     });
+    let brake_tuning = forza.brake.clone().normalized();
     let throttle_tuning = forza.throttle.clone().normalized();
-    let l2_has_overtravel_guard = brake_overtravel_guard_active(l2_end);
-    let l2_force_knee = brake_overtravel_wall_position(l2_start, l2_end);
+    let l2_has_overtravel_guard = brake_overtravel_guard_active(l2_end, brake_tuning.guard_min_end);
+    let l2_force_knee = brake_overtravel_wall_position(
+        l2_start,
+        l2_end,
+        brake_tuning.wall_position,
+        brake_tuning.guard_min_end,
+    );
     let r2_has_overtravel_guard =
         throttle_overtravel_guard_active(r2_end, throttle_tuning.guard_min_end);
     let r2_endstop_wall = throttle_overtravel_wall_position(
@@ -152,8 +158,8 @@ pub(crate) fn forza_runtime_profile(
     let r2_overtravel_ramp_start =
         throttle_overtravel_ramp_start(r2_start, r2_endstop_wall, throttle_tuning.ramp_width);
     let l2_final_stop_input =
-        (l2_end - FORZA_BRAKE_FINAL_STOP_ARM_OFFSET).clamp(l2_force_knee, l2_end);
-    let l2_final_stop_position = (l2_end - FORZA_BRAKE_FINAL_STOP_OFFSET).clamp(l2_start, l2_end);
+        brake_full_force_position(l2_force_knee, l2_end, brake_tuning.full_force_at);
+    let l2_final_stop_position = l2_final_stop_input.clamp(l2_start, l2_end);
     let l2_normal_end = if l2_has_overtravel_guard {
         l2_force_knee
     } else {
@@ -185,11 +191,12 @@ pub(crate) fn forza_runtime_profile(
     let rev = forza.effect("rev_limiter_buzz");
     let trigger_scalar = intensity.clamp(0.0, 1.0);
     let brake_baseline_force =
-        scaled_unit(FORZA_BRAKE_BASELINE_FORCE, brake.scalar() * trigger_scalar);
-    let brake_normal_force = scaled_unit(FORZA_BRAKE_NORMAL_FORCE, brake.scalar() * trigger_scalar);
+        scaled_unit(brake_tuning.baseline_force, brake.scalar() * trigger_scalar);
+    let brake_normal_force =
+        scaled_unit(brake_tuning.normal_force, brake.scalar() * trigger_scalar);
     let brake_endstop_force = scaled_unit(
-        FORZA_BRAKE_ENDSTOP_FORCE,
-        brake.scalar() * trigger_scalar * FORZA_BRAKE_ENDSTOP_FORCE_BOOST,
+        brake_tuning.endstop_force,
+        brake.scalar() * trigger_scalar * brake_tuning.endstop_boost,
     );
     let throttle_baseline_force = scaled_unit(
         throttle_tuning.baseline_force,
@@ -333,10 +340,10 @@ pub(crate) fn forza_runtime_profile(
                     strength: ValueSource::signal_curve(
                         "input.brake",
                         l2_force_knee,
-                        l2_end,
+                        l2_final_stop_input,
                         brake_normal_force,
                         brake_endstop_force,
-                        FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE,
+                        brake_tuning.ramp_curve,
                     ),
                 },
             });
@@ -569,7 +576,13 @@ fn push_shift_thump_rules(
                 shift_tuning.wall_form_at,
             ),
             effect: EffectTemplate::PulseAb {
-                strength: ValueSource::constant(shift_amplitude),
+                strength: ValueSource::signal_scale(
+                    "drivetrain.shift_pulse",
+                    0.0,
+                    1.0,
+                    0.0,
+                    shift_amplitude,
+                ),
                 frequency_hz: ValueSource::constant(shift_tuning.frequency_hz),
                 wall_zones: ValueSource::constant(shift_tuning.wall_zones),
             },
@@ -587,7 +600,13 @@ fn push_shift_thump_rules(
                 shift_tuning.wall_form_at,
             ),
             effect: EffectTemplate::Pulse {
-                amplitude: ValueSource::constant(shift_amplitude),
+                amplitude: ValueSource::signal_scale(
+                    "drivetrain.shift_pulse",
+                    0.0,
+                    1.0,
+                    0.0,
+                    shift_amplitude,
+                ),
                 frequency_hz: ValueSource::constant(shift_tuning.frequency_hz),
             },
         });

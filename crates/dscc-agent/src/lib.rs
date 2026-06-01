@@ -506,47 +506,104 @@ struct AgentStateInner {
 struct ForzaEffectRuntime {
     prev_shift_gear: Option<u8>,
     latched_shift_event: Option<&'static str>,
+    latched_shift_pulse: f64,
     latched_shift_until: Option<Instant>,
+    clutch_seen: bool,
     prev_suspension_impact: f64,
     latched_suspension_impact: f64,
     latched_suspension_impact_until: Option<Instant>,
 }
 
 impl ForzaEffectRuntime {
-    fn latch_shift_event(&mut self, event: &'static str, now: Instant) {
+    fn latch_shift_event(
+        &mut self,
+        event: &'static str,
+        pulse: f64,
+        duration: Duration,
+        now: Instant,
+    ) {
         if event == "none" {
             return;
         }
 
         self.latched_shift_event = Some(event);
-        self.latched_shift_until = Some(now + FORZA_SHIFT_EVENT_HOLD);
+        self.latched_shift_pulse = clamp_unit(pulse);
+        self.latched_shift_until = Some(now + duration);
     }
 
     fn detect_shift_event(
         &mut self,
         current_gear: Option<f64>,
+        clutch: Option<f64>,
         telemetry_on: bool,
         shift_enabled: bool,
+        shift_tuning: &ForzaShiftTuningConfig,
         now: Instant,
     ) -> Option<&'static str> {
         if !telemetry_on || !shift_enabled {
             return Some("none");
         }
 
+        let shift_tuning = shift_tuning.clone().normalized();
+        let clutch = clutch.map(clamp_unit);
+        if clutch.is_some_and(|value| value >= shift_tuning.clutch_threshold) {
+            self.clutch_seen = true;
+        }
+
         let current_gear = signal_gear_to_u8(current_gear?)?;
         let event = match self.prev_shift_gear {
-            Some(previous_gear) if previous_gear != current_gear => "shift",
+            Some(previous_gear) if previous_gear != current_gear => {
+                self.shift_event_for_clutch(clutch, &shift_tuning)
+            }
             _ => "none",
         };
 
         self.prev_shift_gear = Some(current_gear);
-        self.latch_shift_event(event, now);
+        let (pulse, duration) = self.shift_pulse_and_duration(event, &shift_tuning);
+        self.latch_shift_event(event, pulse, duration, now);
         Some(event)
     }
 
     fn latched_shift_event(&self, now: Instant) -> Option<&'static str> {
         self.latched_shift_event
             .filter(|_| self.latched_shift_until.is_some_and(|until| now < until))
+    }
+
+    fn latched_shift_pulse(&self, now: Instant) -> f64 {
+        self.latched_shift_event(now)
+            .map(|_| clamp_unit(self.latched_shift_pulse))
+            .unwrap_or_default()
+    }
+
+    fn shift_event_for_clutch(
+        &self,
+        clutch: Option<f64>,
+        shift_tuning: &ForzaShiftTuningConfig,
+    ) -> &'static str {
+        match shift_tuning.clutch_mode.as_str() {
+            "off" => "shift",
+            "manual_clutch" => clutch_quality_event(clutch, shift_tuning.clutch_threshold),
+            _ if self.clutch_seen => clutch_quality_event(clutch, shift_tuning.clutch_threshold),
+            _ => "shift",
+        }
+    }
+
+    fn shift_pulse_and_duration(
+        &self,
+        event: &str,
+        shift_tuning: &ForzaShiftTuningConfig,
+    ) -> (f64, Duration) {
+        match event {
+            "smooth_shift" => (
+                shift_tuning.with_clutch_strength,
+                duration_from_millis(shift_tuning.with_clutch_duration_ms),
+            ),
+            "rough_shift" => (
+                shift_tuning.without_clutch_strength,
+                duration_from_millis(shift_tuning.without_clutch_duration_ms),
+            ),
+            _ => (1.0, FORZA_SHIFT_EVENT_HOLD),
+        }
     }
 
     fn latch_suspension_impact(&mut self, strength: f64, now: Instant) {
@@ -598,6 +655,18 @@ impl ForzaEffectRuntime {
             0.0
         }
     }
+}
+
+fn clutch_quality_event(clutch: Option<f64>, threshold: f64) -> &'static str {
+    if clutch.unwrap_or_default() >= threshold {
+        "smooth_shift"
+    } else {
+        "rough_shift"
+    }
+}
+
+fn duration_from_millis(ms: f64) -> Duration {
+    Duration::from_millis(ms.round().clamp(1.0, u64::MAX as f64) as u64)
 }
 
 impl AgentStateInner {
@@ -1477,8 +1546,10 @@ impl AgentState {
                 .mark_packet(packet_len, sequence);
             if racing_shift_adapter(adapter_id) {
                 let current_gear = update_number(&updates, "drivetrain.gear");
+                let clutch = update_number(&updates, "input.clutch");
                 let telemetry_on = update_text(&updates, "game.state") == Some("driving");
                 let effect_toggles = racing_effect_toggles(&inner);
+                let shift_tuning = racing_shift_tuning(&inner);
                 let suspension_travel = update_number(&updates, "suspension.travel.max");
                 let acceleration_magnitude =
                     update_number(&updates, "vehicle.acceleration.magnitude");
@@ -1486,8 +1557,10 @@ impl AgentState {
                 let now = Instant::now();
                 if let Some(shift_event) = inner.forza_effect_runtime.detect_shift_event(
                     current_gear,
+                    clutch,
                     telemetry_on,
                     effect_toggles.shift_thump,
+                    &shift_tuning,
                     now,
                 ) {
                     updates.push(
@@ -1499,6 +1572,11 @@ impl AgentState {
                         .with_sequence(sequence),
                     )
                 }
+                updates.push(sequenced_signal_update(
+                    "drivetrain.shift_pulse",
+                    inner.forza_effect_runtime.latched_shift_pulse(now),
+                    sequence,
+                ));
                 let suspension_impact = inner.forza_effect_runtime.detect_suspension_impact(
                     suspension_travel,
                     acceleration_magnitude,

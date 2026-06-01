@@ -23,12 +23,11 @@ const frontendConstants = {
   FORZA_BRAKE_BASELINE_FORCE: hapticsOptions.FORZA_BRAKE_BASELINE_FORCE,
   FORZA_BRAKE_ENDSTOP_FORCE: hapticsOptions.FORZA_BRAKE_ENDSTOP_FORCE,
   FORZA_BRAKE_ENDSTOP_FORCE_BOOST: hapticsOptions.FORZA_BRAKE_ENDSTOP_FORCE_BOOST,
-  FORZA_BRAKE_FINAL_STOP_ARM_OFFSET: hapticsOptions.FORZA_BRAKE_FINAL_STOP_ARM_OFFSET,
-  FORZA_BRAKE_FINAL_STOP_OFFSET: hapticsOptions.FORZA_BRAKE_FINAL_STOP_OFFSET,
+  FORZA_BRAKE_FULL_FORCE_INPUT: hapticsOptions.FORZA_BRAKE_FULL_FORCE_INPUT,
   FORZA_BRAKE_NORMAL_FORCE: hapticsOptions.FORZA_BRAKE_NORMAL_FORCE,
   FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE: hapticsOptions.FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE,
-  FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION: hapticsOptions.FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION,
-  FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET: hapticsOptions.FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET,
+  FORZA_BRAKE_OVERTRAVEL_MIN_POSITION: hapticsOptions.FORZA_BRAKE_OVERTRAVEL_MIN_POSITION,
+  FORZA_BRAKE_OVERTRAVEL_WALL_POSITION: hapticsOptions.FORZA_BRAKE_OVERTRAVEL_WALL_POSITION,
   FORZA_ENDSTOP_WALL_OFFSET: hapticsOptions.FORZA_ENDSTOP_WALL_OFFSET,
   FORZA_THROTTLE_BASELINE_FORCE: hapticsOptions.FORZA_THROTTLE_BASELINE_FORCE,
   FORZA_THROTTLE_ENDSTOP_FORCE: hapticsOptions.FORZA_THROTTLE_ENDSTOP_FORCE,
@@ -97,17 +96,21 @@ const defaultThrottleTuning = {
   rampWidth: rustConstants.get('FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH'),
   rampCurve: rustConstants.get('FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE')
 };
-const brakeWall = (start, end) =>
-  end >= rustConstants.get('FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION')
-    ? clamp(
-        Math.max(
-          rustConstants.get('FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION'),
-          end - rustConstants.get('FORZA_BRAKE_OVERTRAVEL_WARNING_OFFSET')
-        ),
-        start,
-        end
-      )
+const defaultBrakeTuning = {
+  baselineForce: rustConstants.get('FORZA_BRAKE_BASELINE_FORCE'),
+  normalForce: rustConstants.get('FORZA_BRAKE_NORMAL_FORCE'),
+  endstopForce: rustConstants.get('FORZA_BRAKE_ENDSTOP_FORCE'),
+  endstopBoost: rustConstants.get('FORZA_BRAKE_ENDSTOP_FORCE_BOOST'),
+  wallPosition: rustConstants.get('FORZA_BRAKE_OVERTRAVEL_WALL_POSITION'),
+  guardMinEnd: rustConstants.get('FORZA_BRAKE_OVERTRAVEL_MIN_POSITION'),
+  fullForceAt: rustConstants.get('FORZA_BRAKE_FULL_FORCE_INPUT'),
+  rampCurve: rustConstants.get('FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE')
+};
+const brakeWall = (start, end, brakeTuning) =>
+  end >= brakeTuning.guardMinEnd
+    ? clamp(Math.min(end, brakeTuning.wallPosition), start, end)
     : clamp(end - rustConstants.get('FORZA_ENDSTOP_WALL_OFFSET'), start, end);
+const brakeFullForce = (wall, end, brakeTuning) => clamp(brakeTuning.fullForceAt, wall, end);
 const throttleWall = (start, end, throttleTuning) =>
   end >= throttleTuning.guardMinEnd
     ? clamp(Math.min(end, throttleTuning.wallPosition), start, end)
@@ -129,23 +132,20 @@ const expectedBackendForce = (side, position, config) => {
   if (x <= start) return 0;
 
   if (side === 'l2') {
-    const wall = brakeWall(start, end);
-    const finalStopInput = clamp(
-      end - rustConstants.get('FORZA_BRAKE_FINAL_STOP_ARM_OFFSET'),
-      wall,
-      end
-    );
-    const baseline = scaledUnit(rustConstants.get('FORZA_BRAKE_BASELINE_FORCE'), effectScalar * triggerScalar);
-    const normal = scaledUnit(rustConstants.get('FORZA_BRAKE_NORMAL_FORCE'), effectScalar * triggerScalar);
+    const brakeTuning = config.brakeTuning ?? defaultBrakeTuning;
+    const wall = brakeWall(start, end, brakeTuning);
+    const finalStopInput = brakeFullForce(wall, end, brakeTuning);
+    const baseline = scaledUnit(brakeTuning.baselineForce, effectScalar * triggerScalar);
+    const normal = scaledUnit(brakeTuning.normalForce, effectScalar * triggerScalar);
     const endstop = scaledUnit(
-      rustConstants.get('FORZA_BRAKE_ENDSTOP_FORCE'),
-      effectScalar * triggerScalar * rustConstants.get('FORZA_BRAKE_ENDSTOP_FORCE_BOOST')
+      brakeTuning.endstopForce,
+      effectScalar * triggerScalar * brakeTuning.endstopBoost
     );
     if (x >= finalStopInput) return endstop;
-    if (end >= rustConstants.get('FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION') && wall < end && x >= wall) {
-      return clamp(signalCurve(x, wall, end, normal, endstop, rustConstants.get('FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE')));
+    if (end >= brakeTuning.guardMinEnd && wall < finalStopInput && x >= wall) {
+      return clamp(signalCurve(x, wall, finalStopInput, normal, endstop, brakeTuning.rampCurve));
     }
-    const normalEnd = Math.max(start + 0.01, end >= rustConstants.get('FORZA_BRAKE_OVERTRAVEL_WARNING_MIN_POSITION') ? wall : Math.min(wall, end));
+    const normalEnd = Math.max(start + 0.01, end >= brakeTuning.guardMinEnd ? wall : Math.min(wall, end));
     const active = clamp((x - start) / (normalEnd - start));
     return clamp(baseline + (normal - baseline) * signalPoints(config.l2Points, active));
   }
@@ -238,6 +238,29 @@ const scenarios = [
       rampWidth: 0.12,
       rampCurve: 1.1
     }
+  },
+  {
+    name: 'custom brake wall tuning',
+    l2From: 5,
+    l2To: 100,
+    r2From: 4,
+    r2To: 100,
+    l2Points,
+    r2Points,
+    triggerIntensityScalar: 1,
+    brakeEffect: effects[0],
+    throttleEffect: effects[1],
+    brakeTuning: {
+      ...defaultBrakeTuning,
+      baselineForce: 0.4,
+      normalForce: 0.72,
+      endstopForce: 1,
+      endstopBoost: 1.3,
+      wallPosition: 0.58,
+      guardMinEnd: 0.52,
+      fullForceAt: 0.86,
+      rampCurve: 1.45
+    }
   }
 ];
 
@@ -254,6 +277,7 @@ for (const scenario of scenarios) {
       'Adaptive resistance',
       'Strong (Standard)',
       effects,
+      scenario.brakeTuning,
       scenario.throttleTuning
     );
     assert.ok(model, `${scenario.name} ${side}: frontend model should be present`);

@@ -10,6 +10,7 @@ import type {
   ControllerConfiguration,
   ExportedProfile,
   ForzaAbsTuningConfiguration,
+  ForzaBrakeTuningConfiguration,
   ForzaBodyRumbleMode,
   ForzaEffectConfiguration,
   ForzaRevLimiterTuningConfiguration,
@@ -40,6 +41,7 @@ export type ProfileDraftValues = {
   lightbarBrightness: number;
   forzaBodyRumbleMode: ForzaBodyRumbleMode;
   forzaEffects: ForzaEffectConfiguration[];
+  forzaBrakeTuning: ForzaBrakeTuningConfiguration;
   forzaAbsTuning: ForzaAbsTuningConfiguration;
   forzaThrottleTuning: ForzaThrottleTuningConfiguration;
   forzaShiftTuning: ForzaShiftTuningConfiguration;
@@ -51,6 +53,7 @@ export type ProfileDraftValues = {
 type DraftConfigOptions = {
   isEdge?: boolean;
   defaultForzaEffects: ForzaEffectConfiguration[];
+  defaultForzaBrakeTuning: ForzaBrakeTuningConfiguration;
   defaultForzaAbsTuning: ForzaAbsTuningConfiguration;
   defaultForzaThrottleTuning: ForzaThrottleTuningConfiguration;
   defaultForzaShiftTuning: ForzaShiftTuningConfiguration;
@@ -61,6 +64,9 @@ type DraftConfigOptions = {
 type DraftBuildOptions = {
   isEdge?: boolean;
   normalizeForzaEffects: (effects: ForzaEffectConfiguration[] | undefined) => ForzaEffectConfiguration[];
+  normalizeForzaBrakeTuning: (
+    tuning: Partial<ForzaBrakeTuningConfiguration> | undefined | null
+  ) => ForzaBrakeTuningConfiguration;
   normalizeForzaAbsTuning: (
     tuning: Partial<ForzaAbsTuningConfiguration> | undefined | null
   ) => ForzaAbsTuningConfiguration;
@@ -83,6 +89,12 @@ const cloneForzaEffects = (effects: ForzaEffectConfiguration[]): ForzaEffectConf
   effects.map((effect) => ({ ...effect }));
 
 const cloneForzaAbsTuning = (tuning: ForzaAbsTuningConfiguration): ForzaAbsTuningConfiguration => ({
+  ...tuning
+});
+
+const cloneForzaBrakeTuning = (
+  tuning: ForzaBrakeTuningConfiguration
+): ForzaBrakeTuningConfiguration => ({
   ...tuning
 });
 
@@ -243,6 +255,7 @@ export function buildDefaultControllerConfig(options: DraftConfigOptions): Edita
     forza: {
       bodyRumbleMode: 'native_passthrough',
       effects: cloneForzaEffects(options.defaultForzaEffects),
+      brake: cloneForzaBrakeTuning(options.defaultForzaBrakeTuning),
       abs: cloneForzaAbsTuning(options.defaultForzaAbsTuning),
       throttle: cloneForzaThrottleTuning(options.defaultForzaThrottleTuning),
       shift: cloneForzaShiftTuning(options.defaultForzaShiftTuning),
@@ -296,6 +309,7 @@ export function buildBuiltInProfileConfig(options: DraftConfigOptions & {
     forza: {
       bodyRumbleMode: 'native_passthrough',
       effects: cloneForzaEffects(options.builtInForzaEffects),
+      brake: cloneForzaBrakeTuning(options.defaultForzaBrakeTuning),
       abs: cloneForzaAbsTuning(options.defaultForzaAbsTuning),
       throttle: cloneForzaThrottleTuning(options.defaultForzaThrottleTuning),
       shift: cloneForzaShiftTuning(options.defaultForzaShiftTuning),
@@ -353,6 +367,7 @@ export function buildControllerConfigDraft(
     forza: {
       bodyRumbleMode: normalizeForzaBodyRumbleMode(draft.forzaBodyRumbleMode),
       effects: options.normalizeForzaEffects(draft.forzaEffects),
+      brake: options.normalizeForzaBrakeTuning(draft.forzaBrakeTuning),
       abs: options.normalizeForzaAbsTuning(draft.forzaAbsTuning),
       throttle: options.normalizeForzaThrottleTuning(draft.forzaThrottleTuning),
       shift: options.normalizeForzaShiftTuning(draft.forzaShiftTuning),
@@ -408,6 +423,7 @@ export function profileConfigSignature(
         intensity: options.forzaIntensityPercent(effect.intensity),
         route: effect.route
       })),
+      brake: options.normalizeForzaBrakeTuning(config.forza?.brake),
       abs: options.normalizeForzaAbsTuning(config.forza?.abs),
       throttle: options.normalizeForzaThrottleTuning(config.forza?.throttle),
       shift: options.normalizeForzaShiftTuning(config.forza?.shift),
