@@ -174,6 +174,64 @@ fn forza_surface_rumble_is_suppressed_while_stationary() {
 }
 
 #[test]
+fn forza_clutch_body_cut_controls_drivetrain_rumble() {
+    let mut forza = ForzaTelemetryConfig::default().normalized();
+    forza.body_rumble_mode = "dscc_full_control".to_string();
+    for effect in &mut forza.effects {
+        effect.enabled = false;
+    }
+    let throttle = forza
+        .effects
+        .iter_mut()
+        .find(|effect| effect.id == "throttle_resistance")
+        .expect("default throttle tuning exists");
+    throttle.enabled = true;
+    throttle.intensity = 100;
+    throttle.route = "body_both".to_string();
+
+    let snapshot = |clutch| {
+        SignalSnapshot::from_updates([
+            signal_update("input.throttle", 1.0),
+            signal_update("input.brake", 0.0),
+            signal_update("input.clutch", clutch),
+            signal_update("input.handbrake", 0.0),
+            signal_update("vehicle.rpm_ratio", 0.9),
+            signal_update("vehicle.speed_kmh", 96.0),
+            signal_update("wheel.slip.max", 0.0),
+            signal_update("wheel.slip.front_max", 0.0),
+            signal_update("wheel.slip.rear_max", 0.0),
+            signal_update("surface.rumble.max", 0.0),
+            signal_update("surface.rumble_strip.max", 0.0),
+            signal_update("surface.puddle.max", 0.0),
+            signal_update("suspension.travel.max", 0.0),
+            signal_update("vehicle.acceleration.magnitude", 0.0),
+            signal_update("drivetrain.shift_pulse", 0.0),
+        ])
+    };
+
+    let coupled =
+        forza_rumble_output(&forza, &snapshot(0.0), 1.0, "Balanced").expect("throttle rumble");
+    let uncoupled =
+        forza_rumble_output(&forza, &snapshot(1.0), 1.0, "Balanced").expect("reduced rumble");
+    assert!(
+        uncoupled.low_frequency < coupled.low_frequency * 0.35,
+        "default clutch body cut should reduce drivetrain rumble, got {} from {}",
+        uncoupled.low_frequency,
+        coupled.low_frequency
+    );
+
+    forza.shift.clutch_body_cut = 0.0;
+    let no_cut =
+        forza_rumble_output(&forza, &snapshot(1.0), 1.0, "Balanced").expect("no-cut rumble");
+    assert!(
+        (no_cut.low_frequency - coupled.low_frequency).abs() < 0.001,
+        "0% clutch unload should preserve drivetrain rumble, got {} from {}",
+        no_cut.low_frequency,
+        coupled.low_frequency
+    );
+}
+
+#[test]
 fn forza_suspension_impact_latches_landing_body_thump() {
     let mut runtime = test_forza_effect_runtime();
     let now = Instant::now();

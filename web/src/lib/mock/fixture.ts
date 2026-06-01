@@ -87,7 +87,8 @@ export const mockForzaShiftTuning: ForzaShiftTuningConfiguration = {
   withClutchStrength: 0.58,
   withoutClutchStrength: 1,
   withClutchDurationMs: 130,
-  withoutClutchDurationMs: 240
+  withoutClutchDurationMs: 240,
+  clutchBodyCut: 0.78
 };
 
 export const mockForzaRevLimiterTuning: ForzaRevLimiterTuningConfiguration = {

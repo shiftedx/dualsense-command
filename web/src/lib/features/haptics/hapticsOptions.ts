@@ -196,7 +196,7 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
       group: 'Cue',
       defaultIntensity: FORZA_SHIFT_THUMP_DEFAULT_INTENSITY,
       defaultRoute: 'r2_and_body',
-      help: 'Fires a short kick when DSCC detects a gear change. When clutch telemetry is present, DSCC can make clutch-assisted shifts smoother and no-clutch shifts harsher.'
+      help: 'Fires a short kick when DSCC detects a gear change. Clutch bite is the percent that counts as pressed; clean shift controls clutch-assisted feedback, missed clutch controls no-clutch feedback, and clutch unload cuts drivetrain body rumble while the clutch is pressed.'
     },
     {
       id: 'rev_limiter_buzz',

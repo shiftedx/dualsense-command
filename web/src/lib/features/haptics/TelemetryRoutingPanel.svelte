@@ -85,7 +85,8 @@
     withClutchStrength: 0.58,
     withoutClutchStrength: 1,
     withClutchDurationMs: 130,
-    withoutClutchDurationMs: 240
+    withoutClutchDurationMs: 240,
+    clutchBodyCut: 0.78
   };
   export let forzaRevLimiterTuning: ForzaRevLimiterTuningConfiguration = {
     thresholdRatio: 0.93,
@@ -179,7 +180,8 @@
       | 'bodyHighWeight'
       | 'clutchThreshold'
       | 'withClutchStrength'
-      | 'withoutClutchStrength',
+      | 'withoutClutchStrength'
+      | 'clutchBodyCut',
     value: number | string
   ) => {
     const patch: Partial<ForzaShiftTuningConfiguration> = {};
@@ -198,6 +200,14 @@
 
   const updateShiftClutchMode = (mode: ForzaShiftClutchMode) => {
     updateForzaShiftTuning({ clutchMode: mode });
+  };
+
+  const selectNumberValue = (event: FocusEvent) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || target.type !== 'number') {
+      return;
+    }
+    requestAnimationFrame(() => target.select());
   };
 
   const updateRevPercent = (
@@ -265,7 +275,11 @@
   </div>
 </div>
 
-<div class:advanced={advancedOpen} class="dm-channel-list">
+<div
+  class:advanced={advancedOpen}
+  class="dm-channel-list"
+  onfocusin={selectNumberValue}
+>
   {#each forzaEffectMetas as meta (meta.id)}
     {@const tuning = forzaEffectsById.get(meta.id) ?? forzaEffect(meta.id)}
     {@const status = effectStatusById.get(meta.id)}
@@ -688,7 +702,7 @@
             </select>
           </label>
           <label>
-            <span>Clutch at %</span>
+            <span>Clutch bite %</span>
             <input
               class="dm-fader-value"
               max="100"
@@ -700,7 +714,19 @@
             />
           </label>
           <label>
-            <span>With clutch %</span>
+            <span>Clutch unload %</span>
+            <input
+              class="dm-fader-value"
+              max="100"
+              min="0"
+              step="1"
+              type="number"
+              value={percentValue(forzaShiftTuning.clutchBodyCut)}
+              oninput={(event) => updateShiftPercent('clutchBodyCut', event.currentTarget.value)}
+            />
+          </label>
+          <label>
+            <span>Clean shift %</span>
             <input
               class="dm-fader-value"
               max="100"
@@ -712,7 +738,7 @@
             />
           </label>
           <label>
-            <span>With clutch ms</span>
+            <span>Clean shift ms</span>
             <input
               class="dm-fader-value"
               max="400"
@@ -724,7 +750,7 @@
             />
           </label>
           <label>
-            <span>No clutch %</span>
+            <span>Missed clutch %</span>
             <input
               class="dm-fader-value"
               max="100"
@@ -736,7 +762,7 @@
             />
           </label>
           <label>
-            <span>No clutch ms</span>
+            <span>Missed clutch ms</span>
             <input
               class="dm-fader-value"
               max="500"

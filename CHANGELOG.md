@@ -1,3 +1,50 @@
+# DualSense Command Center 0.3.8
+
+Release date: 2026-06-01
+
+0.3.8 is a clutch-tuning fix release. It keeps the 0.3.7 shift behavior, but
+makes the advanced controls easier to understand and easier to edit.
+
+## Clutch Control Fixes
+
+- `Clutch at %` is now `Clutch bite %`, which means the clutch press threshold.
+- `With clutch` is now `Clean shift`.
+- `No clutch` is now `Missed clutch`.
+- New `Clutch unload %` control adjusts how much DSCC-generated drivetrain body
+  rumble drops while the clutch is pressed.
+- Number fields select their current value on focus, so users can type a new
+  value without fighting the existing digit.
+
+## Runtime Safety
+
+- The clutch unload value is stored in the typed Forza shift tuning config.
+- Saved 0.3.7 profiles load safely with the new default value.
+- The backend clamps the new setting before use.
+- A regression test now proves the clutch unload setting changes drivetrain body
+  rumble.
+
+## Thanks
+
+- Thanks to **ゾアン・ファンイ** for testing the clutch build quickly and pointing out
+  where the labels and number fields were getting in the way.
+
+## Validation Gate
+
+This release passed:
+
+```powershell
+cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
+cargo +stable-x86_64-pc-windows-gnu test -p dscc-agent
+cargo +stable-x86_64-pc-windows-gnu clippy -p dscc-agent --all-targets --target x86_64-pc-windows-gnu -- -D warnings
+npm.cmd --prefix web run typecheck
+npm.cmd --prefix web run build
+npm.cmd --prefix web run test:haptics-graph
+npm.cmd --prefix web run test:button-map
+npm.cmd --prefix web run test:release-size
+npm.cmd --prefix web run test:source-audit
+npm.cmd --prefix web run test:visual-smoke
+```
+
 # DualSense Command Center 0.3.7
 
 Release date: 2026-06-01
