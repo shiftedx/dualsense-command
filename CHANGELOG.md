@@ -1,3 +1,37 @@
+# DualSense Command Center 0.3.9
+
+Release date: 2026-06-01
+
+0.3.9 fixes RPM lighting so it works as a useful shift cue again.
+
+## Redline Ramp
+
+- The lightbar now fades from the selected profile color toward the redline
+  color before the limiter.
+- The redline blink now starts at the same RPM threshold as `Rev limiter buzz`.
+- Lowering the rev-limiter threshold also lowers the LED blink threshold.
+- The blink off-phase keeps some redline heat instead of snapping fully back to
+  the base profile color.
+- The Haptics UI now labels this effect `Redline ramp`.
+
+## Validation Gate
+
+This release passed:
+
+```powershell
+cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
+cargo +stable-x86_64-pc-windows-gnu test -p dscc-agent forza_redline --target x86_64-pc-windows-gnu
+cargo +stable-x86_64-pc-windows-gnu test -p dscc-agent rev_limiter --target x86_64-pc-windows-gnu
+cargo +stable-x86_64-pc-windows-gnu clippy -p dscc-agent --all-targets --target x86_64-pc-windows-gnu -- -D warnings
+npm.cmd --prefix web run typecheck
+npm.cmd --prefix web run build
+npm.cmd --prefix web run test:haptics-graph
+npm.cmd --prefix web run test:button-map
+npm.cmd --prefix web run test:release-size
+npm.cmd --prefix web run test:source-audit
+npm.cmd --prefix web run test:visual-smoke
+```
+
 # DualSense Command Center 0.3.8
 
 Release date: 2026-06-01

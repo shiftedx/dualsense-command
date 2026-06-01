@@ -2789,7 +2789,7 @@
   };
 
   const previewLightbar = async () => previewLightbarColor(lightbarColor, 'Lightbar');
-  const previewRpmColor = async () => previewLightbarColor(rpmColor, 'Redline Blink');
+  const previewRpmColor = async () => previewLightbarColor(rpmColor, 'Redline Ramp');
 
   const startAppRuntime = () => {
     if (typeof window === 'undefined' || appRuntime?.isStarted()) return;

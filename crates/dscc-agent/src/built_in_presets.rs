@@ -92,8 +92,8 @@ pub(crate) fn forza_horizon_preset() -> ForzaTelemetryConfig {
 /// preset, then adds low-to-mid body layers for slip, curbs, puddles, and
 /// suspension. Sustained tire slip stays restrained so it does not blur the
 /// controller, while suspension impact is treated as a stronger event cue for
-/// landing thumps. The redline blink stays on because it is event-only and
-/// avoids the old constant gear/RPM light show.
+/// landing thumps. The redline ramp stays on because it gives a low-cost shift
+/// cue without bringing back the old constant gear/RPM light show.
 pub(crate) fn forza_horizon_immersive_preset() -> ForzaTelemetryConfig {
     // (id, enabled, intensity 0..=255, route)
     //
@@ -102,7 +102,7 @@ pub(crate) fn forza_horizon_immersive_preset() -> ForzaTelemetryConfig {
     //   - Puddle drag -> left grip, so water feels different from throttle load.
     //   - Suspension -> both grips with enough headroom to stand out on landings.
     //   - Rumble strips -> both grips, but below shift and impact events.
-    //   - Redline blink -> enabled; it only fires near shift RPM.
+    //   - Redline ramp -> enabled; it warms up near shift RPM and blinks at the limiter.
     let entries: &[(&str, bool, u8, &str)] = &[
         ("brake_resistance", true, 100, "l2"),
         ("throttle_resistance", true, 100, "r2"),
