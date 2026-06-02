@@ -714,7 +714,7 @@
             />
           </label>
           <label>
-            <span>Clutch unload %</span>
+            <span>Clutch body damp %</span>
             <input
               class="dm-fader-value"
               max="100"
@@ -725,6 +725,9 @@
               oninput={(event) => updateShiftPercent('clutchBodyCut', event.currentTarget.value)}
             />
           </label>
+          <p class="dm-advanced-note">
+            75-90% gives the clearest clutch uncoupling feel. Lower values are subtle; 95%+ nearly mutes continuous DSCC body rumble.
+          </p>
           <label>
             <span>Clean shift %</span>
             <input

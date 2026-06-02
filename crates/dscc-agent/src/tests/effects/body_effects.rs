@@ -232,6 +232,147 @@ fn forza_clutch_body_cut_controls_drivetrain_rumble() {
 }
 
 #[test]
+fn forza_clutch_body_cut_damps_dscc_continuous_body_layers() {
+    let mut forza = ForzaTelemetryConfig::default().normalized();
+    forza.body_rumble_mode = "dscc_full_control".to_string();
+    for effect in &mut forza.effects {
+        effect.enabled = false;
+    }
+    for id in ["road_texture", "tire_slip"] {
+        let effect = forza
+            .effects
+            .iter_mut()
+            .find(|effect| effect.id == id)
+            .unwrap_or_else(|| panic!("{id} tuning exists"));
+        effect.enabled = true;
+        effect.intensity = 100;
+        effect.route = "body_both".to_string();
+    }
+
+    let snapshot = |clutch| {
+        SignalSnapshot::from_updates([
+            signal_update("input.throttle", 0.0),
+            signal_update("input.brake", 0.0),
+            signal_update("input.clutch", clutch),
+            signal_update("input.handbrake", 0.0),
+            signal_update("vehicle.rpm_ratio", 0.55),
+            signal_update("vehicle.speed_kmh", 92.0),
+            signal_update("wheel.slip.max", 0.42),
+            signal_update("wheel.slip.front_max", 0.0),
+            signal_update("wheel.slip.rear_max", 0.0),
+            signal_update("tire.slip_ratio.max", 0.34),
+            signal_update("tire.slip_angle.max", 0.62),
+            signal_update("surface.rumble.max", 0.58),
+            signal_update("surface.rumble_strip.max", 0.18),
+            signal_update("surface.puddle.max", 0.12),
+            signal_update("suspension.travel.max", 0.0),
+            signal_update("vehicle.acceleration.magnitude", 0.0),
+            signal_update("drivetrain.shift_pulse", 0.0),
+        ])
+    };
+
+    let clutch_out =
+        forza_rumble_output(&forza, &snapshot(1.0), 1.0, "Balanced").expect("clutch rumble");
+    let no_clutch =
+        forza_rumble_output(&forza, &snapshot(0.0), 1.0, "Balanced").expect("road rumble");
+    assert!(
+        clutch_out.low_frequency < no_clutch.low_frequency * 0.30,
+        "clutch unload should audibly damp continuous low body feedback, got {} from {}",
+        clutch_out.low_frequency,
+        no_clutch.low_frequency
+    );
+    assert!(
+        clutch_out.high_frequency < no_clutch.high_frequency * 0.30,
+        "clutch unload should audibly damp continuous high body feedback, got {} from {}",
+        clutch_out.high_frequency,
+        no_clutch.high_frequency
+    );
+
+    forza.shift.clutch_body_cut = 0.0;
+    let preserved =
+        forza_rumble_output(&forza, &snapshot(1.0), 1.0, "Balanced").expect("preserved rumble");
+    assert!(
+        (preserved.low_frequency - no_clutch.low_frequency).abs() < 0.001,
+        "0% clutch unload should preserve continuous body feedback, got {} from {}",
+        preserved.low_frequency,
+        no_clutch.low_frequency
+    );
+}
+
+#[test]
+fn forza_clutch_body_cut_damps_steering_slip_body_feedback() {
+    let mut forza = ForzaTelemetryConfig::default().normalized();
+    forza.body_rumble_mode = "dscc_full_control".to_string();
+    for effect in &mut forza.effects {
+        effect.enabled = false;
+    }
+    let tire = forza
+        .effects
+        .iter_mut()
+        .find(|effect| effect.id == "tire_slip")
+        .expect("default tire tuning exists");
+    tire.enabled = true;
+    tire.intensity = 140;
+    tire.route = "body_both".to_string();
+
+    let snapshot = |clutch| {
+        SignalSnapshot::from_updates([
+            signal_update("input.throttle", 0.35),
+            signal_update("input.brake", 0.0),
+            signal_update("input.clutch", clutch),
+            signal_update("input.handbrake", 0.0),
+            signal_update("vehicle.rpm_ratio", 0.48),
+            signal_update("vehicle.speed_kmh", 84.0),
+            signal_update("wheel.slip.max", 0.0),
+            signal_update("wheel.slip.front_max", 0.0),
+            signal_update("wheel.slip.rear_max", 0.0),
+            signal_update("tire.slip_ratio.max", 0.0),
+            signal_update("tire.slip_angle.max", 0.88),
+            signal_update("surface.rumble.max", 0.0),
+            signal_update("surface.rumble_strip.max", 0.0),
+            signal_update("surface.puddle.max", 0.0),
+            signal_update("suspension.travel.max", 0.0),
+            signal_update("vehicle.acceleration.magnitude", 0.0),
+            signal_update("drivetrain.shift_pulse", 0.0),
+        ])
+    };
+
+    let no_clutch =
+        forza_rumble_output(&forza, &snapshot(0.0), 1.0, "Balanced").expect("steering rumble");
+    let clutch_out = forza_rumble_output(&forza, &snapshot(1.0), 1.0, "Balanced")
+        .expect("damped steering rumble");
+
+    assert!(
+        clutch_out.low_frequency < no_clutch.low_frequency * 0.30,
+        "holding clutch should reduce steering-slip low body feedback, got {} from {}",
+        clutch_out.low_frequency,
+        no_clutch.low_frequency
+    );
+    assert!(
+        clutch_out.high_frequency < no_clutch.high_frequency * 0.30,
+        "holding clutch should reduce steering-slip high body feedback, got {} from {}",
+        clutch_out.high_frequency,
+        no_clutch.high_frequency
+    );
+
+    forza.shift.clutch_body_cut = 0.50;
+    let half_damped = forza_rumble_output(&forza, &snapshot(1.0), 1.0, "Balanced")
+        .expect("half-damped steering rumble");
+    assert!(
+        half_damped.low_frequency < no_clutch.low_frequency * 0.60,
+        "50% clutch body damp should lower steering-slip low strength, got {} from {}",
+        half_damped.low_frequency,
+        no_clutch.low_frequency
+    );
+    assert!(
+        half_damped.high_frequency < no_clutch.high_frequency * 0.60,
+        "50% clutch body damp should lower steering-slip high strength, got {} from {}",
+        half_damped.high_frequency,
+        no_clutch.high_frequency
+    );
+}
+
+#[test]
 fn forza_suspension_impact_latches_landing_body_thump() {
     let mut runtime = test_forza_effect_runtime();
     let now = Instant::now();

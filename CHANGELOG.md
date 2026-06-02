@@ -1,3 +1,41 @@
+# DualSense Command Center 0.3.10
+
+Release date: 2026-06-02
+
+0.3.10 makes clutch body damping easier to feel in DSCC full-control haptics.
+
+## Clutch Body Damp
+
+- Holding clutch now lowers the final continuous DSCC body-rumble strength, not
+  just the source signal before mixing.
+- Steering, road, tire slip, traction, puddle, rumble strip, and drivetrain body
+  layers now fade together while the clutch is held.
+- Brake feel, shift impacts, suspension hits, and rev-limiter cues stay present.
+- `Clutch body damp %` now calls out the useful range: 75-90% is clear, 95%+
+  is near-muted.
+- Added regression coverage for steering-slip vibration while clutch is held.
+
+## Thanks
+
+- Thanks to **ゾアン・ファンイ** for testing clutch behavior in DSCC mode and
+  narrowing the issue down to steering/body vibration.
+
+## Validation Gate
+
+This release passed:
+
+```powershell
+cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
+cargo +stable-x86_64-pc-windows-gnu test -p dscc-agent clutch_body --target x86_64-pc-windows-gnu
+cargo +stable-x86_64-pc-windows-gnu clippy -p dscc-agent --all-targets --target x86_64-pc-windows-gnu -- -D warnings
+npm.cmd --prefix web run typecheck
+npm.cmd --prefix web run build
+npm.cmd --prefix web run test:haptics-graph
+npm.cmd --prefix web run test:button-map
+npm.cmd --prefix web run test:release-size
+npm.cmd --prefix web run test:source-audit
+```
+
 # DualSense Command Center 0.3.9
 
 Release date: 2026-06-01
