@@ -106,6 +106,9 @@ pub(crate) fn forza_rumble_output(
     let suspension_impact = signal_unit_value(snapshot, "suspension.impact_pulse");
     let shift_tuning = forza.shift.clone().normalized();
     let rev_tuning = forza.rev_limiter.clone().normalized();
+    let clutch_unload = clamp_unit(clutch * shift_tuning.clutch_body_cut);
+    let clutch_continuous_body = (1.0 - clutch_unload * FORZA_SHIFT_CLUTCH_CONTINUOUS_BODY_DAMPING)
+        .clamp(FORZA_SHIFT_CLUTCH_CONTINUOUS_BODY_MIN, 1.0);
     let rev_limiter = signal_scaled(
         snapshot,
         "vehicle.rpm_ratio",
@@ -131,39 +134,48 @@ pub(crate) fn forza_rumble_output(
     } else {
         0.0
     };
-    let clutch_uncouple = 1.0 - clutch * shift_tuning.clutch_body_cut;
-    let drivetrain = (rpm * rpm * (0.35 + throttle * 0.65) * clutch_uncouple).clamp(0.0, 1.0);
+    let drivetrain = (rpm * rpm * (0.35 + throttle * 0.65)).clamp(0.0, 1.0);
 
+    let mut continuous_low = 0.0;
+    let mut continuous_high = 0.0;
     let mut low = 0.0;
     let mut high = 0.0;
     if !native_passthrough {
         add_forza_rumble_component(
-            &mut low,
-            &mut high,
+            &mut continuous_low,
+            &mut continuous_high,
             &forza.effect("road_texture"),
             road_texture,
             0.46,
             0.58,
         );
         add_forza_rumble_component(
-            &mut low,
-            &mut high,
+            &mut continuous_low,
+            &mut continuous_high,
             &forza.effect("rumble_strip"),
             strip_feedback,
             0.26,
             0.52,
         );
         add_forza_rumble_component(
-            &mut low,
-            &mut high,
+            &mut continuous_low,
+            &mut continuous_high,
             &forza.effect("tire_slip"),
-            tire_feedback.max(brake_feedback).max(traction_feedback),
+            tire_feedback.max(traction_feedback),
             0.16,
             0.56,
         );
         add_forza_rumble_component(
             &mut low,
             &mut high,
+            &forza.effect("tire_slip"),
+            brake_feedback,
+            0.16,
+            0.56,
+        );
+        add_forza_rumble_component(
+            &mut continuous_low,
+            &mut continuous_high,
             &forza.effect("puddle_drag"),
             puddle_feedback,
             0.34,
@@ -196,8 +208,8 @@ pub(crate) fn forza_rumble_output(
             rev_tuning.body_high_weight,
         );
         add_forza_rumble_component(
-            &mut low,
-            &mut high,
+            &mut continuous_low,
+            &mut continuous_high,
             &forza.effect("throttle_resistance"),
             drivetrain,
             0.32,
@@ -221,6 +233,8 @@ pub(crate) fn forza_rumble_output(
         );
     }
 
+    low += continuous_low * clutch_continuous_body;
+    high += continuous_high * clutch_continuous_body;
     low = clamp_unit(low * vibration);
     high = clamp_unit(high * vibration);
     (low, high) = apply_vibration_mode(vibration_mode, low, high);

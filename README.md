@@ -21,7 +21,7 @@ lightbar controls, and racing telemetry without Python setup or scripts.
 
 Get the latest Windows installer from [GitHub Releases](https://github.com/shiftedx/dualsense-command/releases/latest).
 
-- Current release: `0.3.9`
+- Current release: `0.3.10`
 - Recommended download: **DSCC Standard** Windows x86_64 MSI
 - Linux builds: beta archive with bundled web UI
 
@@ -99,6 +99,9 @@ setup and validation commands.
   limiter buzz when a game profile is active.
 - Uses live game telemetry for racing haptics when available.
 - Adds body-rumble cues such as paddle-shift and landing thumps.
+- Dampens DSCC continuous body rumble while clutch is held, so manual clutch
+  shifting can feel more uncoupled from steering, road, tire, and drivetrain
+  vibration.
 - Controls lightbar color, brightness, RPM colors, and player LEDs.
 - Includes a quick in-app guide and focused tooltips for the main tuning
   controls.
