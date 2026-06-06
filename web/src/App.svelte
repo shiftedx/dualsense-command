@@ -17,10 +17,10 @@
     buildSteamBindingBySlotKey,
     createSteamMirrorGroups,
     parseSteamBindingTriple,
+    resolveFocusedSlotKey,
     steamBindingKey,
     steamBindingSlots,
-    steamBindingTargetPart,
-    steamSlotGlyphs
+    steamBindingTargetPart
   } from './lib/features/buttonMapping';
   import { bindingTargetGroupsForProvider } from './lib/features/buttonMapping/buttonMappingState';
   import {
@@ -672,15 +672,14 @@
     : 'Steam Input Layout';
   // Focused slot drives the controller-stage focus highlight. Hover wins, then
   // explicitly-clicked slot, then the slot owning the currently selected binding.
-  $: focusedSlotKey = buttonMappingActive ? (() => {
-    if (hoveredSteamSlotKey) return hoveredSteamSlotKey;
-    if (activeSteamSlotKey) return activeSteamSlotKey;
-    const fromBinding = steamBindingSlots.find((slot) => {
-      const binding = steamBindingBySlotKey.get(slot.key);
-      return Boolean(binding && steamBindingKey(binding) === selectedSteamBindingKey);
-    });
-    return fromBinding?.key ?? '';
-  })() : '';
+  $: focusedSlotKey = buttonMappingActive
+    ? resolveFocusedSlotKey({
+        hoveredKey: hoveredSteamSlotKey,
+        activeKey: activeSteamSlotKey,
+        bindingBySlotKey: steamBindingBySlotKey,
+        selectedBindingKey: selectedSteamBindingKey
+      })
+    : '';
   $: focusedSlotMeta = focusedSlotKey
     ? steamBindingSlots.find((slot) => slot.key === focusedSlotKey) ?? null
     : null;

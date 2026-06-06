@@ -22,23 +22,6 @@ export type SteamSlotGlyph = {
   region?: 'face' | 'dpad' | 'shoulder' | 'trigger' | 'stick' | 'touch' | 'system' | 'edge' | 'motion';
 };
 
-export type MappingChipPos = {
-  key: string;
-  side: 'left' | 'right' | 'top' | 'bottom';
-  chipX: number;
-  chipY: number;
-  anchorX: number;
-  anchorY: number;
-};
-
-export type MappingChipModel = MappingChipPos & {
-  slot: SteamBindingSlot;
-  binding: SteamInputBinding | null;
-  displayLabel: string;
-  iconUrl: string | null;
-  selected: boolean;
-};
-
 export type SteamMirrorPlacement = 'left' | 'right' | 'center' | 'bottom';
 
 export type SteamMirrorRow = {
@@ -125,39 +108,6 @@ export const steamSlotGlyphs: Record<string, SteamSlotGlyph> = {
   edgeFnLeft: { icon: 'fn', region: 'edge' },
   edgeFnRight: { icon: 'fn', region: 'edge' }
 };
-
-export const mappingChipLayout: MappingChipPos[] = [
-  { key: 'l2', side: 'left', chipX: 16, chipY: 18, anchorX: 35.5, anchorY: 18 },
-  { key: 'l1', side: 'left', chipX: 16, chipY: 28, anchorX: 35.5, anchorY: 28 },
-  { key: 'create', side: 'left', chipX: 16, chipY: 36, anchorX: 42.0, anchorY: 35 },
-  { key: 'dpadUp', side: 'left', chipX: 16, chipY: 43, anchorX: 38.5, anchorY: 41 },
-  { key: 'dpadLeft', side: 'left', chipX: 16, chipY: 50, anchorX: 35.0, anchorY: 47 },
-  { key: 'dpadRight', side: 'left', chipX: 16, chipY: 57, anchorX: 42.0, anchorY: 47 },
-  { key: 'dpadDown', side: 'left', chipX: 16, chipY: 64, anchorX: 38.5, anchorY: 53 },
-  { key: 'l3', side: 'left', chipX: 16, chipY: 72, anchorX: 44.5, anchorY: 60 },
-  { key: 'r2', side: 'right', chipX: 84, chipY: 18, anchorX: 64.5, anchorY: 18 },
-  { key: 'r1', side: 'right', chipX: 84, chipY: 28, anchorX: 64.5, anchorY: 28 },
-  { key: 'options', side: 'right', chipX: 84, chipY: 36, anchorX: 58.0, anchorY: 35 },
-  { key: 'triangle', side: 'right', chipX: 84, chipY: 43, anchorX: 61.5, anchorY: 41 },
-  { key: 'circle', side: 'right', chipX: 84, chipY: 50, anchorX: 65.0, anchorY: 47 },
-  { key: 'square', side: 'right', chipX: 84, chipY: 57, anchorX: 58.0, anchorY: 47 },
-  { key: 'cross', side: 'right', chipX: 84, chipY: 64, anchorX: 61.5, anchorY: 53 },
-  { key: 'r3', side: 'right', chipX: 84, chipY: 72, anchorX: 55.5, anchorY: 60 },
-  { key: 'swipeLeft', side: 'top', chipX: 30, chipY: 8, anchorX: 44.0, anchorY: 36 },
-  { key: 'touchPressLeft', side: 'top', chipX: 38, chipY: 8, anchorX: 47.0, anchorY: 36 },
-  { key: 'swipeUp', side: 'top', chipX: 46, chipY: 8, anchorX: 50.0, anchorY: 30 },
-  { key: 'swipeDown', side: 'top', chipX: 54, chipY: 8, anchorX: 50.0, anchorY: 42 },
-  { key: 'touchPressRight', side: 'top', chipX: 62, chipY: 8, anchorX: 53.0, anchorY: 36 },
-  { key: 'swipeRight', side: 'top', chipX: 70, chipY: 8, anchorX: 56.0, anchorY: 36 },
-  { key: 'centerSwipeUp', side: 'top', chipX: 46, chipY: 15, anchorX: 50.0, anchorY: 30 },
-  { key: 'centerSwipeDown', side: 'top', chipX: 54, chipY: 15, anchorX: 50.0, anchorY: 42 },
-  { key: 'centerSwipeLeft', side: 'top', chipX: 38, chipY: 15, anchorX: 44.0, anchorY: 36 },
-  { key: 'centerSwipeRight', side: 'top', chipX: 62, chipY: 15, anchorX: 56.0, anchorY: 36 },
-  { key: 'edgeBackLeft', side: 'bottom', chipX: 30, chipY: 92, anchorX: 45, anchorY: 53 },
-  { key: 'edgeFnLeft', side: 'bottom', chipX: 42, chipY: 92, anchorX: 44, anchorY: 67 },
-  { key: 'edgeFnRight', side: 'bottom', chipX: 58, chipY: 92, anchorX: 56, anchorY: 67 },
-  { key: 'edgeBackRight', side: 'bottom', chipX: 70, chipY: 92, anchorX: 55, anchorY: 53 }
-];
 
 const steamMirrorDefinitions: Array<{
   key: string;
@@ -339,39 +289,27 @@ export function buildSteamBindingBySlotKey(
   return result;
 }
 
-export function createMappingChipModels(options: {
-  bindingBySlotKey: Map<string, SteamInputBinding>;
-  controllerFamily?: ControllerStatus['family'] | null;
+export type FocusedSlotInput = {
+  hoveredKey: string;
+  activeKey: string;
+  bindingBySlotKey: ReadonlyMap<string, SteamInputBinding>;
   selectedBindingKey: string;
-  activeSlotKey: string;
-  layout?: MappingChipPos[];
-  slots?: SteamBindingSlot[];
-}): MappingChipModel[] {
-  const slots = options.slots ?? steamBindingSlots;
-  const slotByKey = new Map(slots.map((slot) => [slot.key, slot]));
+};
 
-  return (options.layout ?? mappingChipLayout)
-    .map((chip) => {
-      const slot = slotByKey.get(chip.key);
-      if (!slot) return null;
-
-      const binding = options.bindingBySlotKey.get(slot.key) ?? null;
-      if (slot.group === 'DualSense Edge' && options.controllerFamily !== 'DualSense Edge' && !binding) {
-        return null;
-      }
-
-      return {
-        ...chip,
-        slot,
-        binding,
-        displayLabel: chipDisplayLabel(binding),
-        iconUrl: steamSlotIconUrl(chip.key),
-        selected:
-          options.activeSlotKey === slot.key ||
-          Boolean(binding && steamBindingKey(binding) === options.selectedBindingKey)
-      };
-    })
-    .filter((value): value is MappingChipModel => value !== null);
+/**
+ * Resolve which mapping slot holds the controller-stage focus highlight.
+ * Precedence: an explicit hover wins, then an explicitly-clicked slot, then the
+ * slot owning the currently selected binding. Returns '' when nothing is
+ * focused. Pure — the interface is the test surface (button-mapping-p95.mjs).
+ */
+export function resolveFocusedSlotKey(input: FocusedSlotInput): string {
+  if (input.hoveredKey) return input.hoveredKey;
+  if (input.activeKey) return input.activeKey;
+  const fromBinding = steamBindingSlots.find((slot) => {
+    const binding = input.bindingBySlotKey.get(slot.key);
+    return Boolean(binding && steamBindingKey(binding) === input.selectedBindingKey);
+  });
+  return fromBinding?.key ?? '';
 }
 
 export function createSteamMirrorGroups(options: {
