@@ -5,9 +5,9 @@ import {
   buildSteamBindingBySlotKey,
   buildDefaultSteamBindingBySlotKey,
   chipDisplayLabel,
-  createMappingChipModels,
   createSteamMirrorGroups,
   parseSteamBindingTriple,
+  resolveFocusedSlotKey,
   steamBindingKey,
   steamBindingSlots,
   steamBindingTargetPart
@@ -55,14 +55,15 @@ for (let i = 0; i < samples; i += 1) {
 
   const bySlot = buildSteamBindingBySlotKey(bindings, steamBindingSlots);
   modelDurations.push(time(() => {
-    const chips = createMappingChipModels({
+    const groups = createSteamMirrorGroups({
       bindingBySlotKey: bySlot,
       controllerFamily: i % 2 === 0 ? 'DualSense Edge' : 'DualSense',
       selectedBindingKey: steamBindingKey(bindings[i % bindings.length]),
       activeSlotKey: i % 4 === 0 ? steamBindingSlots[i % steamBindingSlots.length].key : ''
     });
-    assert.ok(chips.length >= 22);
-    assert.ok(chips.every((chip) => chip.displayLabel.length > 0));
+    const rows = groups.flatMap((group) => group.rows);
+    assert.ok(rows.length >= 22);
+    assert.ok(rows.every((row) => row.displayLabel.length > 0));
   }));
 
   parseDurations.push(time(() => {
@@ -163,6 +164,30 @@ const mirrorGroups = createSteamMirrorGroups({
 });
 assert.ok(mirrorGroups.some((group) => group.key === 'center-trackpad' && group.rows.length === 2));
 assert.ok(mirrorGroups.some((group) => group.key === 'right-rail' && group.rows.some((row) => row.displayLabel === 'Start')));
+
+// resolveFocusedSlotKey precedence: hover > active > selected-binding owner > ''.
+const focusBindings = buildSteamBindingBySlotKey(fh6ParityBindings, steamBindingSlots);
+assert.equal(
+  resolveFocusedSlotKey({ hoveredKey: 'r2', activeKey: 'l2', bindingBySlotKey: focusBindings, selectedBindingKey: '' }),
+  'r2'
+);
+assert.equal(
+  resolveFocusedSlotKey({ hoveredKey: '', activeKey: 'l2', bindingBySlotKey: focusBindings, selectedBindingKey: '' }),
+  'l2'
+);
+assert.equal(
+  resolveFocusedSlotKey({
+    hoveredKey: '',
+    activeKey: '',
+    bindingBySlotKey: focusBindings,
+    selectedBindingKey: steamBindingKey(focusBindings.get('create'))
+  }),
+  'create'
+);
+assert.equal(
+  resolveFocusedSlotKey({ hoveredKey: '', activeKey: '', bindingBySlotKey: focusBindings, selectedBindingKey: 'no-such-binding' }),
+  ''
+);
 
 const summary = {
   samples,
