@@ -91,16 +91,21 @@ impl<T: DeviceTransport> ControllerOutputManager<T> {
         let (report, write_result) = write_result;
         let report_len = report.len;
         match write_result {
-            Ok(backend_bytes) if backend_bytes >= report_len => Ok(ControllerOutputWrite {
+            Ok(outcome) if outcome.bytes() >= report_len => Ok(ControllerOutputWrite {
                 bytes: report_len,
-                hardware_output: self.hardware_writes_enabled(),
+                // Source the hardware-output flag from the handle's actual write
+                // outcome rather than the manager's parallel output-mode copy, so
+                // it reports whether bytes truly reached hardware.
+                hardware_output: outcome.reached_hardware(),
                 report_kind: report.kind,
             }),
-            Ok(backend_bytes) => {
+            Ok(outcome) => {
                 self.release(target);
                 Err(DeviceError::TransportFault(format!(
-                    "short {:?} output report write: expected {} bytes, wrote {backend_bytes}",
-                    report.kind, report_len
+                    "short {:?} output report write: expected {} bytes, wrote {}",
+                    report.kind,
+                    report_len,
+                    outcome.bytes()
                 )))
             }
             Err(error) => {

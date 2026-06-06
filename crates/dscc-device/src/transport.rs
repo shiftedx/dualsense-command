@@ -14,6 +14,37 @@ pub trait DeviceTransport: Send + Sync + 'static {
     fn open(&self, id: &RawDeviceId) -> Result<Box<dyn DeviceHandle>, DeviceError>;
 }
 
+/// Result of submitting one output report to a [`DeviceHandle`].
+///
+/// `Executed` means the report was forwarded to the underlying HID backend;
+/// `Suppressed` means the handle intentionally did not forward it (dry-run /
+/// hardware writes disabled). Both carry a byte count so callers keep accurate
+/// accounting, but only `Executed` means the controller was actually driven.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WriteOutcome {
+    /// Report reached the HID backend; `bytes` is the count the backend accepted.
+    /// A short count (< report length) is still surfaced so the caller can treat
+    /// it as a fault.
+    Executed { bytes: usize },
+    /// Report was deliberately not forwarded to hardware; `bytes` is the offered
+    /// report length. No HID I/O occurred and no controller state changed.
+    Suppressed { bytes: usize },
+}
+
+impl WriteOutcome {
+    /// Bytes accounted for: backend count on `Executed`, offered length on `Suppressed`.
+    pub fn bytes(self) -> usize {
+        match self {
+            Self::Executed { bytes } | Self::Suppressed { bytes } => bytes,
+        }
+    }
+
+    /// True only when the report actually reached the HID backend.
+    pub fn reached_hardware(self) -> bool {
+        matches!(self, Self::Executed { .. })
+    }
+}
+
 pub trait DeviceHandle: Send {
     fn read_timeout(&mut self, timeout: Duration) -> Result<Option<Vec<u8>>, DeviceError>;
     fn read_timeout_into(
@@ -34,7 +65,7 @@ pub trait DeviceHandle: Send {
         buffer[..report.len()].copy_from_slice(&report);
         Ok(Some(report.len()))
     }
-    fn write(&mut self, report: &[u8]) -> Result<usize, DeviceError>;
+    fn write(&mut self, report: &[u8]) -> Result<WriteOutcome, DeviceError>;
     fn receive_feature_report(
         &mut self,
         _report_id: u8,
@@ -68,6 +99,7 @@ struct MockTransportInner {
     read_reports: BTreeMap<RawDeviceId, VecDeque<Vec<u8>>>,
     writes: BTreeMap<RawDeviceId, Vec<Vec<u8>>>,
     write_results: BTreeMap<RawDeviceId, VecDeque<Result<usize, DeviceError>>>,
+    suppress_writes: bool,
     feature_reports: BTreeMap<(RawDeviceId, u8), VecDeque<Vec<u8>>>,
     feature_writes: BTreeMap<(RawDeviceId, u8), Vec<Vec<u8>>>,
     feature_write_results: BTreeMap<(RawDeviceId, u8), VecDeque<Result<usize, DeviceError>>>,
@@ -125,6 +157,13 @@ impl MockTransport {
             .entry(id)
             .or_default()
             .push_back(result);
+    }
+
+    /// Model a dry-run handle: when enabled, `write` still records the report for
+    /// inspection but returns [`WriteOutcome::Suppressed`] instead of forwarding
+    /// it, mirroring a transport opened with hardware writes disabled.
+    pub fn set_suppress_writes(&self, suppress: bool) {
+        self.lock().suppress_writes = suppress;
     }
 
     pub fn push_feature_write_result(
@@ -249,18 +288,24 @@ impl DeviceHandle for MockDeviceHandle {
         Ok(Some(report.len()))
     }
 
-    fn write(&mut self, report: &[u8]) -> Result<usize, DeviceError> {
+    fn write(&mut self, report: &[u8]) -> Result<WriteOutcome, DeviceError> {
         let mut inner = self.lock();
         inner
             .writes
             .entry(self.id.clone())
             .or_default()
             .push(report.to_vec());
+        if inner.suppress_writes {
+            return Ok(WriteOutcome::Suppressed {
+                bytes: report.len(),
+            });
+        }
         inner
             .write_results
             .get_mut(&self.id)
             .and_then(VecDeque::pop_front)
             .unwrap_or(Ok(report.len()))
+            .map(|bytes| WriteOutcome::Executed { bytes })
     }
 
     fn receive_feature_report(
@@ -313,8 +358,28 @@ mod tests {
             Some(vec![1, 2, 3])
         );
         assert_eq!(handle.read_timeout(Duration::from_millis(1)).unwrap(), None);
-        assert_eq!(handle.write(&[4, 5]).unwrap(), 2);
+        assert_eq!(
+            handle.write(&[4, 5]).unwrap(),
+            WriteOutcome::Executed { bytes: 2 }
+        );
         assert_eq!(transport.writes_for(&id), vec![vec![4, 5]]);
+    }
+
+    #[test]
+    fn mock_handle_suppresses_writes_when_configured() {
+        let device = RawHidDevice::mock("mock://dry-run");
+        let id = device.id.clone();
+        let transport = MockTransport::with_devices(vec![device]);
+        transport.set_suppress_writes(true);
+
+        let mut handle = transport.open(&id).expect("mock device should open");
+
+        assert_eq!(
+            handle.write(&[1, 2, 3]).unwrap(),
+            WriteOutcome::Suppressed { bytes: 3 }
+        );
+        // The report is still recorded for inspection even though it was suppressed.
+        assert_eq!(transport.writes_for(&id), vec![vec![1, 2, 3]]);
     }
 
     #[test]

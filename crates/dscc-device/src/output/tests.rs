@@ -11,7 +11,7 @@ use crate::{
     edge_profile::{encode_edge_onboard_profile, EdgeOnboardSlotId},
     enumeration::RawHidDevice,
     status::DeviceFamily,
-    transport::{DeviceHandle, DeviceTransport, MockTransport},
+    transport::{DeviceHandle, DeviceTransport, MockTransport, WriteOutcome},
 };
 
 #[test]
@@ -230,6 +230,9 @@ fn output_manager_records_dry_run_write_on_mock_transport() {
         .with_transport_hint(DeviceTransportKind::Usb);
     let raw_id = device.id.clone();
     let transport = MockTransport::with_devices(vec![device]);
+    // Model a dry-run handle so the suppressed outcome — not the manager mode —
+    // drives the reported hardware_output flag.
+    transport.set_suppress_writes(true);
     let manager = ControllerOutputManager::new(transport.clone(), OutputMode::DryRunHid);
     let target = ControllerOutputTarget {
         raw_device_id: raw_id.clone(),
@@ -254,6 +257,55 @@ fn output_manager_records_dry_run_write_on_mock_transport() {
     assert!(!write.hardware_output);
     assert_eq!(writes.len(), 1);
     assert_eq!(writes[0][0], USB_REPORT_ID);
+}
+
+#[test]
+fn write_frame_reports_hardware_output_false_when_handle_suppresses() {
+    let device = RawHidDevice::mock("mock://suppressed")
+        .with_family_hint(DeviceFamily::DualSenseEdge)
+        .with_transport_hint(DeviceTransportKind::Usb);
+    let raw_id = device.id.clone();
+    let transport = MockTransport::with_devices(vec![device]);
+    transport.set_suppress_writes(true);
+    // Manager is in HardwareOutput mode, but the handle suppresses the write:
+    // hardware_output must follow the handle outcome, not the manager mode.
+    let manager = ControllerOutputManager::new(transport.clone(), OutputMode::HardwareOutput);
+    let target = ControllerOutputTarget {
+        raw_device_id: raw_id.clone(),
+        transport: DeviceTransportKind::Usb,
+    };
+
+    let write = manager
+        .write_frame(&target, &ControllerOutputFrame::default())
+        .unwrap();
+
+    assert_eq!(write.bytes, USB_REPORT_LEN);
+    assert!(!write.hardware_output);
+    // The report still flows through the validated encode path and is recorded.
+    assert_eq!(transport.writes_for(&raw_id).len(), 1);
+}
+
+#[test]
+fn write_frame_reports_hardware_output_true_when_handle_executes() {
+    let device = RawHidDevice::mock("mock://executed")
+        .with_family_hint(DeviceFamily::DualSenseEdge)
+        .with_transport_hint(DeviceTransportKind::Usb);
+    let raw_id = device.id.clone();
+    let transport = MockTransport::with_devices(vec![device]);
+    // Manager is in DryRunHid mode, but the handle executes the write:
+    // hardware_output must follow the handle outcome, not the manager mode.
+    let manager = ControllerOutputManager::new(transport.clone(), OutputMode::DryRunHid);
+    let target = ControllerOutputTarget {
+        raw_device_id: raw_id,
+        transport: DeviceTransportKind::Usb,
+    };
+
+    let write = manager
+        .write_frame(&target, &ControllerOutputFrame::default())
+        .unwrap();
+
+    assert_eq!(write.bytes, USB_REPORT_LEN);
+    assert!(write.hardware_output);
 }
 
 #[test]
@@ -546,7 +598,7 @@ impl DeviceHandle for BlockingWriteHandle {
         Ok(None)
     }
 
-    fn write(&mut self, report: &[u8]) -> Result<usize, DeviceError> {
+    fn write(&mut self, report: &[u8]) -> Result<WriteOutcome, DeviceError> {
         if self.id == self.blocked_id {
             let (state, condition) = &*self.state;
             let mut state = state.lock().unwrap();
@@ -556,7 +608,9 @@ impl DeviceHandle for BlockingWriteHandle {
                 state = condition.wait(state).unwrap();
             }
         }
-        Ok(report.len())
+        Ok(WriteOutcome::Executed {
+            bytes: report.len(),
+        })
     }
 }
 
