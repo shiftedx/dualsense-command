@@ -106,30 +106,59 @@ fn global_runtime_profile(
     }
 }
 
-pub(crate) fn forza_runtime_profile(
-    profile_id: &str,
-    profile_name: &str,
-    config: Option<&ControllerConfig>,
-) -> Profile {
-    let trigger = config.map(|config| &config.trigger);
-    let lightbar = config.map(|config| &config.lightbar);
-    // The resolver materializes the selected profile into this cloned config
-    // before evaluation, so automatic game detection can use the right preset
-    // without requiring the UI to save/apply it first.
-    let forza = config
-        .map(|config| config.forza.clone().normalized())
-        .unwrap_or_default();
-    let intensity = trigger.map_or(0.82, trigger_intensity_scalar);
-    if trigger.is_some_and(|trigger| trigger.effect == "Off") || intensity <= 0.0 {
-        return Profile {
-            id: profile_id.to_string(),
-            name: profile_name.to_string(),
-            version: 1,
-            rumble_policy: RumblePolicy::FullControl,
-            rules: lightbar_rules(lightbar),
-        };
-    }
+// Effect-rule priority ladder for Forza trigger layering (higher wins). Named
+// here so the precedence contract is explicit at every rule-push site instead
+// of living as bare integer literals.
+const ABS_FRONT_SLIP_PRIORITY: i32 = 62;
+const ABS_TIRE_SLIP_PRIORITY: i32 = 61;
+const ABS_WHEEL_SLIP_PRIORITY: i32 = 60;
+const SHIFT_THUMP_PRIORITY: i32 = 70;
+const REV_LIMITER_PRIORITY: i32 = 55;
+const HANDBRAKE_WALL_PRIORITY: i32 = 45;
+const TRIGGER_ENDSTOP_PRIORITY: i32 = 12;
+const TRIGGER_OVERTRAVEL_RAMP_PRIORITY: i32 = 11;
+const TRIGGER_BASELINE_PRIORITY: i32 = 10;
 
+/// Derived adaptive-trigger geometry for a Forza profile: the start/end points,
+/// overtravel knees, end-stop walls, ramp starts and ABS threshold that the
+/// effect-rule builders consume. All fields are in 0..=1 trigger-travel units.
+///
+/// Computed purely from already-normalized config, so it can be exercised
+/// directly in unit tests instead of read back out of an assembled `Profile`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct TriggerPositions {
+    pub l2_start: f64,
+    pub l2_end: f64,
+    pub l2_force_knee: f64,
+    pub l2_final_stop_input: f64,
+    pub l2_final_stop_position: f64,
+    pub l2_normal_end: f64,
+    pub l2_has_overtravel_guard: bool,
+    pub r2_start: f64,
+    pub r2_end: f64,
+    pub r2_endstop_wall: f64,
+    pub r2_overtravel_ramp_start: f64,
+    pub r2_normal_end: f64,
+    pub r2_has_overtravel_guard: bool,
+    pub abs_brake_threshold: f64,
+}
+
+/// Derive the Forza trigger geometry from a (raw) trigger config plus the
+/// already-normalized brake/throttle/abs tuning.
+///
+/// Invariants on the result (all guaranteed by the helpers below):
+/// `l2_start <= l2_force_knee <= l2_end`, `l2_final_stop_position` and
+/// `abs_brake_threshold` lie in `[l2_start, l2_end]`, `l2_normal_end >=
+/// l2_start + 0.01`, `r2_start <= r2_overtravel_ramp_start <= r2_endstop_wall
+/// <= r2_end`, and `r2_normal_end >= r2_start + 0.01`. When `trigger` is `None`
+/// the start/end points fall back to the Forza defaults. Total: no panics, no
+/// `Result` — coherence is already guaranteed by the callers' `normalized()`.
+pub(crate) fn compute_trigger_positions(
+    trigger: Option<&TriggerConfig>,
+    brake_tuning: &ForzaBrakeTuningConfig,
+    throttle_tuning: &ForzaThrottleTuningConfig,
+    abs_tuning: &ForzaAbsTuningConfig,
+) -> TriggerPositions {
     let l2_start = trigger.map_or(0.18, |trigger| f64::from(trigger.l2_from.min(100)) / 100.0);
     let r2_start = trigger.map_or(0.10, |trigger| f64::from(trigger.r2_from.min(100)) / 100.0);
     let l2_end = trigger.map_or(FORZA_BRAKE_FULL_FORCE_AT, |trigger| {
@@ -138,8 +167,6 @@ pub(crate) fn forza_runtime_profile(
     let r2_end = trigger.map_or(FORZA_THROTTLE_FULL_FORCE_AT, |trigger| {
         trigger_range_end_position(trigger.r2_from, trigger.r2_to)
     });
-    let brake_tuning = forza.brake.clone().normalized();
-    let throttle_tuning = forza.throttle.clone().normalized();
     let l2_has_overtravel_guard = brake_overtravel_guard_active(l2_end, brake_tuning.guard_min_end);
     let l2_force_knee = brake_overtravel_wall_position(
         l2_start,
@@ -172,6 +199,74 @@ pub(crate) fn forza_runtime_profile(
         r2_endstop_wall
     }
     .max(r2_start + 0.01);
+    let abs_brake_threshold =
+        abs_brake_threshold_for_range(l2_start, l2_end, abs_tuning.brake_threshold_ratio);
+
+    TriggerPositions {
+        l2_start,
+        l2_end,
+        l2_force_knee,
+        l2_final_stop_input,
+        l2_final_stop_position,
+        l2_normal_end,
+        l2_has_overtravel_guard,
+        r2_start,
+        r2_end,
+        r2_endstop_wall,
+        r2_overtravel_ramp_start,
+        r2_normal_end,
+        r2_has_overtravel_guard,
+        abs_brake_threshold,
+    }
+}
+
+pub(crate) fn forza_runtime_profile(
+    profile_id: &str,
+    profile_name: &str,
+    config: Option<&ControllerConfig>,
+) -> Profile {
+    let trigger = config.map(|config| &config.trigger);
+    let lightbar = config.map(|config| &config.lightbar);
+    // The resolver materializes the selected profile into this cloned config
+    // before evaluation, so automatic game detection can use the right preset
+    // without requiring the UI to save/apply it first.
+    let forza = config
+        .map(|config| config.forza.clone().normalized())
+        .unwrap_or_default();
+    let intensity = trigger.map_or(0.82, trigger_intensity_scalar);
+    if trigger.is_some_and(|trigger| trigger.effect == "Off") || intensity <= 0.0 {
+        return Profile {
+            id: profile_id.to_string(),
+            name: profile_name.to_string(),
+            version: 1,
+            rumble_policy: RumblePolicy::FullControl,
+            rules: lightbar_rules(lightbar),
+        };
+    }
+
+    let brake_tuning = forza.brake.clone().normalized();
+    let throttle_tuning = forza.throttle.clone().normalized();
+    let abs_tuning = forza.abs.clone().normalized();
+    let shift_tuning = forza.shift.clone().normalized();
+    let rev_tuning = forza.rev_limiter.clone().normalized();
+    // Derived trigger geometry now lives behind one pure, testable interface;
+    // destructure it back into the local names the rule builders already use.
+    let TriggerPositions {
+        l2_start,
+        l2_end,
+        l2_force_knee,
+        l2_final_stop_input,
+        l2_final_stop_position,
+        l2_normal_end,
+        l2_has_overtravel_guard,
+        r2_start,
+        r2_endstop_wall,
+        r2_overtravel_ramp_start,
+        r2_normal_end,
+        r2_has_overtravel_guard,
+        abs_brake_threshold,
+        ..
+    } = compute_trigger_positions(trigger, &brake_tuning, &throttle_tuning, &abs_tuning);
     let l2_curve_points = trigger
         .map(|trigger| trigger_curve_value_points(&trigger.l2_curve_points))
         .unwrap_or_else(|| trigger_curve_value_points(&default_l2_trigger_curve_points()));
@@ -180,11 +275,6 @@ pub(crate) fn forza_runtime_profile(
         .unwrap_or_else(|| trigger_curve_value_points(&default_r2_trigger_curve_points()));
     let brake = forza.effect("brake_resistance");
     let abs = forza.effect("abs_slip_pulse");
-    let abs_tuning = forza.abs.clone().normalized();
-    let shift_tuning = forza.shift.clone().normalized();
-    let rev_tuning = forza.rev_limiter.clone().normalized();
-    let abs_brake_threshold =
-        abs_brake_threshold_for_range(l2_start, l2_end, abs_tuning.brake_threshold_ratio);
     let handbrake = forza.effect("handbrake_wall");
     let throttle = forza.effect("throttle_resistance");
     let shift = forza.effect("gear_shift_thump");
@@ -221,13 +311,37 @@ pub(crate) fn forza_runtime_profile(
 
     if abs.scalar() > 0.0 && route_has_l2(&abs.route) {
         let abs_sources: Vec<(&str, &str, i32)> = match abs_tuning.slip_source.as_str() {
-            "front" => vec![("forza-l2-abs-front-slip-pulse", "wheel.slip.front_max", 62)],
-            "tire" => vec![("forza-l2-abs-tire-slip-pulse", "tire.slip_ratio.max", 61)],
-            "wheel" => vec![("forza-l2-abs-wheel-slip-pulse", "wheel.slip.max", 60)],
+            "front" => vec![(
+                "forza-l2-abs-front-slip-pulse",
+                "wheel.slip.front_max",
+                ABS_FRONT_SLIP_PRIORITY,
+            )],
+            "tire" => vec![(
+                "forza-l2-abs-tire-slip-pulse",
+                "tire.slip_ratio.max",
+                ABS_TIRE_SLIP_PRIORITY,
+            )],
+            "wheel" => vec![(
+                "forza-l2-abs-wheel-slip-pulse",
+                "wheel.slip.max",
+                ABS_WHEEL_SLIP_PRIORITY,
+            )],
             _ => vec![
-                ("forza-l2-abs-front-slip-pulse", "wheel.slip.front_max", 62),
-                ("forza-l2-abs-tire-slip-pulse", "tire.slip_ratio.max", 61),
-                ("forza-l2-abs-wheel-slip-pulse", "wheel.slip.max", 60),
+                (
+                    "forza-l2-abs-front-slip-pulse",
+                    "wheel.slip.front_max",
+                    ABS_FRONT_SLIP_PRIORITY,
+                ),
+                (
+                    "forza-l2-abs-tire-slip-pulse",
+                    "tire.slip_ratio.max",
+                    ABS_TIRE_SLIP_PRIORITY,
+                ),
+                (
+                    "forza-l2-abs-wheel-slip-pulse",
+                    "wheel.slip.max",
+                    ABS_WHEEL_SLIP_PRIORITY,
+                ),
             ],
         };
 
@@ -292,7 +406,7 @@ pub(crate) fn forza_runtime_profile(
             hysteresis: None,
             timeout: None,
             target: EffectTarget::L2,
-            priority: 45,
+            priority: HANDBRAKE_WALL_PRIORITY,
             condition: number_condition("input.handbrake", ComparisonOp::GreaterThan, 0.05),
             effect: EffectTemplate::Wall {
                 position: ValueSource::constant((l2_start + 0.12).clamp(0.0, 0.86)),
@@ -311,7 +425,7 @@ pub(crate) fn forza_runtime_profile(
             hysteresis: None,
             timeout: None,
             target: EffectTarget::L2,
-            priority: 12,
+            priority: TRIGGER_ENDSTOP_PRIORITY,
             condition: number_condition(
                 "input.brake",
                 ComparisonOp::GreaterOrEqual,
@@ -329,7 +443,7 @@ pub(crate) fn forza_runtime_profile(
                 hysteresis: None,
                 timeout: None,
                 target: EffectTarget::L2,
-                priority: 11,
+                priority: TRIGGER_OVERTRAVEL_RAMP_PRIORITY,
                 condition: number_condition(
                     "input.brake",
                     ComparisonOp::GreaterOrEqual,
@@ -354,7 +468,7 @@ pub(crate) fn forza_runtime_profile(
             hysteresis: None,
             timeout: None,
             target: EffectTarget::L2,
-            priority: 10,
+            priority: TRIGGER_BASELINE_PRIORITY,
             condition: baseline_condition.clone(),
             effect: EffectTemplate::AdaptiveResistance {
                 start_position: ValueSource::constant(l2_start),
@@ -375,7 +489,7 @@ pub(crate) fn forza_runtime_profile(
         &rev,
         RevLimiterRuleShape {
             id: "forza-rev-limiter-buzz",
-            priority: 55,
+            priority: REV_LIMITER_PRIORITY,
             condition: number_condition(
                 "vehicle.rpm_ratio",
                 ComparisonOp::GreaterOrEqual,
@@ -402,7 +516,7 @@ pub(crate) fn forza_runtime_profile(
             hysteresis: None,
             timeout: None,
             target: EffectTarget::R2,
-            priority: 12,
+            priority: TRIGGER_ENDSTOP_PRIORITY,
             condition: number_condition(
                 "input.throttle",
                 ComparisonOp::GreaterOrEqual,
@@ -420,7 +534,7 @@ pub(crate) fn forza_runtime_profile(
                 hysteresis: None,
                 timeout: None,
                 target: EffectTarget::R2,
-                priority: 11,
+                priority: TRIGGER_OVERTRAVEL_RAMP_PRIORITY,
                 condition: number_condition(
                     "input.throttle",
                     ComparisonOp::GreaterOrEqual,
@@ -445,7 +559,7 @@ pub(crate) fn forza_runtime_profile(
             hysteresis: None,
             timeout: None,
             target: EffectTarget::R2,
-            priority: 10,
+            priority: TRIGGER_BASELINE_PRIORITY,
             condition: baseline_condition,
             effect: EffectTemplate::AdaptiveResistance {
                 start_position: ValueSource::constant(r2_start),
@@ -569,7 +683,7 @@ fn push_shift_thump_rules(
             hysteresis: None,
             timeout: None,
             target,
-            priority: 70,
+            priority: SHIFT_THUMP_PRIORITY,
             condition: shift_thump_condition(
                 pedal_signal,
                 ComparisonOp::GreaterOrEqual,
@@ -593,7 +707,7 @@ fn push_shift_thump_rules(
             hysteresis: None,
             timeout: None,
             target,
-            priority: 70,
+            priority: SHIFT_THUMP_PRIORITY,
             condition: shift_thump_condition(
                 pedal_signal,
                 ComparisonOp::LessThan,
@@ -975,5 +1089,82 @@ fn mapping_status(
             "ready"
         }
         .to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn normalized_tuning() -> (
+        ForzaBrakeTuningConfig,
+        ForzaThrottleTuningConfig,
+        ForzaAbsTuningConfig,
+    ) {
+        (
+            ForzaBrakeTuningConfig::default().normalized(),
+            ForzaThrottleTuningConfig::default().normalized(),
+            ForzaAbsTuningConfig::default().normalized(),
+        )
+    }
+
+    fn trigger_with_range(l2_from: u8, l2_to: u8, r2_from: u8, r2_to: u8) -> TriggerConfig {
+        TriggerConfig {
+            l2_from,
+            l2_to,
+            r2_from,
+            r2_to,
+            ..TriggerConfig::default()
+        }
+    }
+
+    #[test]
+    fn compute_trigger_positions_defaults_when_trigger_none() {
+        let (brake, throttle, abs) = normalized_tuning();
+        let pos = compute_trigger_positions(None, &brake, &throttle, &abs);
+        assert_eq!(pos.l2_start, 0.18);
+        assert_eq!(pos.r2_start, 0.10);
+        assert_eq!(pos.l2_end, FORZA_BRAKE_FULL_FORCE_AT);
+        assert_eq!(pos.r2_end, FORZA_THROTTLE_FULL_FORCE_AT);
+    }
+
+    #[test]
+    fn compute_trigger_positions_keeps_derived_points_within_range() {
+        let trigger = trigger_with_range(20, 80, 10, 90);
+        let (brake, throttle, abs) = normalized_tuning();
+
+        let pos = compute_trigger_positions(Some(&trigger), &brake, &throttle, &abs);
+
+        // L2 (brake) geometry stays ordered inside the configured travel range.
+        assert!(pos.l2_start <= pos.l2_force_knee);
+        assert!(pos.l2_force_knee <= pos.l2_end);
+        assert!(pos.l2_final_stop_position >= pos.l2_start);
+        assert!(pos.l2_final_stop_position <= pos.l2_end);
+        assert!(pos.l2_normal_end >= pos.l2_start + 0.01);
+        assert!(pos.abs_brake_threshold >= pos.l2_start);
+        assert!(pos.abs_brake_threshold <= pos.l2_end);
+
+        // R2 (throttle) geometry likewise.
+        assert!(pos.r2_start <= pos.r2_overtravel_ramp_start);
+        assert!(pos.r2_overtravel_ramp_start <= pos.r2_endstop_wall);
+        assert!(pos.r2_endstop_wall <= pos.r2_end);
+        assert!(pos.r2_normal_end >= pos.r2_start + 0.01);
+    }
+
+    #[test]
+    fn compute_trigger_positions_overtravel_guard_tracks_guard_min_end() {
+        let trigger = trigger_with_range(20, 80, 10, 90);
+        let (brake, throttle, abs) = normalized_tuning();
+
+        let pos = compute_trigger_positions(Some(&trigger), &brake, &throttle, &abs);
+
+        assert_eq!(
+            pos.l2_has_overtravel_guard,
+            pos.l2_end >= brake.guard_min_end.clamp(0.0, 1.0)
+        );
+        assert_eq!(
+            pos.r2_has_overtravel_guard,
+            pos.r2_end >= throttle.guard_min_end.clamp(0.0, 1.0)
+        );
     }
 }
