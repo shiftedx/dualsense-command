@@ -11,7 +11,7 @@ use crate::{
     error::DeviceError,
     metadata,
     status::{DeviceFamily, DevicePathHint, DeviceTransportKind, RawDeviceId},
-    transport::{DeviceHandle, DeviceTransport},
+    transport::{DeviceHandle, DeviceTransport, WriteOutcome},
 };
 
 #[derive(Clone)]
@@ -113,14 +113,17 @@ impl DeviceHandle for HidApiDeviceHandle {
         }
     }
 
-    fn write(&mut self, report: &[u8]) -> Result<usize, DeviceError> {
+    fn write(&mut self, report: &[u8]) -> Result<WriteOutcome, DeviceError> {
         if !self.hardware_writes_enabled {
-            return Ok(report.len());
+            return Ok(WriteOutcome::Suppressed {
+                bytes: report.len(),
+            });
         }
 
-        self.device
-            .write(report)
-            .map_err(|error| DeviceError::TransportFault(format!("hidapi write failed: {error}")))
+        let bytes = self.device.write(report).map_err(|error| {
+            DeviceError::TransportFault(format!("hidapi write failed: {error}"))
+        })?;
+        Ok(WriteOutcome::Executed { bytes })
     }
 
     fn receive_feature_report(
