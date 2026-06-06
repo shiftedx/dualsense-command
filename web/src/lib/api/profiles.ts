@@ -1,6 +1,6 @@
 import type { ControllerConfiguration, ExportedProfile, ProfileResolution, ProfileSummary } from '../types';
 import { ApiRequestError, apiFetch, isMockApiEnabled, loadMockApi, type ActionAcceptedDto } from './client';
-import { mapProfile, type ProfileDto } from './snapshot';
+import { mapProfile, type ProfileDto } from './snapshotMapping';
 
 export async function saveProfileConfig(
   profileId: string,
