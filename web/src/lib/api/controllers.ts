@@ -9,7 +9,7 @@ import type {
   UpdateEdgeProfileRequest
 } from '../types';
 import { apiAction, apiFetch, isMockApiEnabled, loadMockApi } from './client';
-import { mapController, type ControllerDto } from './snapshot';
+import { mapController, type ControllerDto } from './snapshotMapping';
 
 interface EffectTestResponseDto {
   accepted: boolean;
