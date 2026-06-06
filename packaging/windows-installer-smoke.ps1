@@ -21,7 +21,13 @@ param(
     [switch]$AllowExistingInstall,
     [switch]$AllowExistingProcesses,
     [int]$TimeoutSeconds = 120,
-    [string]$LogDirectory
+    [string]$LogDirectory,
+    [ValidateSet("0", "1")]
+    [string]$StartWithWindows = "1",
+    [ValidateSet("0", "1")]
+    [string]$CreateDesktopShortcut = "0",
+    [ValidateSet("0", "1")]
+    [string]$LaunchAfterInstall = "1"
 )
 
 Set-StrictMode -Version 2.0
@@ -119,6 +125,14 @@ function Get-DsccStartMenuFolder {
     return (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\DualSense Command Center")
 }
 
+function Get-DsccDesktopShortcut {
+    $desktop = [Environment]::GetFolderPath("DesktopDirectory")
+    if ([string]::IsNullOrWhiteSpace($desktop)) {
+        throw "DesktopDirectory could not be resolved."
+    }
+    return (Join-Path $desktop "DualSense Command Center.lnk")
+}
+
 function Get-RunAtLoginValue {
     $keyPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
     if (-not (Test-Path -Path $keyPath)) {
@@ -188,11 +202,15 @@ function Assert-CleanStart {
     $markers = @()
     $installFolder = Get-DsccInstallFolder
     $startMenuFolder = Get-DsccStartMenuFolder
+    $desktopShortcut = Get-DsccDesktopShortcut
     if (Test-Path -LiteralPath $installFolder) {
         $markers += $installFolder
     }
     if (Test-Path -LiteralPath $startMenuFolder) {
         $markers += $startMenuFolder
+    }
+    if (Test-Path -LiteralPath $desktopShortcut) {
+        $markers += $desktopShortcut
     }
     if ($null -ne (Get-RunAtLoginValue)) {
         $markers += "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run\DualSense Command Center"
@@ -212,7 +230,8 @@ function Invoke-MsiAction {
         [ValidateSet("Install", "Uninstall")]
         [string]$Action,
         [string]$Path,
-        [string]$LogPath
+        [string]$LogPath,
+        [hashtable]$Properties = @{}
     )
 
     $msiexec = Join-Path $env:SystemRoot "System32\msiexec.exe"
@@ -222,14 +241,26 @@ function Invoke-MsiAction {
 
     if ($Action -eq "Install") {
         $arguments = @("/i", $Path, "/qn", "/norestart", "/l*v", $LogPath)
+        foreach ($entry in $Properties.GetEnumerator() | Sort-Object Name) {
+            $arguments += ("{0}={1}" -f $entry.Name, $entry.Value)
+        }
     } else {
         $arguments = @("/x", $Path, "/qn", "/norestart", "/l*v", $LogPath)
     }
 
+    $argumentLine = ($arguments | ForEach-Object {
+        $argument = [string]$_
+        if ($argument -match '[\s"]') {
+            '"' + ($argument -replace '"', '\"') + '"'
+        } else {
+            $argument
+        }
+    }) -join " "
+
     Write-Step ("{0} {1}" -f $Action, $Path)
     Write-Host ("  Log: {0}" -f $LogPath)
-    & $msiexec @arguments
-    $exitCode = $LASTEXITCODE
+    $process = Start-Process -FilePath $msiexec -ArgumentList $argumentLine -Wait -PassThru -WindowStyle Hidden
+    $exitCode = $process.ExitCode
 
     if ($exitCode -eq 0) {
         return
@@ -243,8 +274,16 @@ function Invoke-MsiAction {
 }
 
 function Assert-InstalledPayload {
+    param(
+        [ValidateSet("0", "1")]
+        [string]$ExpectedStartWithWindows,
+        [ValidateSet("0", "1")]
+        [string]$ExpectedDesktopShortcut
+    )
+
     $installFolder = Get-DsccInstallFolder
     $startMenuFolder = Get-DsccStartMenuFolder
+    $desktopShortcut = Get-DsccDesktopShortcut
     $expectedFiles = @(
         (Join-Path $installFolder "dscc-agent.exe"),
         (Join-Path $installFolder "dscc-tray.exe"),
@@ -252,6 +291,7 @@ function Assert-InstalledPayload {
         (Join-Path $installFolder "Stop DSCC.cmd"),
         (Join-Path $installFolder "Backup DSCC State.cmd"),
         (Join-Path $installFolder "README_TESTING.txt"),
+        (Join-Path $installFolder "LICENSE.txt"),
         (Join-Path $installFolder "web\dist\index.html")
     )
 
@@ -270,8 +310,18 @@ function Assert-InstalledPayload {
     }
 
     $runValue = Get-RunAtLoginValue
-    if ([string]::IsNullOrWhiteSpace($runValue) -or ($runValue -notmatch "dscc-tray\.exe")) {
+    if ($ExpectedStartWithWindows -eq "1" -and ([string]::IsNullOrWhiteSpace($runValue) -or ($runValue -notmatch "dscc-tray\.exe"))) {
         throw "Run-at-login value is missing or does not point at dscc-tray.exe."
+    }
+    if ($ExpectedStartWithWindows -eq "0" -and $null -ne $runValue) {
+        throw "Run-at-login value exists even though StartWithWindows was disabled: $runValue"
+    }
+
+    if ($ExpectedDesktopShortcut -eq "1" -and -not (Test-Path -LiteralPath $desktopShortcut)) {
+        throw "Desktop shortcut was not created: $desktopShortcut"
+    }
+    if ($ExpectedDesktopShortcut -eq "0" -and (Test-Path -LiteralPath $desktopShortcut)) {
+        throw "Desktop shortcut exists even though CreateDesktopShortcut was disabled: $desktopShortcut"
     }
 
     Write-Step "Installed payload checks passed."
@@ -280,12 +330,14 @@ function Assert-InstalledPayload {
 function Assert-UninstalledPayload {
     $installFolder = Get-DsccInstallFolder
     $startMenuFolder = Get-DsccStartMenuFolder
+    $desktopShortcut = Get-DsccDesktopShortcut
     $leftovers = @()
 
     foreach ($path in @(
         (Join-Path $installFolder "dscc-agent.exe"),
         (Join-Path $installFolder "dscc-tray.exe"),
         (Join-Path $installFolder "dscc-cli.exe"),
+        (Join-Path $installFolder "LICENSE.txt"),
         (Join-Path $installFolder "web\dist\index.html")
     )) {
         if (Test-Path -LiteralPath $path) {
@@ -302,6 +354,9 @@ function Assert-UninstalledPayload {
 
     if ($null -ne (Get-RunAtLoginValue)) {
         $leftovers += "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run\DualSense Command Center"
+    }
+    if (Test-Path -LiteralPath $desktopShortcut) {
+        $leftovers += $desktopShortcut
     }
 
     if ($leftovers.Count -gt 0) {
@@ -399,9 +454,11 @@ function Write-SmokeChecklist {
         Write-Host ("  3. Upgrade/reinstall current MSI: {0}" -f $CurrentMsi.Path)
     }
     Write-Host "  4. Verify payload under the current user's LocalAppData Programs folder."
-    Write-Host "  5. Verify Start menu shortcuts and HKCU run-at-login value."
+    Write-Host "  5. Verify Start menu shortcut icon, setup options, desktop shortcut, and run-at-login state."
     if ($SkipLaunchCheck) {
         Write-Host "  6. Launch/process checks skipped because -SkipLaunchCheck was supplied."
+    } elseif ($LaunchAfterInstall -ne "1") {
+        Write-Host "  6. Launch/process checks skipped because DSCC_LAUNCH_AFTER_INSTALL=0."
     } else {
         Write-Host "  6. Verify one dscc-tray and one dscc-agent launch from the install folder."
     }
@@ -410,6 +467,7 @@ function Write-SmokeChecklist {
     } else {
         Write-Host "  7. Uninstall and verify payload, shortcuts, run key, and DSCC processes are gone."
     }
+    Write-Host ("  Setup properties: DSCC_START_WITH_WINDOWS={0} DSCC_CREATE_DESKTOP_SHORTCUT={1} DSCC_LAUNCH_AFTER_INSTALL={2}" -f $StartWithWindows, $CreateDesktopShortcut, $LaunchAfterInstall)
     Write-Host ("  Logs will be written under: {0}" -f $LogDirectory)
 }
 
@@ -438,6 +496,7 @@ if ($baselineMsi.Path -ne $currentMsi.Path) {
 }
 Write-Host ("  Install folder: {0}" -f (Get-DsccInstallFolder))
 Write-Host ("  Start menu folder: {0}" -f (Get-DsccStartMenuFolder))
+Write-Host ("  Desktop shortcut: {0}" -f (Get-DsccDesktopShortcut))
 
 if (-not $Execute) {
     Write-SmokeChecklist -BaselineMsi $baselineMsi -CurrentMsi $currentMsi -LogDirectory $LogDirectory
@@ -452,19 +511,25 @@ if ($TimeoutSeconds -lt 15) {
 New-Item -ItemType Directory -Path $LogDirectory -Force | Out-Null
 Assert-CleanStart -AllowExistingInstall:$AllowExistingInstall -AllowExistingProcesses:$AllowExistingProcesses
 
-Invoke-MsiAction -Action Install -Path $baselineMsi.Path -LogPath (Join-Path $LogDirectory "01-install.log")
+$installProperties = @{
+    DSCC_START_WITH_WINDOWS = $StartWithWindows
+    DSCC_CREATE_DESKTOP_SHORTCUT = $CreateDesktopShortcut
+    DSCC_LAUNCH_AFTER_INSTALL = $LaunchAfterInstall
+}
+
+Invoke-MsiAction -Action Install -Path $baselineMsi.Path -LogPath (Join-Path $LogDirectory "01-install.log") -Properties $installProperties
 $installedMsi = $baselineMsi
-Assert-InstalledPayload
-if (-not $SkipLaunchCheck) {
+Assert-InstalledPayload -ExpectedStartWithWindows $StartWithWindows -ExpectedDesktopShortcut $CreateDesktopShortcut
+if (-not $SkipLaunchCheck -and $LaunchAfterInstall -eq "1") {
     Wait-ForDsccProcesses -Names @("dscc-tray", "dscc-agent") -TimeoutSeconds $TimeoutSeconds | Out-Null
     Assert-DsccProcessesRunFromInstallFolder
 }
 
 if (-not $SkipUpgrade) {
-    Invoke-MsiAction -Action Install -Path $currentMsi.Path -LogPath (Join-Path $LogDirectory "02-upgrade.log")
+    Invoke-MsiAction -Action Install -Path $currentMsi.Path -LogPath (Join-Path $LogDirectory "02-upgrade.log") -Properties $installProperties
     $installedMsi = $currentMsi
-    Assert-InstalledPayload
-    if (-not $SkipLaunchCheck) {
+    Assert-InstalledPayload -ExpectedStartWithWindows $StartWithWindows -ExpectedDesktopShortcut $CreateDesktopShortcut
+    if (-not $SkipLaunchCheck -and $LaunchAfterInstall -eq "1") {
         Wait-ForDsccProcesses -Names @("dscc-tray", "dscc-agent") -TimeoutSeconds $TimeoutSeconds | Out-Null
         Assert-DsccProcessesRunFromInstallFolder
     }

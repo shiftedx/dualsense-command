@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.3.10",
+    [string]$Version = "0.4.0",
     [string]$TargetTriple,
     [switch]$SkipWebBuild,
     [switch]$AllowDebugAgent,
@@ -9,7 +9,13 @@ param(
     [string]$BrokerPublishPath,
     [string]$CertificatePath,
     [string]$CertificatePassword,
-    [string]$TimestampUrl = 'http://timestamp.digicert.com'
+    [string]$TimestampUrl = 'http://timestamp.digicert.com',
+    [ValidateSet("0", "1")]
+    [string]$DefaultStartWithWindows = "1",
+    [ValidateSet("0", "1")]
+    [string]$DefaultCreateDesktopShortcut = "0",
+    [ValidateSet("0", "1")]
+    [string]$DefaultLaunchAfterInstall = "1"
 )
 
 $ErrorActionPreference = "Stop"
@@ -252,6 +258,8 @@ function Write-DirectoryXml {
 
 $repoRoot = Resolve-RepoRoot
 $webRoot = Join-Path $repoRoot "web"
+$licensePath = Join-Path $repoRoot "LICENSE"
+$trayIconPath = Join-Path $repoRoot "crates\dscc-tray\assets\dscc-tray.ico"
 $targetRoot = Join-Path $repoRoot "target"
 $stagingRoot = Join-Path $targetRoot "installer\staging"
 $wixRoot = Join-Path $targetRoot "installer\wix"
@@ -340,6 +348,12 @@ $webDist = Join-Path $webRoot "dist"
 if (-not (Test-Path (Join-Path $webDist "index.html"))) {
     throw "web/dist is missing. Run npm run build first."
 }
+if (-not (Test-Path -LiteralPath $licensePath)) {
+    throw "LICENSE is missing."
+}
+if (-not (Test-Path -LiteralPath $trayIconPath)) {
+    throw "DSCC tray icon is missing: $trayIconPath"
+}
 if ($includeBroker -and -not (Test-Path $brokerExe)) {
     if ($frameworkDependentBroker) {
         throw "HIDMaestro framework-dependent broker publish output is missing. Build it with dotnet publish tools/dscc-hidmaestro-broker -c Release -r win-x64 --self-contained false -p:PublishSingleFile=false -p:DebugType=None -p:DebugSymbols=false -p:HidMaestroCoreDll=<path-to-HIDMaestro.Core.dll> before packaging. Target machines must have the x64 .NET 10 Runtime installed."
@@ -381,6 +395,7 @@ New-Item -ItemType Directory -Path $wixRoot -Force | Out-Null
 Copy-Item -LiteralPath $agentExe -Destination (Join-Path $stagingRoot "dscc-agent.exe") -Force
 Copy-Item -LiteralPath $trayExe -Destination (Join-Path $stagingRoot "dscc-tray.exe") -Force
 Copy-Item -LiteralPath $cliExe -Destination (Join-Path $stagingRoot "dscc-cli.exe") -Force
+Copy-Item -LiteralPath $licensePath -Destination (Join-Path $stagingRoot "LICENSE.txt") -Force
 Copy-DirectoryClean -Source $webDist -Destination (Join-Path $stagingRoot "web\dist")
 if ($includeBroker) {
     if ($frameworkDependentBroker) {
@@ -458,7 +473,7 @@ DualSense Command Center test build
 2. Open "DualSense Command Center" from the Start menu.
 3. The tray icon starts the local agent and opens the UI.
 4. Right-click the tray icon to open the UI, restart DSCC, stop DSCC, or quit.
-5. The login startup entry starts the tray and agent silently; opening the Start menu shortcut brings up the UI.
+5. If selected during setup, the login startup entry starts the tray and agent silently.
 6. Hardware output is enabled by default when the agent starts.
 7. For Forza testing, enable Data Out in-game and point it at 127.0.0.1 port 5300.
 8. The local UI opens at http://127.0.0.1:43473/.
@@ -467,11 +482,24 @@ DualSense Command Center test build
 11. Installer flavor: $installerFlavorLabel.
 12. HIDMaestro broker package flavor: $brokerFlavor.
 13. Standard is the normal installer for Steam Input, controller tuning, haptics, profiles, and diagnostics. Use a Bridge installer only when you want DSCC Input Bridge testing for non-Steam games.
+14. Setup options can create a desktop shortcut, start DSCC with Windows, and launch DSCC after install.
 "@
 
 Add-TextFile -Path (Join-Path $stagingRoot "Stop DSCC.cmd") -Content $stopScript
 Add-TextFile -Path (Join-Path $stagingRoot "Backup DSCC State.cmd") -Content $backupStateScript
 Add-TextFile -Path (Join-Path $stagingRoot "README_TESTING.txt") -Content $readme
+
+$licenseRtfPath = Join-Path $wixRoot "LICENSE.rtf"
+$licenseRtf = @"
+{\rtf1\ansi\deff0{\fonttbl{\f0 Segoe UI;}}\f0\fs18
+DualSense Command Center is licensed under the Apache License, Version 2.0.\par
+\par
+The full license is installed as LICENSE.txt next to the DSCC executables.\par
+\par
+Install DSCC only if you accept the license terms.\par
+}
+"@
+Add-TextFile -Path $licenseRtfPath -Content $licenseRtf
 
 $componentRefs = [System.Collections.Generic.List[string]]::new()
 $directoryLines = [System.Collections.Generic.List[string]]::new()
@@ -485,6 +513,12 @@ $localProgramsCleanupComponentId = "LocalProgramsFolderCleanup"
 $componentRefs.Add(('      <ComponentRef Id="{0}" />' -f $localProgramsCleanupComponentId))
 $runAtLoginComponentId = "RunAtLogin"
 $componentRefs.Add(('      <ComponentRef Id="{0}" />' -f $runAtLoginComponentId))
+$runAtLoginCleanupComponentId = "RunAtLoginCleanup"
+$componentRefs.Add(('      <ComponentRef Id="{0}" />' -f $runAtLoginCleanupComponentId))
+$desktopShortcutComponentId = "DesktopShortcutComponent"
+$componentRefs.Add(('      <ComponentRef Id="{0}" />' -f $desktopShortcutComponentId))
+$desktopShortcutCleanupComponentId = "DesktopShortcutCleanup"
+$componentRefs.Add(('      <ComponentRef Id="{0}" />' -f $desktopShortcutCleanupComponentId))
 $componentRefText = $componentRefs -join "`r`n"
 $directoryText = $directoryLines -join "`r`n"
 
@@ -494,6 +528,12 @@ $wxs = @"
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser" />
     <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of DualSense Command Center is already installed." />
     <MediaTemplate EmbedCab="yes" />
+    <Property Id="DSCC_START_WITH_WINDOWS" Value="$DefaultStartWithWindows" />
+    <Property Id="DSCC_CREATE_DESKTOP_SHORTCUT" Value="$DefaultCreateDesktopShortcut" />
+    <Property Id="DSCC_LAUNCH_AFTER_INSTALL" Value="$DefaultLaunchAfterInstall" />
+    <Property Id="ARPPRODUCTICON" Value="DsccTrayIcon" />
+    <Icon Id="DsccTrayIcon" SourceFile="$(Escape-Xml $trayIconPath)" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(Escape-Xml $licenseRtfPath)" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="LocalAppDataFolder">
@@ -506,12 +546,13 @@ $directoryText
       <Directory Id="ProgramMenuFolder">
         <Directory Id="ApplicationProgramsFolder" Name="DualSense Command Center" />
       </Directory>
+      <Directory Id="DesktopFolder" Name="Desktop" />
     </Directory>
 
     <DirectoryRef Id="ApplicationProgramsFolder">
       <Component Id="$shortcutComponentId" Guid="{22BE0FA0-2187-4F88-95EF-D0A1BEB53D88}">
-        <Shortcut Id="StartMenuShortcut" Name="DualSense Command Center" Target="[INSTALLFOLDER]dscc-tray.exe" WorkingDirectory="INSTALLFOLDER" />
-        <Shortcut Id="StartMenuStopShortcut" Name="Stop DualSense Command Center" Target="[INSTALLFOLDER]Stop DSCC.cmd" WorkingDirectory="INSTALLFOLDER" />
+        <Shortcut Id="StartMenuShortcut" Name="DualSense Command Center" Target="[INSTALLFOLDER]dscc-tray.exe" WorkingDirectory="INSTALLFOLDER" Icon="DsccTrayIcon" IconIndex="0" />
+        <Shortcut Id="StartMenuStopShortcut" Name="Stop DualSense Command Center" Target="[INSTALLFOLDER]Stop DSCC.cmd" WorkingDirectory="INSTALLFOLDER" Icon="DsccTrayIcon" IconIndex="0" />
         <RemoveFolder Id="ApplicationProgramsFolder" On="uninstall" />
         <RegistryValue Root="HKCU" Key="Software\DualSenseCommand\DualSenseCommandCenter" Name="installed" Type="integer" Value="1" KeyPath="yes" />
       </Component>
@@ -519,7 +560,26 @@ $directoryText
 
     <DirectoryRef Id="INSTALLFOLDER">
       <Component Id="$runAtLoginComponentId" Guid="{CF89093D-7604-455F-8E51-5929396D60B1}">
+        <Condition>DSCC_START_WITH_WINDOWS = "1"</Condition>
         <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="DualSense Command Center" Type="string" Value="&quot;[INSTALLFOLDER]dscc-tray.exe&quot; --startup" KeyPath="yes" />
+      </Component>
+      <Component Id="$runAtLoginCleanupComponentId" Guid="{A44C4D6F-7B76-4E29-9962-B44594F06214}">
+        <Condition>DSCC_START_WITH_WINDOWS &lt;&gt; "1"</Condition>
+        <RemoveRegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="DualSense Command Center" />
+        <RegistryValue Root="HKCU" Key="Software\DualSenseCommand\DualSenseCommandCenter\InstallOptions" Name="StartWithWindowsDisabled" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="DesktopFolder">
+      <Component Id="$desktopShortcutComponentId" Guid="{E64E8F5A-B395-4998-B94F-60F685CB2102}">
+        <Condition>DSCC_CREATE_DESKTOP_SHORTCUT = "1"</Condition>
+        <Shortcut Id="DesktopShortcut" Name="DualSense Command Center" Target="[INSTALLFOLDER]dscc-tray.exe" WorkingDirectory="INSTALLFOLDER" Icon="DsccTrayIcon" IconIndex="0" />
+        <RegistryValue Root="HKCU" Key="Software\DualSenseCommand\DualSenseCommandCenter\Shortcuts" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="$desktopShortcutCleanupComponentId" Guid="{E8203864-DA95-40C7-9E75-4C91C8370343}">
+        <Condition>DSCC_CREATE_DESKTOP_SHORTCUT &lt;&gt; "1"</Condition>
+        <RemoveFile Id="RemoveDesktopShortcut" Name="DualSense Command Center.lnk" On="install" />
+        <RegistryValue Root="HKCU" Key="Software\DualSenseCommand\DualSenseCommandCenter\InstallOptions" Name="DesktopShortcutDisabled" Type="integer" Value="1" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
@@ -529,6 +589,36 @@ $directoryText
         <RegistryValue Root="HKCU" Key="Software\DualSenseCommand\DualSenseCommandCenter\Folders" Name="LocalProgramsFolder" Type="integer" Value="1" KeyPath="yes" />
       </Component>
     </DirectoryRef>
+
+    <UI>
+      <UIRef Id="WixUI_Minimal" />
+      <Publish Dialog="WelcomeEulaDlg" Control="Install" Event="NewDialog" Value="DsccSetupOptionsDlg" Order="3">LicenseAccepted = "1"</Publish>
+      <Publish Dialog="DsccSetupOptionsDlg" Control="Back" Event="NewDialog" Value="WelcomeEulaDlg">1</Publish>
+      <Publish Dialog="DsccSetupOptionsDlg" Control="Next" Event="EndDialog" Value="Return">1</Publish>
+
+      <Dialog Id="DsccSetupOptionsDlg" Width="370" Height="270" Title="[ProductName] Setup Options">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="WixUI_Bmp_Banner" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="340" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Setup Options" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="320" Height="15" Transparent="yes" NoPrefix="yes" Text="Choose how DSCC should live on Windows." />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+
+        <Control Id="StartWithWindows" Type="CheckBox" X="25" Y="68" Width="310" Height="17" Property="DSCC_START_WITH_WINDOWS" CheckBoxValue="1" Text="Start DSCC with Windows" />
+        <Control Id="StartWithWindowsText" Type="Text" X="44" Y="86" Width="300" Height="24" Text="Recommended if you want profiles, haptics, and tray access ready after login." />
+
+        <Control Id="CreateDesktopShortcut" Type="CheckBox" X="25" Y="120" Width="310" Height="17" Property="DSCC_CREATE_DESKTOP_SHORTCUT" CheckBoxValue="1" Text="Create a desktop shortcut" />
+        <Control Id="CreateDesktopShortcutText" Type="Text" X="44" Y="138" Width="300" Height="18" Text="Adds a normal Windows shortcut that opens the DSCC tray/UI." />
+
+        <Control Id="LaunchAfterInstall" Type="CheckBox" X="25" Y="170" Width="310" Height="17" Property="DSCC_LAUNCH_AFTER_INSTALL" CheckBoxValue="1" Text="Launch DSCC after setup" />
+        <Control Id="LaunchAfterInstallText" Type="Text" X="44" Y="188" Width="300" Height="18" Text="Starts the tray and local agent once setup finishes." />
+
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="Install" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+        </Control>
+      </Dialog>
+    </UI>
 
     <Feature Id="MainFeature" Title="DualSense Command Center" Level="1">
 $componentRefText
@@ -542,7 +632,7 @@ $componentRefText
       <Custom Action="StopExistingAgent" Before="InstallValidate">NOT REMOVE</Custom>
       <Custom Action="StopExistingTray" After="StopExistingAgent">NOT REMOVE</Custom>
       <Custom Action="BackupPersistedState" After="InstallFinalize">NOT REMOVE</Custom>
-      <Custom Action="LaunchTrayAfterInstall" After="BackupPersistedState">NOT Installed</Custom>
+      <Custom Action="LaunchTrayAfterInstall" After="BackupPersistedState">NOT Installed AND DSCC_LAUNCH_AFTER_INSTALL = "1"</Custom>
     </InstallExecuteSequence>
   </Product>
 </Wix>
@@ -553,11 +643,11 @@ Add-TextFile -Path $wxsPath -Content $wxs
 
 $wixTools = Ensure-Wix3 -TargetRoot $targetRoot
 $wixObjPath = Join-Path $wixRoot "DualSenseCommandCenter.wixobj"
-& $wixTools.Candle -nologo -arch x64 -out $wixObjPath $wxsPath
+& $wixTools.Candle -nologo -arch x64 -ext WixUIExtension -out $wixObjPath $wxsPath
 if ($LASTEXITCODE -ne 0) {
     throw "WiX candle failed with exit code $LASTEXITCODE."
 }
-& $wixTools.Light -nologo -spdb -sice:ICE61 -sice:ICE91 -out $msiPath $wixObjPath
+& $wixTools.Light -nologo -spdb -ext WixUIExtension -sice:ICE61 -sice:ICE91 -out $msiPath $wixObjPath
 if ($LASTEXITCODE -ne 0) {
     throw "WiX light failed with exit code $LASTEXITCODE."
 }
@@ -579,6 +669,7 @@ Write-Output "Agent: $agentExe"
 Write-Output "Tray: $trayExe"
 Write-Output "CLI: $cliExe"
 Write-Output "Installer flavor: $installerFlavorLabel"
+Write-Output "Default setup options: start-with-windows=$DefaultStartWithWindows desktop-shortcut=$DefaultCreateDesktopShortcut launch-after-install=$DefaultLaunchAfterInstall"
 if ($includeBroker) {
     Write-Output "HIDMaestro broker: $brokerFlavor ($brokerPublish)"
 } else {

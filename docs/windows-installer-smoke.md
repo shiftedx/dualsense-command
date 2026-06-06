@@ -24,6 +24,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows-installer-
 If there is no previous MSI handy, omit `-BaselineMsiPath`; the script installs
 the current MSI and runs it again to exercise the WiX same-version upgrade path.
 
+The installer options can be tested without using the UI:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File packaging\windows-installer-smoke.ps1 -MsiPath .\target\installer\DualSenseCommandCenter-<version>-standard.msi -Execute -StartWithWindows 0 -CreateDesktopShortcut 1 -LaunchAfterInstall 0
+```
+
 ## What It Checks
 
 - The baseline/current MSI files exist, are non-empty, and have SHA256 hashes.
@@ -32,9 +38,11 @@ the current MSI and runs it again to exercise the WiX same-version upgrade path.
 - Install creates the expected per-user payload under
   `$env:LOCALAPPDATA\Programs\DualSense Command Center`.
 - Start menu shortcuts are created under the current user's Start menu folder.
-- The HKCU run-at-login value points at `dscc-tray.exe`.
+- The selected desktop shortcut option is honored.
+- The selected HKCU run-at-login option is honored.
 - Fresh install and upgrade launch at most one `dscc-tray` and one `dscc-agent`
-  process, and those processes run from the current install folder.
+  process when `LaunchAfterInstall` is enabled, and those processes run from
+  the current install folder.
 - Uninstall removes installer-owned payload, shortcuts, the run key, and leaves
   no DSCC processes behind.
 
@@ -49,8 +57,17 @@ MSI logs are written under a temporary `dscc-msi-smoke-*` directory unless
    artifact.
 3. Use a clean Windows test account or VM with no existing DSCC install.
 4. Run the live smoke with `-Execute`.
-5. Keep the generated install, upgrade, and uninstall logs with the release
+5. Run at least one option-override smoke before a major installer release.
+6. Keep the generated install, upgrade, and uninstall logs with the release
    validation notes if anything fails.
+
+## Setup Properties
+
+| Property | Default | Meaning |
+| --- | --- | --- |
+| `DSCC_START_WITH_WINDOWS` | `1` | Creates the HKCU run-at-login entry for `dscc-tray.exe --startup`. |
+| `DSCC_CREATE_DESKTOP_SHORTCUT` | `0` | Creates `DualSense Command Center.lnk` on the current user's desktop. |
+| `DSCC_LAUNCH_AFTER_INSTALL` | `1` | Starts the tray and local agent after first install. |
 
 ## Installer Flavors
 

@@ -1,3 +1,38 @@
+# DualSense Command Center 0.4.0
+
+Release date: 2026-06-03
+
+0.4.0 is a Windows installer polish release.
+
+## Windows Setup
+
+- Added a setup-options page for common Windows choices:
+  - start DSCC with Windows
+  - create a desktop shortcut
+  - launch DSCC after setup
+- Start menu shortcuts now use the DSCC icon instead of the generic Windows
+  shortcut icon.
+- The optional desktop shortcut uses the same DSCC icon and opens the tray/UI.
+- Apps & Features now has a DSCC product icon.
+- The installed folder now includes `LICENSE.txt`.
+- Silent installs can override the defaults with:
+  - `DSCC_START_WITH_WINDOWS=0`
+  - `DSCC_CREATE_DESKTOP_SHORTCUT=1`
+  - `DSCC_LAUNCH_AFTER_INSTALL=0`
+- Standard still defaults to starting with Windows and launching after install.
+  The desktop shortcut defaults off unless the user chooses it.
+
+## Validation
+
+- The MSI smoke script now validates setup properties, desktop shortcut state,
+  run-at-login state, and uninstall cleanup for the new shortcut.
+- Local clean-install smoke passed for the default Standard setup and left
+  `0.4.0` installed for testing.
+- Local option smoke passed with autostart off, desktop shortcut on, and
+  post-install launch off.
+- Reinstalling with autostart or desktop shortcut disabled now removes stale
+  installer-owned entries from earlier installs.
+
 # DualSense Command Center 0.3.10
 
 Release date: 2026-06-02

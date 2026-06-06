@@ -21,7 +21,7 @@ lightbar controls, and racing telemetry without Python setup or scripts.
 
 Get the latest Windows installer from [GitHub Releases](https://github.com/shiftedx/dualsense-command/releases/latest).
 
-- Current release: `0.3.10`
+- Current release: `0.4.0`
 - Recommended download: **DSCC Standard** Windows x86_64 MSI
 - Linux builds: beta archive with bundled web UI
 
@@ -42,6 +42,10 @@ Pick one. Most people should not install the larger bridge build.
 
 Steam games and normal controller tuning do not need the Bridge installers.
 Use Bridge only to expand compatibility beyond Steam.
+
+The Windows installer asks whether DSCC should start with Windows, create a
+desktop shortcut, and launch after setup. Standard defaults to tray startup on
+login and launch after install; the desktop shortcut is opt-in.
 
 ## Quick Start
 
