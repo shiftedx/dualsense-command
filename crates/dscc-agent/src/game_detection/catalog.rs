@@ -75,15 +75,7 @@ pub(crate) fn telemetry_game_detection(
     }
 
     let game = telemetry_game_module_for_adapter(inner, catalog, adapter_id)?;
-    let candidate = GameDetectionCandidate {
-        game_id: game.id.to_string(),
-        name: game.display_name.to_string(),
-        process_name: format!("{adapter_id}:telemetry"),
-        module_id: game.id.to_string(),
-        adapter_id: game.adapter_id.to_string(),
-        profile_id: game.default_profile_id.to_string(),
-        confidence: 70,
-    };
+    let candidate = game.telemetry_detection_candidate(adapter_id, 70);
 
     Some(GameDetectionResponse {
         active_game_id: Some(candidate.game_id.clone()),
@@ -108,15 +100,19 @@ pub(crate) fn telemetry_game_module_for_adapter(
     let modules: Vec<GameModule> = built_in_game_modules()
         .iter()
         .copied()
-        .filter(|game| game.adapter_id == adapter_id)
+        .filter(|game| game.telemetry_link().adapter_id == adapter_id)
         .collect();
     if modules.is_empty() {
         return None;
     }
 
     if let Some(game_id) = inner.telemetry.text("game.id") {
-        if let Some(game) = modules.iter().find(|game| game.id == game_id) {
-            return Some(*game);
+        if let Some(game) = modules
+            .iter()
+            .copied()
+            .find(|game| game.identity().id == game_id)
+        {
+            return Some(game);
         }
     }
 
@@ -127,13 +123,17 @@ pub(crate) fn telemetry_game_module_for_adapter(
             summary.installed
                 && modules
                     .iter()
-                    .any(|game| game.id == summary.game_id.as_str())
+                    .any(|game| game.identity().id == summary.game_id.as_str())
         })
         .collect();
     if installed.len() == 1 {
         let game_id = installed[0].game_id.as_str();
-        if let Some(game) = modules.iter().find(|game| game.id == game_id) {
-            return Some(*game);
+        if let Some(game) = modules
+            .iter()
+            .copied()
+            .find(|game| game.identity().id == game_id)
+        {
+            return Some(game);
         }
     }
 

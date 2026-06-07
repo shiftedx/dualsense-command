@@ -6,11 +6,83 @@ pub(crate) fn env_flag_enabled(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn is_edge_model(model: &str) -> bool {
+    model == "DualSense Edge"
+}
+
+struct SavedTuningProjection {
+    input_mode: ControllerInputMode,
+    trigger: TriggerConfig,
+    lightbar: LightbarConfig,
+    forza: ForzaTelemetryConfig,
+    sticks: StickConfig,
+    buttons: Vec<ButtonAssignmentConfig>,
+    input_bridge: InputBridgeConfig,
+}
+
+impl SavedTuningProjection {
+    fn from_controller(config: &ControllerConfig) -> Self {
+        Self {
+            input_mode: config.input_mode,
+            trigger: config.trigger.clone(),
+            lightbar: config.lightbar.clone(),
+            forza: config.forza.clone(),
+            sticks: config.sticks.clone(),
+            buttons: config.buttons.clone(),
+            input_bridge: config.input_bridge.clone(),
+        }
+    }
+
+    fn from_profile(config: ProfileConfig) -> Self {
+        Self {
+            input_mode: config.input_mode,
+            trigger: config.trigger,
+            lightbar: config.lightbar,
+            forza: config.forza,
+            sticks: config.sticks,
+            buttons: config.buttons,
+            input_bridge: config.input_bridge,
+        }
+    }
+
+    fn normalized_for_model(mut self, model: &str) -> Self {
+        self.trigger = self.trigger.normalized();
+        self.lightbar = self.lightbar.normalized();
+        self.forza = self.forza.normalized();
+        self.sticks = self.sticks.normalized();
+        self.buttons = normalize_controller_button_assignments(self.buttons, is_edge_model(model));
+        self.input_bridge = self.input_bridge.normalized();
+        self
+    }
+
+    fn apply_to_controller(self, config: &mut ControllerConfig) {
+        config.input_mode = self.input_mode;
+        config.trigger = self.trigger;
+        config.lightbar = self.lightbar;
+        config.forza = self.forza;
+        config.sticks = self.sticks;
+        config.buttons = self.buttons;
+        config.input_bridge = self.input_bridge;
+    }
+
+    fn into_profile(self) -> ProfileConfig {
+        ProfileConfig {
+            input_mode: self.input_mode,
+            trigger: self.trigger,
+            lightbar: self.lightbar,
+            forza: self.forza,
+            sticks: self.sticks,
+            buttons: self.buttons,
+            input_bridge: self.input_bridge,
+        }
+    }
+}
+
 impl ControllerConfig {
     pub(crate) fn default_for(controller_id: impl Into<String>, model: impl Into<String>) -> Self {
         let controller_id = controller_id.into();
         let model = model.into();
-        let edge = model == "DualSense Edge";
+        let edge = is_edge_model(&model);
 
         Self {
             controller_id,
@@ -33,7 +105,7 @@ impl ControllerConfig {
         existing_input_bridge: Option<InputBridgeConfig>,
     ) -> Self {
         let model = model.into();
-        let edge = model == "DualSense Edge";
+        let edge = is_edge_model(&model);
         Self {
             controller_id: controller_id.into(),
             model,
@@ -53,18 +125,9 @@ impl ControllerConfig {
     }
 
     pub(crate) fn normalized(mut self) -> Self {
-        self.trigger = self.trigger.normalized();
-        self.lightbar = self.lightbar.normalized();
-        self.forza = self.forza.normalized();
-        self.sticks = self.sticks.normalized();
-        self.input_mode = match self.input_mode {
-            ControllerInputMode::NativeDualSense => ControllerInputMode::NativeDualSense,
-            ControllerInputMode::SteamInputCompanion => ControllerInputMode::SteamInputCompanion,
-            ControllerInputMode::DsccInputBridge => ControllerInputMode::DsccInputBridge,
-        };
-        self.buttons =
-            normalize_controller_button_assignments(self.buttons, self.model == "DualSense Edge");
-        self.input_bridge = self.input_bridge.normalized();
+        let projection =
+            SavedTuningProjection::from_controller(&self).normalized_for_model(&self.model);
+        projection.apply_to_controller(&mut self);
         self.profile_assignments = normalize_profile_assignments(self.profile_assignments);
         self
     }
@@ -78,43 +141,21 @@ impl Default for ProfileConfig {
 
 impl ProfileConfig {
     pub(crate) fn from_controller_config(config: &ControllerConfig) -> Self {
-        Self {
-            input_mode: config.input_mode,
-            trigger: config.trigger.clone(),
-            lightbar: config.lightbar.clone(),
-            forza: config.forza.clone(),
-            sticks: config.sticks.clone(),
-            buttons: config.buttons.clone(),
-            input_bridge: config.input_bridge.clone(),
-        }
-        .normalized_for_model(&config.model)
+        SavedTuningProjection::from_controller(config)
+            .normalized_for_model(&config.model)
+            .into_profile()
     }
 
-    pub(crate) fn normalized_for_model(mut self, model: &str) -> Self {
-        self.trigger = self.trigger.normalized();
-        self.lightbar = self.lightbar.normalized();
-        self.forza = self.forza.normalized();
-        self.sticks = self.sticks.normalized();
-        self.input_mode = match self.input_mode {
-            ControllerInputMode::NativeDualSense => ControllerInputMode::NativeDualSense,
-            ControllerInputMode::SteamInputCompanion => ControllerInputMode::SteamInputCompanion,
-            ControllerInputMode::DsccInputBridge => ControllerInputMode::DsccInputBridge,
-        };
-        self.buttons =
-            normalize_controller_button_assignments(self.buttons, model == "DualSense Edge");
-        self.input_bridge = self.input_bridge.normalized();
-        self
+    pub(crate) fn normalized_for_model(self, model: &str) -> Self {
+        SavedTuningProjection::from_profile(self)
+            .normalized_for_model(model)
+            .into_profile()
     }
 
     pub(crate) fn apply_to_controller_config(&self, config: &mut ControllerConfig) {
-        let profile_config = self.clone().normalized_for_model(&config.model);
-        config.input_mode = profile_config.input_mode;
-        config.trigger = profile_config.trigger;
-        config.lightbar = profile_config.lightbar;
-        config.forza = profile_config.forza;
-        config.sticks = profile_config.sticks;
-        config.buttons = profile_config.buttons;
-        config.input_bridge = profile_config.input_bridge;
+        SavedTuningProjection::from_profile(self.clone())
+            .normalized_for_model(&config.model)
+            .apply_to_controller(config);
     }
 }
 
@@ -174,41 +215,85 @@ impl TriggerConfig {
     }
 }
 
-impl Default for ForzaTelemetryConfig {
-    fn default() -> Self {
-        Self {
-            body_rumble_mode: default_forza_body_rumble_mode(),
-            effects: default_forza_effect_configs(),
-            brake: ForzaBrakeTuningConfig::default(),
-            abs: ForzaAbsTuningConfig::default(),
-            throttle: ForzaThrottleTuningConfig::default(),
-            shift: ForzaShiftTuningConfig::default(),
-            rev_limiter: ForzaRevLimiterTuningConfig::default(),
+mod forza_tuning {
+    use super::*;
+
+    #[derive(Clone, Copy)]
+    struct RangeRule {
+        min: f64,
+        max: f64,
+        fallback: f64,
+    }
+
+    impl RangeRule {
+        const fn new(min: f64, max: f64, fallback: f64) -> Self {
+            Self { min, max, fallback }
+        }
+
+        fn clamp(self, value: f64) -> f64 {
+            if value.is_finite() {
+                value.clamp(self.min, self.max)
+            } else {
+                self.fallback.clamp(self.min, self.max)
+            }
+        }
+
+        const fn with_min(self, min: f64) -> Self {
+            Self { min, ..self }
         }
     }
-}
 
-impl ForzaTelemetryConfig {
-    pub(crate) fn normalized(self) -> Self {
-        let body_rumble_mode =
-            if forza_body_rumble_modes().contains(&self.body_rumble_mode.as_str()) {
-                self.body_rumble_mode
-            } else {
-                default_forza_body_rumble_mode()
-            };
-        let mut provided = self
-            .effects
+    const fn range(min: f64, max: f64, fallback: f64) -> RangeRule {
+        RangeRule::new(min, max, fallback)
+    }
+
+    const fn unit_range(fallback: f64) -> RangeRule {
+        RangeRule::new(0.0, 1.0, fallback)
+    }
+
+    pub(super) fn default_telemetry() -> ForzaTelemetryConfig {
+        ForzaTelemetryConfig {
+            body_rumble_mode: default_body_rumble_mode(),
+            effects: default_effect_configs(),
+            brake: brake::default(),
+            abs: abs::default(),
+            throttle: throttle::default(),
+            shift: shift::default(),
+            rev_limiter: rev_limiter::default(),
+        }
+    }
+
+    pub(super) fn normalize_telemetry(config: ForzaTelemetryConfig) -> ForzaTelemetryConfig {
+        let body_rumble_mode = if body_rumble_modes().contains(&config.body_rumble_mode.as_str()) {
+            config.body_rumble_mode
+        } else {
+            default_body_rumble_mode()
+        };
+
+        ForzaTelemetryConfig {
+            body_rumble_mode,
+            effects: normalize_effects(config.effects),
+            brake: brake::normalize(config.brake),
+            abs: abs::normalize(config.abs),
+            throttle: throttle::normalize(config.throttle),
+            shift: shift::normalize(config.shift),
+            rev_limiter: rev_limiter::normalize(config.rev_limiter),
+        }
+    }
+
+    fn normalize_effects(effects: Vec<ForzaEffectConfig>) -> Vec<ForzaEffectConfig> {
+        let mut provided = effects
             .into_iter()
             .map(|effect| (effect.id.clone(), effect))
             .collect::<BTreeMap<_, _>>();
-        let mut effects = Vec::new();
+        let mut normalized = Vec::new();
 
-        for default in default_forza_effect_configs() {
+        for default in default_effect_configs() {
             let effect = provided
                 .remove(&default.id)
                 .unwrap_or_else(|| default.clone())
                 .normalized_with_default(&default);
-            effects.push(effect);
+            normalized.push(effect);
         }
 
         for (_, effect) in provided {
@@ -219,19 +304,329 @@ impl ForzaTelemetryConfig {
                     intensity: 100,
                     route: "body_both".to_string(),
                 };
-                effects.push(effect.normalized_with_default(&default));
+                normalized.push(effect.normalized_with_default(&default));
             }
         }
 
-        Self {
-            body_rumble_mode,
-            effects,
-            brake: self.brake.normalized(),
-            abs: self.abs.normalized(),
-            throttle: self.throttle.normalized(),
-            shift: self.shift.normalized(),
-            rev_limiter: self.rev_limiter.normalized(),
+        normalized
+    }
+
+    pub(super) fn default_effect(id: &str) -> ForzaEffectConfig {
+        default_effect_configs()
+            .into_iter()
+            .find(|effect| effect.id == id)
+            .unwrap_or_else(|| ForzaEffectConfig {
+                id: id.to_string(),
+                enabled: true,
+                intensity: 100,
+                route: "body_both".to_string(),
+            })
+    }
+
+    pub(super) fn default_effect_configs() -> Vec<ForzaEffectConfig> {
+        [
+            ("brake_resistance", 100, "l2"),
+            ("abs_slip_pulse", 100, "l2"),
+            ("handbrake_wall", 100, "l2"),
+            ("throttle_resistance", 100, "r2"),
+            (
+                "gear_shift_thump",
+                FORZA_SHIFT_THUMP_DEFAULT_INTENSITY,
+                "r2_and_body",
+            ),
+            ("rev_limiter_buzz", 120, "r2"),
+            ("road_texture", 60, "body_both"),
+            ("rumble_strip", 72, "body_both"),
+            ("tire_slip", 95, "body_right"),
+            ("puddle_drag", 75, "body_left"),
+            ("suspension_impact", 115, "body_both"),
+            ("rpm_leds", 100, "light_led"),
+        ]
+        .into_iter()
+        .map(|(id, intensity, route)| ForzaEffectConfig {
+            id: id.to_string(),
+            enabled: true,
+            intensity,
+            route: route.to_string(),
+        })
+        .collect()
+    }
+
+    pub(super) fn default_body_rumble_mode() -> String {
+        "native_passthrough".to_string()
+    }
+
+    pub(super) fn body_rumble_modes() -> &'static [&'static str] {
+        &["native_passthrough", "dscc_full_control"]
+    }
+
+    pub(super) fn effect_routes() -> &'static [&'static str] {
+        &[
+            "body_both",
+            "body_left",
+            "body_right",
+            "l2",
+            "r2",
+            "both_triggers",
+            "body_and_triggers",
+            "r2_and_body",
+            "light_led",
+        ]
+    }
+
+    pub(crate) mod brake {
+        use super::super::*;
+        use super::{range, unit_range};
+
+        pub(crate) fn default() -> ForzaBrakeTuningConfig {
+            ForzaBrakeTuningConfig {
+                baseline_force: FORZA_BRAKE_BASELINE_FORCE,
+                normal_force: FORZA_BRAKE_NORMAL_FORCE,
+                endstop_force: FORZA_BRAKE_ENDSTOP_FORCE,
+                endstop_boost: FORZA_BRAKE_ENDSTOP_FORCE_BOOST,
+                wall_position: FORZA_BRAKE_OVERTRAVEL_WALL_POSITION,
+                guard_min_end: FORZA_BRAKE_OVERTRAVEL_MIN_POSITION,
+                full_force_at: FORZA_BRAKE_FULL_FORCE_INPUT,
+                ramp_curve: FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE,
+            }
         }
+
+        pub(crate) fn normalize(config: ForzaBrakeTuningConfig) -> ForzaBrakeTuningConfig {
+            let defaults = default();
+            let baseline_force = unit_range(defaults.baseline_force).clamp(config.baseline_force);
+
+            ForzaBrakeTuningConfig {
+                baseline_force,
+                normal_force: unit_range(defaults.normal_force)
+                    .with_min(baseline_force)
+                    .clamp(config.normal_force),
+                endstop_force: unit_range(defaults.endstop_force).clamp(config.endstop_force),
+                endstop_boost: range(0.0, 5.0, defaults.endstop_boost).clamp(config.endstop_boost),
+                wall_position: unit_range(defaults.wall_position).clamp(config.wall_position),
+                guard_min_end: unit_range(defaults.guard_min_end).clamp(config.guard_min_end),
+                full_force_at: unit_range(defaults.full_force_at).clamp(config.full_force_at),
+                ramp_curve: range(0.4, 4.0, defaults.ramp_curve).clamp(config.ramp_curve),
+            }
+        }
+    }
+
+    pub(crate) mod abs {
+        use super::super::*;
+        use super::{range, unit_range};
+
+        pub(crate) fn default() -> ForzaAbsTuningConfig {
+            ForzaAbsTuningConfig {
+                mode: default_mode(),
+                slip_source: default_slip_source(),
+                slip_threshold: FORZA_ABS_SLIP_THRESHOLD,
+                brake_threshold_ratio: FORZA_ABS_RANGE_START_RATIO,
+                min_speed_kmh: FORZA_ABS_MIN_SPEED_KMH,
+                min_strength: FORZA_ABS_PULSE_MIN_AMPLITUDE,
+                max_strength: FORZA_ABS_PULSE_MAX_AMPLITUDE,
+                frequency_hz: FORZA_ABS_PULSE_FREQUENCY_HZ,
+                curve: 1.0,
+            }
+        }
+
+        pub(crate) fn normalize(config: ForzaAbsTuningConfig) -> ForzaAbsTuningConfig {
+            let defaults = default();
+            let mode = if modes().contains(&config.mode.as_str()) {
+                config.mode
+            } else {
+                defaults.mode
+            };
+            let slip_source = if slip_sources().contains(&config.slip_source.as_str()) {
+                config.slip_source
+            } else {
+                defaults.slip_source
+            };
+            let min_strength = unit_range(defaults.min_strength).clamp(config.min_strength);
+
+            ForzaAbsTuningConfig {
+                mode,
+                slip_source,
+                slip_threshold: range(0.05, 2.0, defaults.slip_threshold)
+                    .clamp(config.slip_threshold),
+                brake_threshold_ratio: unit_range(defaults.brake_threshold_ratio)
+                    .clamp(config.brake_threshold_ratio),
+                min_speed_kmh: range(0.0, 250.0, defaults.min_speed_kmh)
+                    .clamp(config.min_speed_kmh),
+                min_strength,
+                max_strength: unit_range(defaults.max_strength)
+                    .with_min(min_strength)
+                    .clamp(config.max_strength),
+                frequency_hz: range(1.0, 80.0, defaults.frequency_hz).clamp(config.frequency_hz),
+                curve: range(0.4, 3.0, defaults.curve).clamp(config.curve),
+            }
+        }
+
+        pub(crate) fn default_mode() -> String {
+            "strong_pulse".to_string()
+        }
+
+        pub(crate) fn default_slip_source() -> String {
+            "auto_front_first".to_string()
+        }
+
+        pub(crate) fn modes() -> &'static [&'static str] {
+            &["strong_pulse", "fine_flutter"]
+        }
+
+        pub(crate) fn slip_sources() -> &'static [&'static str] {
+            &["auto_front_first", "front", "tire", "wheel"]
+        }
+    }
+
+    pub(crate) mod throttle {
+        use super::super::*;
+        use super::{range, unit_range};
+
+        pub(crate) fn default() -> ForzaThrottleTuningConfig {
+            ForzaThrottleTuningConfig {
+                baseline_force: FORZA_THROTTLE_BASELINE_FORCE,
+                normal_force: FORZA_THROTTLE_NORMAL_FORCE,
+                endstop_force: FORZA_THROTTLE_ENDSTOP_FORCE,
+                endstop_boost: FORZA_THROTTLE_ENDSTOP_FORCE_BOOST,
+                wall_position: FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION,
+                guard_min_end: FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION,
+                ramp_width: FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH,
+                ramp_curve: FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE,
+            }
+        }
+
+        pub(crate) fn normalize(config: ForzaThrottleTuningConfig) -> ForzaThrottleTuningConfig {
+            let defaults = default();
+            let baseline_force = unit_range(defaults.baseline_force).clamp(config.baseline_force);
+
+            ForzaThrottleTuningConfig {
+                baseline_force,
+                normal_force: unit_range(defaults.normal_force)
+                    .with_min(baseline_force)
+                    .clamp(config.normal_force),
+                endstop_force: unit_range(defaults.endstop_force).clamp(config.endstop_force),
+                endstop_boost: range(0.0, 5.0, defaults.endstop_boost).clamp(config.endstop_boost),
+                wall_position: unit_range(defaults.wall_position).clamp(config.wall_position),
+                guard_min_end: unit_range(defaults.guard_min_end).clamp(config.guard_min_end),
+                ramp_width: range(0.01, 0.80, defaults.ramp_width).clamp(config.ramp_width),
+                ramp_curve: range(0.4, 4.0, defaults.ramp_curve).clamp(config.ramp_curve),
+            }
+        }
+    }
+
+    pub(crate) mod shift {
+        use super::super::*;
+        use super::{range, unit_range};
+
+        pub(crate) fn default() -> ForzaShiftTuningConfig {
+            ForzaShiftTuningConfig {
+                wall_form_at: FORZA_SHIFT_WALL_FORM_AT,
+                frequency_hz: FORZA_SHIFT_FREQUENCY_HZ,
+                wall_zones: FORZA_SHIFT_WALL_ZONES,
+                body_low_weight: 0.92,
+                body_high_weight: 0.84,
+                clutch_mode: default_clutch_mode(),
+                clutch_threshold: FORZA_SHIFT_CLUTCH_THRESHOLD,
+                with_clutch_strength: FORZA_SHIFT_WITH_CLUTCH_STRENGTH,
+                without_clutch_strength: FORZA_SHIFT_WITHOUT_CLUTCH_STRENGTH,
+                with_clutch_duration_ms: FORZA_SHIFT_WITH_CLUTCH_DURATION_MS,
+                without_clutch_duration_ms: FORZA_SHIFT_WITHOUT_CLUTCH_DURATION_MS,
+                clutch_body_cut: FORZA_SHIFT_CLUTCH_BODY_CUT,
+            }
+        }
+
+        pub(crate) fn normalize(config: ForzaShiftTuningConfig) -> ForzaShiftTuningConfig {
+            let defaults = default();
+
+            ForzaShiftTuningConfig {
+                wall_form_at: unit_range(defaults.wall_form_at).clamp(config.wall_form_at),
+                frequency_hz: range(1.0, 80.0, defaults.frequency_hz).clamp(config.frequency_hz),
+                wall_zones: range(1.0, 8.0, defaults.wall_zones).clamp(config.wall_zones),
+                body_low_weight: range(0.0, 1.5, defaults.body_low_weight)
+                    .clamp(config.body_low_weight),
+                body_high_weight: range(0.0, 1.5, defaults.body_high_weight)
+                    .clamp(config.body_high_weight),
+                clutch_mode: normalize_clutch_mode(&config.clutch_mode).to_string(),
+                clutch_threshold: unit_range(defaults.clutch_threshold)
+                    .clamp(config.clutch_threshold),
+                with_clutch_strength: unit_range(defaults.with_clutch_strength)
+                    .clamp(config.with_clutch_strength),
+                without_clutch_strength: unit_range(defaults.without_clutch_strength)
+                    .clamp(config.without_clutch_strength),
+                with_clutch_duration_ms: range(40.0, 400.0, defaults.with_clutch_duration_ms)
+                    .clamp(config.with_clutch_duration_ms),
+                without_clutch_duration_ms: range(40.0, 500.0, defaults.without_clutch_duration_ms)
+                    .clamp(config.without_clutch_duration_ms),
+                clutch_body_cut: unit_range(defaults.clutch_body_cut).clamp(config.clutch_body_cut),
+            }
+        }
+
+        pub(crate) fn default_clutch_mode() -> String {
+            "auto".to_string()
+        }
+
+        pub(crate) fn normalize_clutch_mode(mode: &str) -> &'static str {
+            match mode {
+                "off" => "off",
+                "manual_clutch" => "manual_clutch",
+                _ => "auto",
+            }
+        }
+    }
+
+    pub(crate) mod rev_limiter {
+        use super::super::*;
+        use super::{range, unit_range};
+
+        pub(crate) fn default() -> ForzaRevLimiterTuningConfig {
+            ForzaRevLimiterTuningConfig {
+                threshold_ratio: FORZA_REV_LIMIT_RATIO,
+                min_strength: FORZA_REV_LIMITER_PULSE_AMPLITUDE,
+                max_strength: FORZA_REV_LIMITER_PULSE_AMPLITUDE,
+                frequency_hz: FORZA_REV_LIMITER_FREQUENCY_HZ,
+                wall_form_throttle_at: FORZA_REV_LIMITER_WALL_FORM_THROTTLE_AT,
+                wall_zones: FORZA_REV_LIMITER_WALL_ZONES,
+                curve: 1.0,
+                body_low_weight: 0.20,
+                body_high_weight: 0.80,
+            }
+        }
+
+        pub(crate) fn normalize(
+            config: ForzaRevLimiterTuningConfig,
+        ) -> ForzaRevLimiterTuningConfig {
+            let defaults = default();
+            let min_strength = unit_range(defaults.min_strength).clamp(config.min_strength);
+
+            ForzaRevLimiterTuningConfig {
+                threshold_ratio: range(0.5, 1.0, defaults.threshold_ratio)
+                    .clamp(config.threshold_ratio),
+                min_strength,
+                max_strength: unit_range(defaults.max_strength)
+                    .with_min(min_strength)
+                    .clamp(config.max_strength),
+                frequency_hz: range(1.0, 80.0, defaults.frequency_hz).clamp(config.frequency_hz),
+                wall_form_throttle_at: unit_range(defaults.wall_form_throttle_at)
+                    .clamp(config.wall_form_throttle_at),
+                wall_zones: range(1.0, 8.0, defaults.wall_zones).clamp(config.wall_zones),
+                curve: range(0.4, 4.0, defaults.curve).clamp(config.curve),
+                body_low_weight: range(0.0, 1.5, defaults.body_low_weight)
+                    .clamp(config.body_low_weight),
+                body_high_weight: range(0.0, 1.5, defaults.body_high_weight)
+                    .clamp(config.body_high_weight),
+            }
+        }
+    }
+}
+
+impl Default for ForzaTelemetryConfig {
+    fn default() -> Self {
+        forza_tuning::default_telemetry()
+    }
+}
+
+impl ForzaTelemetryConfig {
+    pub(crate) fn normalized(self) -> Self {
+        forza_tuning::normalize_telemetry(self)
     }
 
     pub(crate) fn effect(&self, id: &str) -> ForzaEffectConfig {
@@ -247,566 +642,246 @@ impl ForzaTelemetryConfig {
 
 impl Default for ForzaBrakeTuningConfig {
     fn default() -> Self {
-        Self {
-            baseline_force: default_forza_brake_baseline_force(),
-            normal_force: default_forza_brake_normal_force(),
-            endstop_force: default_forza_brake_endstop_force(),
-            endstop_boost: default_forza_brake_endstop_boost(),
-            wall_position: default_forza_brake_wall_position(),
-            guard_min_end: default_forza_brake_guard_min_end(),
-            full_force_at: default_forza_brake_full_force_at(),
-            ramp_curve: default_forza_brake_ramp_curve(),
-        }
+        forza_tuning::brake::default()
     }
 }
 
 impl ForzaBrakeTuningConfig {
-    pub(crate) fn normalized(mut self) -> Self {
-        self.baseline_force = finite_clamp(
-            self.baseline_force,
-            0.0,
-            1.0,
-            default_forza_brake_baseline_force(),
-        );
-        self.normal_force = finite_clamp(
-            self.normal_force,
-            self.baseline_force,
-            1.0,
-            default_forza_brake_normal_force(),
-        );
-        self.endstop_force = finite_clamp(
-            self.endstop_force,
-            0.0,
-            1.0,
-            default_forza_brake_endstop_force(),
-        );
-        self.endstop_boost = finite_clamp(
-            self.endstop_boost,
-            0.0,
-            5.0,
-            default_forza_brake_endstop_boost(),
-        );
-        self.wall_position = finite_clamp(
-            self.wall_position,
-            0.0,
-            1.0,
-            default_forza_brake_wall_position(),
-        );
-        self.guard_min_end = finite_clamp(
-            self.guard_min_end,
-            0.0,
-            1.0,
-            default_forza_brake_guard_min_end(),
-        );
-        self.full_force_at = finite_clamp(
-            self.full_force_at,
-            0.0,
-            1.0,
-            default_forza_brake_full_force_at(),
-        );
-        self.ramp_curve = finite_clamp(self.ramp_curve, 0.4, 4.0, default_forza_brake_ramp_curve());
-        self
+    pub(crate) fn normalized(self) -> Self {
+        forza_tuning::brake::normalize(self)
     }
 }
 
 pub(crate) fn default_forza_brake_baseline_force() -> f64 {
-    FORZA_BRAKE_BASELINE_FORCE
+    forza_tuning::brake::default().baseline_force
 }
 
 pub(crate) fn default_forza_brake_normal_force() -> f64 {
-    FORZA_BRAKE_NORMAL_FORCE
+    forza_tuning::brake::default().normal_force
 }
 
 pub(crate) fn default_forza_brake_endstop_force() -> f64 {
-    FORZA_BRAKE_ENDSTOP_FORCE
+    forza_tuning::brake::default().endstop_force
 }
 
 pub(crate) fn default_forza_brake_endstop_boost() -> f64 {
-    FORZA_BRAKE_ENDSTOP_FORCE_BOOST
+    forza_tuning::brake::default().endstop_boost
 }
 
 pub(crate) fn default_forza_brake_wall_position() -> f64 {
-    FORZA_BRAKE_OVERTRAVEL_WALL_POSITION
+    forza_tuning::brake::default().wall_position
 }
 
 pub(crate) fn default_forza_brake_guard_min_end() -> f64 {
-    FORZA_BRAKE_OVERTRAVEL_MIN_POSITION
+    forza_tuning::brake::default().guard_min_end
 }
 
 pub(crate) fn default_forza_brake_full_force_at() -> f64 {
-    FORZA_BRAKE_FULL_FORCE_INPUT
+    forza_tuning::brake::default().full_force_at
 }
 
 pub(crate) fn default_forza_brake_ramp_curve() -> f64 {
-    FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE
+    forza_tuning::brake::default().ramp_curve
 }
 
 impl Default for ForzaAbsTuningConfig {
     fn default() -> Self {
-        Self {
-            mode: default_forza_abs_mode(),
-            slip_source: default_forza_abs_slip_source(),
-            slip_threshold: default_forza_abs_slip_threshold(),
-            brake_threshold_ratio: default_forza_abs_brake_threshold_ratio(),
-            min_speed_kmh: default_forza_abs_min_speed_kmh(),
-            min_strength: default_forza_abs_min_strength(),
-            max_strength: default_forza_abs_max_strength(),
-            frequency_hz: default_forza_abs_frequency_hz(),
-            curve: default_forza_abs_curve(),
-        }
+        forza_tuning::abs::default()
     }
 }
 
 impl ForzaAbsTuningConfig {
-    pub(crate) fn normalized(mut self) -> Self {
-        if !forza_abs_modes().contains(&self.mode.as_str()) {
-            self.mode = default_forza_abs_mode();
-        }
-        if !forza_abs_slip_sources().contains(&self.slip_source.as_str()) {
-            self.slip_source = default_forza_abs_slip_source();
-        }
-        self.slip_threshold = finite_clamp(
-            self.slip_threshold,
-            0.05,
-            2.0,
-            default_forza_abs_slip_threshold(),
-        );
-        self.brake_threshold_ratio = finite_clamp(
-            self.brake_threshold_ratio,
-            0.0,
-            1.0,
-            default_forza_abs_brake_threshold_ratio(),
-        );
-        self.min_speed_kmh = finite_clamp(
-            self.min_speed_kmh,
-            0.0,
-            250.0,
-            default_forza_abs_min_speed_kmh(),
-        );
-        self.min_strength = finite_clamp(
-            self.min_strength,
-            0.0,
-            1.0,
-            default_forza_abs_min_strength(),
-        );
-        self.max_strength = finite_clamp(
-            self.max_strength,
-            self.min_strength,
-            1.0,
-            default_forza_abs_max_strength(),
-        );
-        self.frequency_hz = finite_clamp(
-            self.frequency_hz,
-            1.0,
-            80.0,
-            default_forza_abs_frequency_hz(),
-        );
-        self.curve = finite_clamp(self.curve, 0.4, 3.0, default_forza_abs_curve());
-        self
-    }
-}
-
-fn finite_clamp(value: f64, min: f64, max: f64, fallback: f64) -> f64 {
-    if value.is_finite() {
-        value.clamp(min, max)
-    } else {
-        fallback.clamp(min, max)
+    pub(crate) fn normalized(self) -> Self {
+        forza_tuning::abs::normalize(self)
     }
 }
 
 pub(crate) fn default_forza_abs_mode() -> String {
-    "strong_pulse".to_string()
+    forza_tuning::abs::default().mode
 }
 
 pub(crate) fn default_forza_abs_slip_source() -> String {
-    "auto_front_first".to_string()
+    forza_tuning::abs::default().slip_source
 }
 
 pub(crate) fn default_forza_abs_slip_threshold() -> f64 {
-    FORZA_ABS_SLIP_THRESHOLD
+    forza_tuning::abs::default().slip_threshold
 }
 
 pub(crate) fn default_forza_abs_brake_threshold_ratio() -> f64 {
-    FORZA_ABS_RANGE_START_RATIO
+    forza_tuning::abs::default().brake_threshold_ratio
 }
 
 pub(crate) fn default_forza_abs_min_speed_kmh() -> f64 {
-    FORZA_ABS_MIN_SPEED_KMH
+    forza_tuning::abs::default().min_speed_kmh
 }
 
 pub(crate) fn default_forza_abs_min_strength() -> f64 {
-    FORZA_ABS_PULSE_MIN_AMPLITUDE
+    forza_tuning::abs::default().min_strength
 }
 
 pub(crate) fn default_forza_abs_max_strength() -> f64 {
-    FORZA_ABS_PULSE_MAX_AMPLITUDE
+    forza_tuning::abs::default().max_strength
 }
 
 pub(crate) fn default_forza_abs_frequency_hz() -> f64 {
-    FORZA_ABS_PULSE_FREQUENCY_HZ
+    forza_tuning::abs::default().frequency_hz
 }
 
 pub(crate) fn default_forza_abs_curve() -> f64 {
-    1.0
-}
-
-pub(crate) fn forza_abs_modes() -> &'static [&'static str] {
-    &["strong_pulse", "fine_flutter"]
-}
-
-pub(crate) fn forza_abs_slip_sources() -> &'static [&'static str] {
-    &["auto_front_first", "front", "tire", "wheel"]
+    forza_tuning::abs::default().curve
 }
 
 impl Default for ForzaThrottleTuningConfig {
     fn default() -> Self {
-        Self {
-            baseline_force: default_forza_throttle_baseline_force(),
-            normal_force: default_forza_throttle_normal_force(),
-            endstop_force: default_forza_throttle_endstop_force(),
-            endstop_boost: default_forza_throttle_endstop_boost(),
-            wall_position: default_forza_throttle_wall_position(),
-            guard_min_end: default_forza_throttle_guard_min_end(),
-            ramp_width: default_forza_throttle_ramp_width(),
-            ramp_curve: default_forza_throttle_ramp_curve(),
-        }
+        forza_tuning::throttle::default()
     }
 }
 
 impl ForzaThrottleTuningConfig {
-    pub(crate) fn normalized(mut self) -> Self {
-        self.baseline_force = finite_clamp(
-            self.baseline_force,
-            0.0,
-            1.0,
-            default_forza_throttle_baseline_force(),
-        );
-        self.normal_force = finite_clamp(
-            self.normal_force,
-            self.baseline_force,
-            1.0,
-            default_forza_throttle_normal_force(),
-        );
-        self.endstop_force = finite_clamp(
-            self.endstop_force,
-            0.0,
-            1.0,
-            default_forza_throttle_endstop_force(),
-        );
-        self.endstop_boost = finite_clamp(
-            self.endstop_boost,
-            0.0,
-            5.0,
-            default_forza_throttle_endstop_boost(),
-        );
-        self.wall_position = finite_clamp(
-            self.wall_position,
-            0.0,
-            1.0,
-            default_forza_throttle_wall_position(),
-        );
-        self.guard_min_end = finite_clamp(
-            self.guard_min_end,
-            0.0,
-            1.0,
-            default_forza_throttle_guard_min_end(),
-        );
-        self.ramp_width = finite_clamp(
-            self.ramp_width,
-            0.01,
-            0.80,
-            default_forza_throttle_ramp_width(),
-        );
-        self.ramp_curve = finite_clamp(
-            self.ramp_curve,
-            0.4,
-            4.0,
-            default_forza_throttle_ramp_curve(),
-        );
-        self
+    pub(crate) fn normalized(self) -> Self {
+        forza_tuning::throttle::normalize(self)
     }
 }
 
 pub(crate) fn default_forza_throttle_baseline_force() -> f64 {
-    FORZA_THROTTLE_BASELINE_FORCE
+    forza_tuning::throttle::default().baseline_force
 }
 
 pub(crate) fn default_forza_throttle_normal_force() -> f64 {
-    FORZA_THROTTLE_NORMAL_FORCE
+    forza_tuning::throttle::default().normal_force
 }
 
 pub(crate) fn default_forza_throttle_endstop_force() -> f64 {
-    FORZA_THROTTLE_ENDSTOP_FORCE
+    forza_tuning::throttle::default().endstop_force
 }
 
 pub(crate) fn default_forza_throttle_endstop_boost() -> f64 {
-    FORZA_THROTTLE_ENDSTOP_FORCE_BOOST
+    forza_tuning::throttle::default().endstop_boost
 }
 
 pub(crate) fn default_forza_throttle_wall_position() -> f64 {
-    FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION
+    forza_tuning::throttle::default().wall_position
 }
 
 pub(crate) fn default_forza_throttle_guard_min_end() -> f64 {
-    FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION
+    forza_tuning::throttle::default().guard_min_end
 }
 
 pub(crate) fn default_forza_throttle_ramp_width() -> f64 {
-    FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH
+    forza_tuning::throttle::default().ramp_width
 }
 
 pub(crate) fn default_forza_throttle_ramp_curve() -> f64 {
-    FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE
+    forza_tuning::throttle::default().ramp_curve
 }
 
 impl Default for ForzaShiftTuningConfig {
     fn default() -> Self {
-        Self {
-            wall_form_at: default_forza_shift_wall_form_at(),
-            frequency_hz: default_forza_shift_frequency_hz(),
-            wall_zones: default_forza_shift_wall_zones(),
-            body_low_weight: default_forza_shift_body_low_weight(),
-            body_high_weight: default_forza_shift_body_high_weight(),
-            clutch_mode: default_forza_shift_clutch_mode(),
-            clutch_threshold: default_forza_shift_clutch_threshold(),
-            with_clutch_strength: default_forza_shift_with_clutch_strength(),
-            without_clutch_strength: default_forza_shift_without_clutch_strength(),
-            with_clutch_duration_ms: default_forza_shift_with_clutch_duration_ms(),
-            without_clutch_duration_ms: default_forza_shift_without_clutch_duration_ms(),
-            clutch_body_cut: default_forza_shift_clutch_body_cut(),
-        }
+        forza_tuning::shift::default()
     }
 }
 
 impl ForzaShiftTuningConfig {
-    pub(crate) fn normalized(mut self) -> Self {
-        self.wall_form_at = finite_clamp(
-            self.wall_form_at,
-            0.0,
-            1.0,
-            default_forza_shift_wall_form_at(),
-        );
-        self.frequency_hz = finite_clamp(
-            self.frequency_hz,
-            1.0,
-            80.0,
-            default_forza_shift_frequency_hz(),
-        );
-        self.wall_zones = finite_clamp(self.wall_zones, 1.0, 8.0, default_forza_shift_wall_zones());
-        self.body_low_weight = finite_clamp(
-            self.body_low_weight,
-            0.0,
-            1.5,
-            default_forza_shift_body_low_weight(),
-        );
-        self.body_high_weight = finite_clamp(
-            self.body_high_weight,
-            0.0,
-            1.5,
-            default_forza_shift_body_high_weight(),
-        );
-        self.clutch_mode = normalize_forza_shift_clutch_mode(&self.clutch_mode).to_string();
-        self.clutch_threshold = finite_clamp(
-            self.clutch_threshold,
-            0.0,
-            1.0,
-            default_forza_shift_clutch_threshold(),
-        );
-        self.with_clutch_strength = finite_clamp(
-            self.with_clutch_strength,
-            0.0,
-            1.0,
-            default_forza_shift_with_clutch_strength(),
-        );
-        self.without_clutch_strength = finite_clamp(
-            self.without_clutch_strength,
-            0.0,
-            1.0,
-            default_forza_shift_without_clutch_strength(),
-        );
-        self.with_clutch_duration_ms = finite_clamp(
-            self.with_clutch_duration_ms,
-            40.0,
-            400.0,
-            default_forza_shift_with_clutch_duration_ms(),
-        );
-        self.without_clutch_duration_ms = finite_clamp(
-            self.without_clutch_duration_ms,
-            40.0,
-            500.0,
-            default_forza_shift_without_clutch_duration_ms(),
-        );
-        self.clutch_body_cut = finite_clamp(
-            self.clutch_body_cut,
-            0.0,
-            1.0,
-            default_forza_shift_clutch_body_cut(),
-        );
-        self
+    pub(crate) fn normalized(self) -> Self {
+        forza_tuning::shift::normalize(self)
     }
 }
 
 pub(crate) fn default_forza_shift_wall_form_at() -> f64 {
-    FORZA_SHIFT_WALL_FORM_AT
+    forza_tuning::shift::default().wall_form_at
 }
 
 pub(crate) fn default_forza_shift_frequency_hz() -> f64 {
-    FORZA_SHIFT_FREQUENCY_HZ
+    forza_tuning::shift::default().frequency_hz
 }
 
 pub(crate) fn default_forza_shift_wall_zones() -> f64 {
-    FORZA_SHIFT_WALL_ZONES
+    forza_tuning::shift::default().wall_zones
 }
 
 pub(crate) fn default_forza_shift_body_low_weight() -> f64 {
-    0.92
+    forza_tuning::shift::default().body_low_weight
 }
 
 pub(crate) fn default_forza_shift_body_high_weight() -> f64 {
-    0.84
+    forza_tuning::shift::default().body_high_weight
 }
 
 pub(crate) fn default_forza_shift_clutch_mode() -> String {
-    "auto".to_string()
+    forza_tuning::shift::default().clutch_mode
 }
 
 pub(crate) fn default_forza_shift_clutch_threshold() -> f64 {
-    FORZA_SHIFT_CLUTCH_THRESHOLD
+    forza_tuning::shift::default().clutch_threshold
 }
 
 pub(crate) fn default_forza_shift_with_clutch_strength() -> f64 {
-    FORZA_SHIFT_WITH_CLUTCH_STRENGTH
+    forza_tuning::shift::default().with_clutch_strength
 }
 
 pub(crate) fn default_forza_shift_without_clutch_strength() -> f64 {
-    FORZA_SHIFT_WITHOUT_CLUTCH_STRENGTH
+    forza_tuning::shift::default().without_clutch_strength
 }
 
 pub(crate) fn default_forza_shift_with_clutch_duration_ms() -> f64 {
-    FORZA_SHIFT_WITH_CLUTCH_DURATION_MS
+    forza_tuning::shift::default().with_clutch_duration_ms
 }
 
 pub(crate) fn default_forza_shift_without_clutch_duration_ms() -> f64 {
-    FORZA_SHIFT_WITHOUT_CLUTCH_DURATION_MS
+    forza_tuning::shift::default().without_clutch_duration_ms
 }
 
 pub(crate) fn default_forza_shift_clutch_body_cut() -> f64 {
-    FORZA_SHIFT_CLUTCH_BODY_CUT
-}
-
-pub(crate) fn normalize_forza_shift_clutch_mode(mode: &str) -> &'static str {
-    match mode {
-        "off" => "off",
-        "manual_clutch" => "manual_clutch",
-        _ => "auto",
-    }
+    forza_tuning::shift::default().clutch_body_cut
 }
 
 impl Default for ForzaRevLimiterTuningConfig {
     fn default() -> Self {
-        Self {
-            threshold_ratio: default_forza_rev_limiter_threshold_ratio(),
-            min_strength: default_forza_rev_limiter_min_strength(),
-            max_strength: default_forza_rev_limiter_max_strength(),
-            frequency_hz: default_forza_rev_limiter_frequency_hz(),
-            wall_form_throttle_at: default_forza_rev_limiter_wall_form_throttle_at(),
-            wall_zones: default_forza_rev_limiter_wall_zones(),
-            curve: default_forza_rev_limiter_curve(),
-            body_low_weight: default_forza_rev_limiter_body_low_weight(),
-            body_high_weight: default_forza_rev_limiter_body_high_weight(),
-        }
+        forza_tuning::rev_limiter::default()
     }
 }
 
 impl ForzaRevLimiterTuningConfig {
-    pub(crate) fn normalized(mut self) -> Self {
-        self.threshold_ratio = finite_clamp(
-            self.threshold_ratio,
-            0.5,
-            1.0,
-            default_forza_rev_limiter_threshold_ratio(),
-        );
-        self.min_strength = finite_clamp(
-            self.min_strength,
-            0.0,
-            1.0,
-            default_forza_rev_limiter_min_strength(),
-        );
-        self.max_strength = finite_clamp(
-            self.max_strength,
-            self.min_strength,
-            1.0,
-            default_forza_rev_limiter_max_strength(),
-        );
-        self.frequency_hz = finite_clamp(
-            self.frequency_hz,
-            1.0,
-            80.0,
-            default_forza_rev_limiter_frequency_hz(),
-        );
-        self.wall_form_throttle_at = finite_clamp(
-            self.wall_form_throttle_at,
-            0.0,
-            1.0,
-            default_forza_rev_limiter_wall_form_throttle_at(),
-        );
-        self.wall_zones = finite_clamp(
-            self.wall_zones,
-            1.0,
-            8.0,
-            default_forza_rev_limiter_wall_zones(),
-        );
-        self.curve = finite_clamp(self.curve, 0.4, 4.0, default_forza_rev_limiter_curve());
-        self.body_low_weight = finite_clamp(
-            self.body_low_weight,
-            0.0,
-            1.5,
-            default_forza_rev_limiter_body_low_weight(),
-        );
-        self.body_high_weight = finite_clamp(
-            self.body_high_weight,
-            0.0,
-            1.5,
-            default_forza_rev_limiter_body_high_weight(),
-        );
-        self
+    pub(crate) fn normalized(self) -> Self {
+        forza_tuning::rev_limiter::normalize(self)
     }
 }
 
 pub(crate) fn default_forza_rev_limiter_threshold_ratio() -> f64 {
-    FORZA_REV_LIMIT_RATIO
+    forza_tuning::rev_limiter::default().threshold_ratio
 }
 
 pub(crate) fn default_forza_rev_limiter_min_strength() -> f64 {
-    FORZA_REV_LIMITER_PULSE_AMPLITUDE
+    forza_tuning::rev_limiter::default().min_strength
 }
 
 pub(crate) fn default_forza_rev_limiter_max_strength() -> f64 {
-    FORZA_REV_LIMITER_PULSE_AMPLITUDE
+    forza_tuning::rev_limiter::default().max_strength
 }
 
 pub(crate) fn default_forza_rev_limiter_frequency_hz() -> f64 {
-    FORZA_REV_LIMITER_FREQUENCY_HZ
+    forza_tuning::rev_limiter::default().frequency_hz
 }
 
 pub(crate) fn default_forza_rev_limiter_wall_form_throttle_at() -> f64 {
-    FORZA_REV_LIMITER_WALL_FORM_THROTTLE_AT
+    forza_tuning::rev_limiter::default().wall_form_throttle_at
 }
 
 pub(crate) fn default_forza_rev_limiter_wall_zones() -> f64 {
-    FORZA_REV_LIMITER_WALL_ZONES
+    forza_tuning::rev_limiter::default().wall_zones
 }
 
 pub(crate) fn default_forza_rev_limiter_curve() -> f64 {
-    1.0
+    forza_tuning::rev_limiter::default().curve
 }
 
 pub(crate) fn default_forza_rev_limiter_body_low_weight() -> f64 {
-    0.20
+    forza_tuning::rev_limiter::default().body_low_weight
 }
 
 pub(crate) fn default_forza_rev_limiter_body_high_weight() -> f64 {
-    0.80
+    forza_tuning::rev_limiter::default().body_high_weight
 }
 
 impl ForzaEffectConfig {
@@ -842,66 +917,20 @@ pub(crate) fn default_forza_effect_route() -> String {
 }
 
 pub(crate) fn default_forza_body_rumble_mode() -> String {
-    "native_passthrough".to_string()
-}
-
-pub(crate) fn forza_body_rumble_modes() -> &'static [&'static str] {
-    &["native_passthrough", "dscc_full_control"]
+    forza_tuning::default_body_rumble_mode()
 }
 
 pub(crate) fn default_forza_effect(id: &str) -> ForzaEffectConfig {
-    default_forza_effect_configs()
-        .into_iter()
-        .find(|effect| effect.id == id)
-        .unwrap_or_else(|| ForzaEffectConfig {
-            id: id.to_string(),
-            enabled: true,
-            intensity: 100,
-            route: "body_both".to_string(),
-        })
+    forza_tuning::default_effect(id)
 }
 
+#[cfg(test)]
 pub(crate) fn default_forza_effect_configs() -> Vec<ForzaEffectConfig> {
-    [
-        ("brake_resistance", 100, "l2"),
-        ("abs_slip_pulse", 100, "l2"),
-        ("handbrake_wall", 100, "l2"),
-        ("throttle_resistance", 100, "r2"),
-        (
-            "gear_shift_thump",
-            FORZA_SHIFT_THUMP_DEFAULT_INTENSITY,
-            "r2_and_body",
-        ),
-        ("rev_limiter_buzz", 120, "r2"),
-        ("road_texture", 60, "body_both"),
-        ("rumble_strip", 72, "body_both"),
-        ("tire_slip", 95, "body_right"),
-        ("puddle_drag", 75, "body_left"),
-        ("suspension_impact", 115, "body_both"),
-        ("rpm_leds", 100, "light_led"),
-    ]
-    .into_iter()
-    .map(|(id, intensity, route)| ForzaEffectConfig {
-        id: id.to_string(),
-        enabled: true,
-        intensity,
-        route: route.to_string(),
-    })
-    .collect()
+    forza_tuning::default_effect_configs()
 }
 
 pub(crate) fn forza_effect_routes() -> &'static [&'static str] {
-    &[
-        "body_both",
-        "body_left",
-        "body_right",
-        "l2",
-        "r2",
-        "both_triggers",
-        "body_and_triggers",
-        "r2_and_body",
-        "light_led",
-    ]
+    forza_tuning::effect_routes()
 }
 
 impl Default for LightbarConfig {

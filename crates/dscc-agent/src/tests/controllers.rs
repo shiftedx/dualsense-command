@@ -354,6 +354,33 @@ fn windows_pnp_edge_suppresses_generic_wireless_controller_alias() {
 }
 
 #[cfg(target_os = "windows")]
+#[tokio::test]
+async fn windows_pnp_fallback_does_not_create_hid_output_target() {
+    let state = AgentState::from_controller_events(windows_pnp_controller_events_from_text(
+        "DualSense Edge Wireless Controller\tHID\\VID_054C&PID_0DF2",
+    ));
+
+    let controllers = state.inner.read().await.controllers.summaries();
+    assert_eq!(controllers.len(), 1);
+    assert_eq!(controllers[0].id, "windows-pnp-dualsense-edge");
+    assert_eq!(controllers[0].transport, "bluetooth");
+
+    let guard = state.inner.read().await;
+    let detail = guard
+        .controllers
+        .detail("windows-pnp-dualsense-edge")
+        .expect("PnP fallback controller should be registered");
+    assert!(detail
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == "windows_pnp_fallback"));
+    assert!(guard
+        .controllers
+        .output_target("windows-pnp-dualsense-edge")
+        .is_none());
+}
+
+#[cfg(target_os = "windows")]
 #[test]
 fn windows_setupapi_multisz_hardware_id_feeds_pnp_classifier() {
     let mut units = Vec::new();
