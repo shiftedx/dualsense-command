@@ -2,7 +2,8 @@
 
 Release date: 2026-06-03
 
-0.4.0 is a Windows installer polish release.
+0.4.0 is a Windows installer polish release that also lands a round of internal
+architecture, refactoring, and documentation work with no behavior change.
 
 ## Windows Setup
 
@@ -32,6 +33,28 @@ Release date: 2026-06-03
   post-install launch off.
 - Reinstalling with autostart or desktop shortcut disabled now removes stale
   installer-owned entries from earlier installs.
+
+## Internal
+
+These changes are behavior-preserving and verified by the full Rust and web
+test suites; they do not change controller output or the UI.
+
+- Agent modularization: split the controller registry into its own module (with
+  a dedicated Windows PnP submodule), reorganized the config model, expanded the
+  game-module catalog, and slimmed `lib.rs`.
+- Architecture deepening:
+  - Button mapping uses one slot registry and a pure focus resolver; removed the
+    dead chip-layout code.
+  - Controller-output writes return an explicit `WriteOutcome` (executed vs
+    suppressed) instead of a bare byte count.
+  - Forza trigger geometry moved into a pure `compute_trigger_positions`, with
+    named effect-rule priorities replacing magic numbers.
+  - Snapshot handling separates the WebSocket transport from a pure mapping
+    module and a single frame classifier.
+- Web UI: `App.svelte` decomposed into profile, button-mapping, and edge-onboard
+  workspace helpers.
+- Docs: added a `CONTEXT.md` domain glossary and architecture decision records
+  under `docs/adr/`.
 
 # DualSense Command Center 0.3.10
 
