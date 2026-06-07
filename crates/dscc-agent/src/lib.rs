@@ -426,43 +426,6 @@ struct RealtimeRuntime {
     last_telemetry_event_at: Option<Instant>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum EffectEnginePurpose {
-    Preview,
-    Hardware,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct EffectEngineKey {
-    purpose: EffectEnginePurpose,
-    controller_id: String,
-    profile_id: String,
-    revision: u64,
-}
-
-#[derive(Debug, Default)]
-struct EffectRuntimeCache {
-    engines: BTreeMap<EffectEngineKey, EffectEngine>,
-}
-
-impl EffectRuntimeCache {
-    fn evaluate(
-        &mut self,
-        key: EffectEngineKey,
-        profile: &Profile,
-        snapshot: &SignalSnapshot,
-    ) -> ControllerOutputFrame {
-        if self.engines.len() > 16 {
-            self.engines
-                .retain(|existing, _| existing.revision == key.revision);
-        }
-        self.engines
-            .entry(key)
-            .or_default()
-            .evaluate(profile, snapshot)
-    }
-}
-
 #[derive(Debug, Default)]
 struct InputRuntimeCache {
     latest: BTreeMap<String, LatestControllerInput>,
@@ -1406,28 +1369,6 @@ impl AgentState {
             .map(Some)
     }
 
-    fn evaluate_runtime_profile(
-        &self,
-        inner: &AgentStateInner,
-        controller_id: Option<&str>,
-        profile_id: &str,
-        profile: &Profile,
-        snapshot: &SignalSnapshot,
-        purpose: EffectEnginePurpose,
-    ) -> ControllerOutputFrame {
-        let key = EffectEngineKey {
-            purpose,
-            controller_id: controller_id.unwrap_or("none").to_string(),
-            profile_id: profile_id.to_string(),
-            revision: inner.effect_revision,
-        };
-        let mut runtime = match self.effect_runtime.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        runtime.evaluate(key, profile, snapshot)
-    }
-
     fn current_effect_response_cached(
         &self,
         inner: &AgentStateInner,
@@ -1435,42 +1376,12 @@ impl AgentState {
         hardware_output_enabled: bool,
         purpose: EffectEnginePurpose,
     ) -> CurrentEffectResponse {
-        let resolution = profile_resolution(inner, game_detection);
-        let config = controller_config_for_resolution(inner, &resolution);
-        let (snapshot, telemetry_live) = current_effect_snapshot(inner, game_detection);
-        let profile_id = resolution
-            .selected_profile_id
-            .clone()
-            .unwrap_or_else(|| DEFAULT_PROFILE_ID.to_string());
-        let profile_name =
-            profile_name_by_id(inner, &profile_id).unwrap_or_else(|| profile_id.clone());
-        let profile = runtime_profile_for(&profile_id, &profile_name, config.as_ref(), &snapshot);
-        let mut output = self.evaluate_runtime_profile(
-            inner,
-            resolution.controller_id.as_deref(),
-            &profile_id,
-            &profile,
-            &snapshot,
-            purpose,
-        );
-        apply_runtime_output_enhancements(
-            &profile_id,
-            config.as_ref(),
-            &snapshot,
-            telemetry_live,
-            &mut output,
-        );
-        apply_detection_lightbar_preview(game_detection, telemetry_live, &mut output);
-        current_effect_response_from_parts(
-            resolution,
-            profile,
-            config.as_ref(),
-            snapshot,
-            telemetry_live,
-            output,
-            game_detection,
-            hardware_output_enabled,
-        )
+        let mut runtime = match self.effect_runtime.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        RuntimeLiveEffectMaterializer::new(inner, game_detection, purpose, &mut runtime)
+            .current_response(hardware_output_enabled)
     }
 
     fn output_frame_for_current_resolution_cached(
@@ -1479,56 +1390,12 @@ impl AgentState {
         game_detection: Option<&GameDetectionResponse>,
         purpose: EffectEnginePurpose,
     ) -> Option<(String, ControllerOutputFrame)> {
-        let resolution = profile_resolution(inner, game_detection);
-        let controller_id = resolution.controller_id.clone()?;
-        if purpose == EffectEnginePurpose::Hardware
-            && !hardware_output_runtime_allowed_for_resolution(inner, game_detection, &resolution)
-        {
-            if hardware_output_detection_lightbar_allowed_for_resolution(
-                inner,
-                game_detection,
-                &resolution,
-            ) {
-                let detection = game_detection?;
-                let output = ControllerOutputFrame {
-                    lightbar: detection_lightbar_output(detection),
-                    ..ControllerOutputFrame::default()
-                };
-                return Some((controller_id, output));
-            }
-            if hardware_output_global_lightbar_allowed_for_resolution(game_detection, &resolution) {
-                if let Some(output) = global_lightbar_output(inner, &resolution) {
-                    return Some((controller_id, output));
-                }
-            }
-            return None;
-        }
-        let config = controller_config_for_resolution(inner, &resolution);
-        let (snapshot, telemetry_live) = current_effect_snapshot(inner, game_detection);
-        let profile_id = resolution
-            .selected_profile_id
-            .clone()
-            .unwrap_or_else(|| DEFAULT_PROFILE_ID.to_string());
-        let profile_name =
-            profile_name_by_id(inner, &profile_id).unwrap_or_else(|| profile_id.clone());
-        let profile = runtime_profile_for(&profile_id, &profile_name, config.as_ref(), &snapshot);
-        let mut output = self.evaluate_runtime_profile(
-            inner,
-            Some(&controller_id),
-            &profile_id,
-            &profile,
-            &snapshot,
-            purpose,
-        );
-        apply_runtime_output_enhancements(
-            &profile_id,
-            config.as_ref(),
-            &snapshot,
-            telemetry_live,
-            &mut output,
-        );
-        apply_detection_lightbar_preview(game_detection, telemetry_live, &mut output);
-        Some((controller_id, output))
+        let mut runtime = match self.effect_runtime.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        RuntimeLiveEffectMaterializer::new(inner, game_detection, purpose, &mut runtime)
+            .output_frame_for_current_resolution()
     }
 
     async fn apply_adapter_packet(
