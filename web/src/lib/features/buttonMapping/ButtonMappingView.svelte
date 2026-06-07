@@ -7,54 +7,99 @@
     steamBindingTargetPart,
     steamSlotIconUrl
   } from './buttonMapping';
-  import type { SteamBindingSlot, SteamMirrorGroup, SteamMirrorRow } from './buttonMapping';
-  import type { ControllerStatus, SteamInputBinding } from '../../types';
+  import type { SteamMirrorRow } from './buttonMapping';
+  import {
+    EMPTY_BUTTON_MAPPING_VIEW_SESSION,
+    type ButtonMappingViewSession
+  } from './buttonMappingState';
 
-  type PreparedSteamBindingTargetGroup = {
-    label: string;
-    options: Array<{ label: string; raw: string; targetKey: string; searchText: string }>;
-  };
+  export let session: ButtonMappingViewSession = EMPTY_BUTTON_MAPPING_VIEW_SESSION;
 
-  export let active = false;
-  export let steamInputRunning = false;
-  export let providerLabel = 'Steam Input';
-  export let providerKind: 'steam' | 'bridge' = 'steam';
-  export let providerOnline = false;
-  export let mappingAvailabilityMessage = '';
-  export let mappingReadOnly = false;
-  export let defaultMirrorOnly = false;
-  export let controllerHeaderName = '';
-  export let controllerTransport: ControllerStatus['transport'] | undefined = undefined;
-  export let gameName = 'No supported game selected';
-  export let steamLayoutTitle = 'Steam Input Layout';
-  export let mappedVisibleChipCount = 0;
-  export let steamMirrorGroups: SteamMirrorGroup[] = [];
-  export let focusedSlotMeta: SteamBindingSlot | null = null;
-  export let focusedSlotBinding: SteamInputBinding | null = null;
-  export let focusedSlotSelectedBinding: SteamInputBinding | null = null;
-  export let steamBindingBusy = false;
-  export let steamInputLayoutAvailable = false;
-  export let paddlePresetVisible = false;
-  export let paddlePresetAvailable = false;
-  export let paddlePresetStatus = '';
-  export let paddlePresetLeftKey = 'Q';
-  export let paddlePresetRightKey = 'E';
-  export let steamBindingDraft = '';
-  export let steamBindingLabelDraft = '';
-  export let bindingLabelFieldLabel = 'Label (Steam UI)';
-  export let rawFieldLabel = 'Raw VDF';
-  export let rawFieldPlaceholder = 'xinput_button ... / key_press ...';
-  export let targetGroups: PreparedSteamBindingTargetGroup[] = [];
-  export let onSelectSlot: (slot: SteamBindingSlot) => void = () => {};
-  export let onHoverSlot: (slot: SteamBindingSlot | null) => void = () => {};
-  export let onPaddlePresetLeftKeyChange: (nextKey: string) => void = () => {};
-  export let onPaddlePresetRightKeyChange: (nextKey: string) => void = () => {};
-  export let onApplyPaddlePreset: () => void | Promise<void> = () => {};
-  export let onTargetChange: (rawOption: string) => void = () => {};
-  export let onLabelChange: (nextLabel: string) => void = () => {};
-  export let onRawDraftChange: (nextRaw: string) => void = () => {};
-  export let onResetDraft: () => void = () => {};
-  export let onSaveBinding: () => void | Promise<void> = () => {};
+  let {
+    active,
+    steamInputRunning,
+    providerLabel,
+    providerKind,
+    providerOnline,
+    mappingAvailabilityMessage,
+    mappingReadOnly,
+    defaultMirrorOnly,
+    controllerHeaderName,
+    controllerTransport,
+    gameName,
+    steamLayoutTitle,
+    mappedVisibleChipCount,
+    steamMirrorGroups,
+    focusedSlotMeta,
+    focusedSlotBinding,
+    focusedSlotSelectedBinding,
+    steamBindingBusy,
+    steamInputLayoutAvailable,
+    paddlePresetVisible,
+    paddlePresetAvailable,
+    paddlePresetStatus,
+    paddlePresetLeftKey,
+    paddlePresetRightKey,
+    steamBindingDraft,
+    steamBindingLabelDraft,
+    bindingLabelFieldLabel,
+    rawFieldLabel,
+    rawFieldPlaceholder,
+    targetGroups,
+    onSelectSlot,
+    onHoverSlot,
+    onPaddlePresetLeftKeyChange,
+    onPaddlePresetRightKeyChange,
+    onApplyPaddlePreset,
+    onTargetChange,
+    onLabelChange,
+    onRawDraftChange,
+    onResetDraft,
+    onSaveBinding
+  } = EMPTY_BUTTON_MAPPING_VIEW_SESSION;
+
+  $: ({
+    active,
+    steamInputRunning,
+    providerLabel,
+    providerKind,
+    providerOnline,
+    mappingAvailabilityMessage,
+    mappingReadOnly,
+    defaultMirrorOnly,
+    controllerHeaderName,
+    controllerTransport,
+    gameName,
+    steamLayoutTitle,
+    mappedVisibleChipCount,
+    steamMirrorGroups,
+    focusedSlotMeta,
+    focusedSlotBinding,
+    focusedSlotSelectedBinding,
+    steamBindingBusy,
+    steamInputLayoutAvailable,
+    paddlePresetVisible,
+    paddlePresetAvailable,
+    paddlePresetStatus,
+    paddlePresetLeftKey,
+    paddlePresetRightKey,
+    steamBindingDraft,
+    steamBindingLabelDraft,
+    bindingLabelFieldLabel,
+    rawFieldLabel,
+    rawFieldPlaceholder,
+    targetGroups,
+    onSelectSlot,
+    onHoverSlot,
+    onPaddlePresetLeftKeyChange,
+    onPaddlePresetRightKeyChange,
+    onApplyPaddlePreset,
+    onTargetChange,
+    onLabelChange,
+    onRawDraftChange,
+    onResetDraft,
+    onSaveBinding
+  } = session);
 
   let targetPickerOpen = false;
   let targetSearchQuery = '';

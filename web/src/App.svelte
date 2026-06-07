@@ -12,32 +12,25 @@
   import { appViews, guardView, hashForView, viewFromHash, viewTooltips } from './app/navigation';
   import { createAppRuntime } from './app/runtime';
   import {
-    ButtonMappingView,
-    assembleSteamBindingRaw,
-    buildSteamBindingBySlotKey,
-    createSteamMirrorGroups,
-    parseSteamBindingTriple,
-    resolveFocusedSlotKey,
-    steamBindingKey,
-    steamBindingSlots,
-    steamBindingTargetPart
-  } from './lib/features/buttonMapping';
-  import { bindingTargetGroupsForProvider } from './lib/features/buttonMapping/buttonMappingState';
+    createButtonMappingSession,
+    createButtonMappingSessionState,
+    type ButtonMappingSessionStateStore
+  } from './app/buttonMappingSession';
+  import { EMPTY_BUTTON_MAPPING_VIEW_SESSION } from './lib/features/buttonMapping/buttonMappingState';
+  import { ButtonMappingView } from './lib/features/buttonMapping';
   import {
-    EMPTY_STEAM_BINDING_MAP,
-    EMPTY_STEAM_INPUT_BINDINGS,
-    EMPTY_STEAM_MIRROR_GROUPS,
-    defaultSteamBindingsForFamily,
-    preparedSteamBindingTargetGroups
-  } from './lib/features/buttonMapping/steamBindingTargets';
-  import {
-    profileTargetsCoverAllConnectedControllers,
-    reconcileProfileTargetControllerIds,
-    resolveSelectedControllerId,
-    resolveSelectedProfileTargetIds,
-    selectCurrentController,
-    summarizeProfileTargets
-  } from './app/controllerSelection';
+    EDGE_ONBOARD_SLOTS_READ_TOOLTIP,
+    edgeProfileWriteRequest,
+    edgeSlotInfoTooltip as edgeOnboardSlotInfoTooltip,
+    edgeSlotName,
+    edgeSlotStatus,
+    edgeSlotWriteLabel as edgeOnboardSlotWriteLabel,
+    edgeSlotWriteTooltip as edgeOnboardSlotWriteTooltip,
+    emptyEdgeOnboardProfileState,
+    isEdgeTargetController,
+    shouldReadEdgeOnboardProfiles,
+    shouldResetEdgeOnboardProfiles
+  } from './app/edgeOnboardProfiles';
   import { markOnboardingDismissed, shouldOpenOnboarding } from './app/onboardingState';
   import {
     baseForzaTriggerDefaults,
@@ -70,6 +63,24 @@
     updateCheckStateFromResult,
     writeDismissedUpdateVersion
   } from './app/updateState';
+  import {
+    allProfileTargetsForWorkspace,
+    clearProfileOverrideForWorkspaceTargets,
+    deriveProfileWorkspace,
+    deriveTargetControllerWorkspace,
+    gameTuningProfileSelection,
+    globalTuningProfileSelection,
+    inputBridgeBindingProfileIdForWorkspace,
+    profileTargetSummaryForWorkspace,
+    reconcileSelectedOverrideProfileId,
+    reconcileTargetControllerWorkspaceSelection,
+    reconcileTuningSelection,
+    saveControllerConfigForWorkspaceTargets,
+    setProfileOverrideForWorkspaceTargets,
+    singleProfileTargetSelection,
+    targetControllerSelection,
+    type TuningScope
+  } from './app/profileWorkspace';
   import ControllersView from './lib/features/controllers/ControllersView.svelte';
   import HapticsAside from './lib/features/haptics/HapticsAside.svelte';
   import HapticsView from './lib/features/haptics/HapticsView.svelte';
@@ -140,35 +151,24 @@
     normalizeForzaThrottleTuning
   } from './app/hapticsState';
   import {
-    achievementText,
-    formatLastPlayed,
-    formatPlaytime,
     gameAccentColor,
     gameArtwork,
-    gameDetectionStatusText,
-    gameLauncherLabel,
     gameMediaDetails,
-    gameProviderMeta,
     gameTileStatus,
     profileScopeCount as countProfilesForGame
   } from './lib/features/games/gamePresentation';
   import {
-    assignmentForGame,
     defaultProfileIdForGame,
-    profileContextTag,
     profileImportPayload,
-    profilesForGame,
     sanitizeFileName,
     uniqueProfileName,
     usesForzaRuntimeProfile
   } from './lib/features/profiles/profileSelection';
   import type { AppView } from './app/navigation';
-  import type { SteamBindingSlot } from './lib/features/buttonMapping';
   import {
     activateProfile,
     addCustomGame,
     addLocalApp,
-    clearProfileOverride,
     connectAppSnapshotSocket,
     createProfile,
     deleteProfile,
@@ -190,12 +190,8 @@
     stopInputBridgeSession,
     writeEdgeProfile,
     saveProfileConfig,
-    setProfileOverride,
     updateControllerName,
-    validateLocalApp,
-    writeInputBridgeBinding,
-    writeSteamInputBinding,
-    writeSteamInputPaddlePreset
+    validateLocalApp
   } from './lib/api';
   import {
     controllerBatteryReadable,
@@ -221,8 +217,6 @@
     ForzaShiftTuningConfiguration,
     ForzaThrottleTuningConfiguration,
     ProfileSummary,
-    SteamInputBinding,
-    SteamInputLayout,
     SteamLibraryEntry,
     SupportBundle,
     SupportedGame,
@@ -230,21 +224,7 @@
     ValidateLocalAppRequest
   } from './lib/types';
 
-  type TuningScope = 'none' | 'global' | 'game';
   type SupportBundleBusy = 'copy' | 'download' | '';
-  $: activeBindingTargetGroups = bindingTargetGroupsForProvider(
-    preparedSteamBindingTargetGroups,
-    bridgeContextActive ? 'bridge' : 'steam'
-  );
-
-  const resetSteamBindingDraft = () => {
-    if (selectedSteamBinding) {
-      steamBindingDraft = selectedSteamBinding.rawBinding;
-      steamBindingLabelDraft = parseSteamBindingTriple(selectedSteamBinding.rawBinding).label;
-      lastSteamBindingDraftKey = steamBindingKey(selectedSteamBinding);
-      clearSteamBindingMessage();
-    }
-  };
   const FALLBACK_POLL_INTERVAL_MS = 5000;
   const TRIGGER_INPUT_POLL_INTERVAL_MS = 40;
   const BASE_FEEL_TEST_DURATION_MS = 30000;
@@ -312,19 +292,17 @@
   let l2ControllerPress = 0;
   let r2ControllerPress = 0;
   let controllerInputFresh = false;
-  let selectedSteamBindingKey = '';
-  let selectedSteamBinding: SteamInputBinding | null = null;
-  let steamBindingDraft = '';
-  let steamBindingLabelDraft = '';
-  let lastSteamBindingDraftKey = '';
-  let optimisticSteamInputBindings: SteamInputBinding[] | null = null;
-  let activeSteamMappingContextKey = '';
-  let steamBindingBusy = false;
-  let steamBindingMessage = '';
-  let paddlePresetLeftKey = 'Q';
-  let paddlePresetRightKey = 'E';
-  let hoveredSteamSlotKey = '';
-  let activeSteamSlotKey = '';
+  let buttonMappingSessionState = createButtonMappingSessionState();
+  let buttonMappingSession = EMPTY_BUTTON_MAPPING_VIEW_SESSION;
+  const buttonMappingSessionStore: ButtonMappingSessionStateStore = {
+    get: () => buttonMappingSessionState,
+    set: (next) => {
+      buttonMappingSessionState = next;
+    },
+    update: (updater) => {
+      buttonMappingSessionState = updater(buttonMappingSessionState);
+    }
+  };
 
   let l2From = 6;
   let l2To = 100;
@@ -364,20 +342,16 @@
   // dependency through a plain function call to forzaEffect()).
   $: forzaEffectsById = new Map(forzaEffects.map((effect) => [effect.id, effect]));
 
-  $: controllers = snapshot?.controllers ?? [];
-  $: connectedControllers = controllers.filter((item) => item.connected);
-  $: connectedControllerIds = connectedControllers.map((item) => item.id);
   $: {
-    const nextSelectedControllerId = resolveSelectedControllerId(controllers, selectedControllerId);
-    if (nextSelectedControllerId !== selectedControllerId) selectedControllerId = nextSelectedControllerId;
-  }
-  $: controller = selectCurrentController(controllers, selectedControllerId);
-  $: {
-    const nextTargets = reconcileProfileTargetControllerIds(
-      profileTargetControllerIds,
-      connectedControllerIds,
-      selectedControllerId
-    );
+    const nextSelection = reconcileTargetControllerWorkspaceSelection({
+      controllers: snapshot?.controllers,
+      selectedControllerId,
+      profileTargetControllerIds
+    });
+    if (nextSelection.selectedControllerId !== selectedControllerId) {
+      selectedControllerId = nextSelection.selectedControllerId;
+    }
+    const nextTargets = nextSelection.profileTargetControllerIds;
     if (
       nextTargets.length !== profileTargetControllerIds.length ||
       nextTargets.some((id, index) => id !== profileTargetControllerIds[index])
@@ -385,10 +359,16 @@
       profileTargetControllerIds = nextTargets;
     }
   }
-  $: profileTargetsAllConnected = profileTargetsCoverAllConnectedControllers(
-    profileTargetControllerIds,
-    connectedControllerIds
-  );
+  $: targetControllerWorkspace = deriveTargetControllerWorkspace({
+    controllers: snapshot?.controllers,
+    selectedControllerId,
+    profileTargetControllerIds
+  });
+  $: controllers = targetControllerWorkspace.controllers;
+  $: connectedControllers = targetControllerWorkspace.connectedControllers;
+  $: connectedControllerIds = targetControllerWorkspace.connectedControllerIds;
+  $: controller = targetControllerWorkspace.controller;
+  $: profileTargetsAllConnected = targetControllerWorkspace.profileTargetsAllConnected;
 
   const triggerInputPoller = createTriggerInputPoller({
     intervalMs: TRIGGER_INPUT_POLL_INTERVAL_MS,
@@ -416,10 +396,41 @@
   $: status = snapshot?.status;
   $: profiles = snapshot?.profiles ?? [];
   $: activeProfileId = profiles.find((profile) => profile.active)?.id ?? snapshot?.profileResolution.selectedProfileId ?? '';
-  $: globalProfilePreview =
-    profiles.find((profile) => profile.scope === 'Global') ??
-    profiles.find((profile) => profile.scope === 'Built-in' && profile.id === 'forza-horizon-immersive') ??
-    profiles.find((profile) => profile.scope === 'Built-in');
+  $: supportedGamesForSelection = snapshot?.gameDetection.supportedGames ?? [];
+  $: {
+    const nextSelection = reconcileTuningSelection({
+      selectedTuningScope,
+      selectedTuningGameId,
+      supportedGames: supportedGamesForSelection
+    });
+    if (nextSelection.selectedTuningScope !== selectedTuningScope) {
+      selectedTuningScope = nextSelection.selectedTuningScope;
+    }
+    if (nextSelection.selectedTuningGameId !== selectedTuningGameId) {
+      selectedTuningGameId = nextSelection.selectedTuningGameId;
+    }
+  }
+  $: selectedTuningGameForReconcile = selectedTuningGameId
+    ? supportedGamesForSelection.find((game) => game.gameId === selectedTuningGameId) ?? null
+    : null;
+  $: profileContextDefaultProfileIdForReconcile = defaultProfileIdForGame(
+    selectedTuningScope === 'game' ? selectedTuningGameForReconcile : null,
+    profiles,
+    activeProfileId,
+    currentControllerConfig
+  );
+  $: profileTargetSummaryText = profileTargetSummaryForWorkspace(targetControllerWorkspace);
+  $: profileWorkspace = deriveProfileWorkspace({
+    snapshot,
+    selectedTuningScope,
+    selectedTuningGameId,
+    selectedOverrideProfileId,
+    currentControllerConfig,
+    profileConfigDirty,
+    controllerSelected: Boolean(controller),
+    profileTargetSummary: profileTargetSummaryText
+  });
+  $: globalProfilePreview = profileWorkspace.globalProfilePreview;
   $: logs = snapshot?.logs ?? [];
   $: diagnostics = snapshot?.diagnostics ?? [];
   $: telemetry = snapshot?.telemetry ?? [];
@@ -445,44 +456,23 @@
       : effect;
   });
   $: effectStatusById = new Map(displayedParityEffects.map((effect) => [normalizeEffectId(effect.id), effect]));
-  $: activeProfileName = effectState?.selectedProfileName ?? status?.activeProfile ?? 'None';
-  $: activeProfile = profiles.find((profile) => profile.id === activeProfileId);
-  $: selectedOverrideProfile = profiles.find((profile) => profile.id === selectedOverrideProfileId);
-  $: selectedActionProfile =
-    profiles.find((profile) => profile.id === (selectedOverrideProfileId || activeProfileId)) ??
-    activeProfile ??
-    null;
-  $: canDeleteSelectedProfile = Boolean(selectedActionProfile && !selectedActionProfile.builtIn);
-  $: canRenameSelectedProfile = Boolean(selectedActionProfile && !selectedActionProfile.builtIn);
+  $: activeProfileName = profileWorkspace.activeProfileName;
+  $: activeProfile = profileWorkspace.activeProfile;
+  $: selectedOverrideProfile = profileWorkspace.selectedOverrideProfile;
+  $: selectedActionProfile = profileWorkspace.selectedActionProfile;
+  $: canDeleteSelectedProfile = profileWorkspace.canDeleteSelectedProfile;
+  $: canRenameSelectedProfile = profileWorkspace.canRenameSelectedProfile;
   $: controllerHeaderName = controllerModelText(controller);
   $: controllerHeaderMeta = controllerConnectionText(controller);
   $: controllerHeaderBatteryReadable = controllerBatteryReadable(controller);
-  $: overrideActive = Boolean(snapshot?.profileResolution.overrideProfileId);
-  $: detectedGameLabel = snapshot?.gameDetection.activeGameName ?? snapshot?.profileResolution.detectedGameId ?? 'current game';
-  $: supportedGames = snapshot?.gameDetection.supportedGames ?? [];
-  $: if (selectedTuningGameId && supportedGames.length && !supportedGames.some((game) => game.gameId === selectedTuningGameId)) {
-    selectedTuningGameId = '';
-    if (selectedTuningScope === 'game') selectedTuningScope = 'global';
-  }
-  $: selectedGame =
-    snapshot?.gameDetection.selectedGame ??
-    supportedGames.find((game) => game.gameId === snapshot?.gameDetection.activeGameId) ??
-    null;
-  $: discoveredGames = supportedGames
-    .filter((game) => game.running || game.installed || game.gameId === selectedGame?.gameId)
-    .sort((left, right) =>
-      Number(right.running) - Number(left.running) ||
-      Number(right.installed) - Number(left.installed) ||
-      left.name.localeCompare(right.name)
-    );
-  $: selectedTuningGame = selectedTuningGameId
-    ? supportedGames.find((game) => game.gameId === selectedTuningGameId) ?? null
-    : null;
-  $: if (selectedTuningScope !== 'game' && selectedTuningGameId) {
-    selectedTuningGameId = '';
-  }
-  $: tuningReady = Boolean(controller && (selectedTuningScope === 'global' || selectedTuningGame));
-  $: buttonMappingReady = Boolean(controller && selectedTuningScope === 'game' && selectedTuningGame);
+  $: overrideActive = profileWorkspace.overrideActive;
+  $: detectedGameLabel = profileWorkspace.detectedGameLabel;
+  $: supportedGames = profileWorkspace.supportedGames;
+  $: selectedGame = profileWorkspace.selectedGame;
+  $: discoveredGames = profileWorkspace.discoveredGames;
+  $: selectedTuningGame = profileWorkspace.selectedTuningGame;
+  $: tuningReady = profileWorkspace.tuningReady;
+  $: buttonMappingReady = profileWorkspace.buttonMappingReady;
   $: {
     const guardedView = guardView(activeView, { tuningReady, buttonMappingReady });
     if (guardedView !== activeView) {
@@ -490,217 +480,25 @@
       setViewHash(guardedView);
     }
   }
-  $: profileContextGame = selectedTuningScope === 'game' ? selectedTuningGame : null;
-  $: profileContextGameId = profileContextGame?.gameId ?? null;
-  $: profileContextLabel = selectedTuningScope === 'global' ? 'Global Profile' : profileContextGame?.name ?? detectedGameLabel;
-  $: profileContextAssignment = assignmentForGame(profileContextGame, currentControllerConfig);
-  $: profileContextDefaultProfileId =
-    profileContextAssignment?.profileId ?? defaultProfileIdForGame(profileContextGame, profiles, activeProfileId, currentControllerConfig);
-  $: profileContextDefaultProfile = profiles.find((profile) => profile.id === profileContextDefaultProfileId);
-  $: profileContextProfiles = profilesForGame(
-    profiles,
-    profileContextGame,
-    profileContextDefaultProfileId,
-    selectedOverrideProfileId,
-    activeProfileId
-  );
-  $: profileContextBadgeProfile = selectedOverrideProfile ?? profileContextProfiles[0] ?? activeProfile;
-  $: activeProfileContextLabel =
-    selectedTuningScope === 'global'
-      ? 'global scope'
-      : profileContextGame && profileContextBadgeProfile
-        ? profileContextTag(profileContextBadgeProfile, profileContextGame, profileContextDefaultProfileId, activeProfileId)
-        : 'game scope';
-  $: profileContextDetail =
-    selectedTuningScope === 'global'
-      ? 'Controller-wide tuning'
-      : profileContextGame
-        ? [
-        gameTileStatus(profileContextGame),
-        formatPlaytime(profileContextGame.stats?.playtimeMinutes),
-        achievementText(profileContextGame),
-        profileContextDefaultProfile ? `${profileContextDefaultProfile.name} profile` : ''
-      ]
-        .filter(Boolean)
-        .join(' / ')
-        : overrideScope;
-  $: detectionSignalText = gameDetectionStatusText(snapshot?.gameDetection);
-  $: steamContextGame = profileContextGame;
-  $: steamContextArt =
-    gameArtwork(steamContextGame, 'capsule') ??
-    gameArtwork(steamContextGame, 'banner') ??
-    gameArtwork(steamContextGame, 'icon') ??
-    '';
-  $: steamContextBackdropArt =
-    gameArtwork(steamContextGame, 'banner') ??
-    gameArtwork(steamContextGame, 'hero') ??
-    gameArtwork(steamContextGame, 'capsule') ??
-    '';
-  $: steamContextMeta = steamContextGame
-    ? [
-        gameProviderMeta(steamContextGame),
-        formatPlaytime(steamContextGame.stats?.playtimeMinutes),
-        achievementText(steamContextGame),
-        formatLastPlayed(steamContextGame.stats?.lastPlayedUnix),
-        gameTileStatus(steamContextGame)
-      ]
-        .filter(Boolean)
-        .join(' / ')
-    : selectedTuningScope === 'global'
-      ? 'Controller-wide haptics'
-      : detectionSignalText || 'Steam library data unavailable';
-  $: activeProfileHeader = selectedActionProfile ?? profiles.find((profile) => profile.id === activeProfileId) ?? null;
-  $: activeProfileHeaderName = activeProfileHeader?.name ?? activeProfileName ?? 'None';
-  $: activeProfileHeaderMeta = (() => {
-    if (!activeProfileHeader) return profiles.length ? 'No profile resolved' : 'Profiles loading';
-    const scope = activeProfileHeader.builtIn && activeProfileHeader.scope === 'Built-in'
-      ? 'Built-in template'
-      : activeProfileHeader.builtIn
-        ? 'Stock / Global'
-      : activeProfileHeader.scope === 'Game'
-        ? `Custom / ${steamContextGame?.name ?? 'game'}`
-        : 'Custom / Global';
-    const mode = activeProfileHeader.id === activeProfileId ? 'Live profile' : 'Editing profile';
-    return profileConfigDirty ? `${scope} / ${mode} / unsaved changes` : `${scope} / ${mode}`;
-  })();
+  $: profileContextGame = profileWorkspace.profileContextGame;
+  $: profileContextGameId = profileWorkspace.profileContextGameId;
+  $: profileContextLabel = profileWorkspace.profileContextLabel;
+  $: profileContextDefaultProfileId = profileWorkspace.profileContextDefaultProfileId;
+  $: profileContextDefaultProfile = profileWorkspace.profileContextDefaultProfile;
+  $: profileContextProfiles = profileWorkspace.profileContextProfiles;
+  $: activeProfileContextLabel = profileWorkspace.activeProfileContextLabel;
+  $: profileContextDetail = profileWorkspace.profileContextDetail;
+  $: detectionSignalText = profileWorkspace.detectionSignalText;
+  $: steamContextGame = profileWorkspace.steamContextGame;
+  $: steamContextArt = profileWorkspace.steamContextArt;
+  $: steamContextBackdropArt = profileWorkspace.steamContextBackdropArt;
+  $: steamContextMeta = profileWorkspace.steamContextMeta;
+  $: activeProfileHeader = profileWorkspace.activeProfileHeader;
+  $: activeProfileHeaderName = profileWorkspace.activeProfileHeaderName;
+  $: activeProfileHeaderMeta = profileWorkspace.activeProfileHeaderMeta;
   $: buttonMappingActive = activeView === 'buttonMapping';
   $: steamInputStatus = snapshot?.steamInput;
   $: inputBridgeStatus = snapshot?.inputBridge;
-  $: bridgeContextActive =
-    buttonMappingActive &&
-    selectedTuningScope === 'game' &&
-    steamContextGame?.inputProvider === 'dscc_input_bridge';
-  $: mappingProviderLabel = bridgeContextActive ? 'DSCC Input Bridge' : 'Steam Input';
-  $: mappingProviderOnline = bridgeContextActive
-    ? Boolean(inputBridgeStatus?.available)
-    : Boolean(steamInputStatus?.running);
-  $: mappingAvailabilityMessage = bridgeContextActive
-    ? inputBridgeStatus?.available
-      ? 'Bridge edits are staged through DSCC typed mapping and sent through the configured virtual-output provider.'
-      : inputBridgeStatus?.message ?? 'DSCC Input Bridge backend is unavailable.'
-    : steamInputStatus?.available
-      ? ''
-      : steamInputStatus?.warnings?.[0] ?? 'Steam Input layout data is unavailable.';
-  $: steamInputLayout = buttonMappingActive
-    ? bridgeContextActive
-      ? null
-      : selectSteamInputLayout(steamInputStatus?.layouts ?? [], steamContextGame, controller?.family)
-    : null;
-  $: steamPaddlePresetVisible =
-    buttonMappingActive && !bridgeContextActive && controller?.family === 'DualSense Edge' && selectedTuningScope === 'game';
-  $: rawSteamInputBindings = buttonMappingActive
-    ? steamInputLayout?.bindings ?? EMPTY_STEAM_INPUT_BINDINGS
-    : EMPTY_STEAM_INPUT_BINDINGS;
-  $: steamMappingContextKey = [
-    buttonMappingActive ? steamInputLayout?.source ?? '' : '',
-    buttonMappingActive ? steamContextGame?.gameId ?? '' : '',
-    buttonMappingActive ? controller?.id ?? '' : '',
-    buttonMappingActive ? controller?.family ?? '' : ''
-  ].join('|');
-  $: if (buttonMappingActive && steamMappingContextKey !== activeSteamMappingContextKey) {
-    activeSteamMappingContextKey = steamMappingContextKey;
-    optimisticSteamInputBindings = null;
-    activeSteamSlotKey = '';
-    hoveredSteamSlotKey = '';
-  }
-  $: realSteamInputBindings = buttonMappingActive
-    ? optimisticSteamInputBindings ?? rawSteamInputBindings
-    : EMPTY_STEAM_INPUT_BINDINGS;
-  $: realSteamBindingBySlotKey = buttonMappingActive
-    ? buildSteamBindingBySlotKey(realSteamInputBindings, steamBindingSlots)
-    : EMPTY_STEAM_BINDING_MAP;
-  $: steamPaddlePresetLeftBinding = steamPaddlePresetVisible
-    ? realSteamBindingBySlotKey.get('edgeBackLeft') ?? null
-    : null;
-  $: steamPaddlePresetRightBinding = steamPaddlePresetVisible
-    ? realSteamBindingBySlotKey.get('edgeBackRight') ?? null
-    : null;
-  $: steamPaddlePresetAvailable = Boolean(
-    steamPaddlePresetVisible &&
-    steamInputLayout &&
-    steamPaddlePresetLeftBinding &&
-    steamPaddlePresetRightBinding &&
-    !steamPaddlePresetLeftBinding.synthetic &&
-    !steamPaddlePresetRightBinding.synthetic
-  );
-  $: steamPaddlePresetStatus = !steamPaddlePresetVisible
-    ? 'DualSense Edge controller required.'
-    : !steamInputLayout
-      ? 'Select a Steam game with a loaded Steam Input layout.'
-      : !steamPaddlePresetAvailable
-        ? 'Steam Input must expose both Edge back paddles before DSCC can write them.'
-        : 'Writes Back Left and Back Right as Steam Input keyboard bindings for this game. This is PC-local and does not change onboard Edge memory.';
-  $: defaultSteamBindingBySlotKey = buttonMappingActive
-    ? defaultSteamBindingsForFamily(controller?.family)
-    : EMPTY_STEAM_BINDING_MAP;
-  $: steamBindingBySlotKey = buttonMappingActive
-    ? new Map([...defaultSteamBindingBySlotKey, ...realSteamBindingBySlotKey])
-    : EMPTY_STEAM_BINDING_MAP;
-  $: steamInputBindings = buttonMappingActive
-    ? [
-        ...realSteamInputBindings,
-        ...[...defaultSteamBindingBySlotKey.entries()]
-          .filter(([slotKey]) => !realSteamBindingBySlotKey.has(slotKey))
-          .map(([, binding]) => binding)
-      ]
-    : EMPTY_STEAM_INPUT_BINDINGS;
-  $: if (
-    buttonMappingActive &&
-    steamInputBindings.length &&
-    !activeSteamSlotKey &&
-    !steamInputBindings.some((binding) => steamBindingKey(binding) === selectedSteamBindingKey)
-  ) {
-    selectedSteamBindingKey = steamBindingKey(steamInputBindings[0]);
-  }
-  $: if (buttonMappingActive && !steamInputBindings.length && selectedSteamBindingKey) {
-    selectedSteamBindingKey = '';
-  }
-  $: selectedSteamBinding =
-    buttonMappingActive && selectedSteamBindingKey
-      ? steamInputBindings.find((binding) => steamBindingKey(binding) === selectedSteamBindingKey) ?? null
-      : null;
-  $: if (buttonMappingActive && selectedSteamBinding && steamBindingKey(selectedSteamBinding) !== lastSteamBindingDraftKey) {
-    lastSteamBindingDraftKey = steamBindingKey(selectedSteamBinding);
-    steamBindingDraft = selectedSteamBinding.rawBinding;
-    steamBindingLabelDraft = parseSteamBindingTriple(selectedSteamBinding.rawBinding).label;
-    clearSteamBindingMessage();
-  }
-  $: steamLayoutTitle = buttonMappingActive
-    ? bridgeContextActive
-      ? 'DSCC Bridge Xbox 360 Layout'
-      : steamInputLayout?.title ?? 'Steam Input Layout'
-    : 'Steam Input Layout';
-  // Focused slot drives the controller-stage focus highlight. Hover wins, then
-  // explicitly-clicked slot, then the slot owning the currently selected binding.
-  $: focusedSlotKey = buttonMappingActive
-    ? resolveFocusedSlotKey({
-        hoveredKey: hoveredSteamSlotKey,
-        activeKey: activeSteamSlotKey,
-        bindingBySlotKey: steamBindingBySlotKey,
-        selectedBindingKey: selectedSteamBindingKey
-      })
-    : '';
-  $: focusedSlotMeta = focusedSlotKey
-    ? steamBindingSlots.find((slot) => slot.key === focusedSlotKey) ?? null
-    : null;
-  // Materialised chip list joined with current slot/binding state. Edge chips
-  // are hidden when the controller is not an Edge and nothing is mapped to them
-  // yet — keeps the stage uncluttered for stock DualSense users.
-  $: focusedSlotBinding = focusedSlotMeta ? steamBindingBySlotKey.get(focusedSlotMeta.key) ?? null : null;
-  $: focusedSlotSelectedBinding =
-    focusedSlotBinding && steamBindingKey(focusedSlotBinding) === selectedSteamBindingKey ? focusedSlotBinding : null;
-  $: steamMirrorGroups = buttonMappingActive
-    ? createSteamMirrorGroups({
-        bindingBySlotKey: steamBindingBySlotKey,
-        controllerFamily: controller?.family,
-        selectedBindingKey: selectedSteamBindingKey,
-        activeSlotKey: activeSteamSlotKey
-      })
-    : EMPTY_STEAM_MIRROR_GROUPS;
-  $: mappedVisibleChipCount = steamMirrorGroups.reduce(
-    (count, group) => count + group.rows.filter((row) => row.binding).length,
-    0
-  );
   $: telemetryPacketRate = adapter?.packetRateHz ?? 0;
   $: telemetryRateText = `${telemetryPacketRate >= 100 ? telemetryPacketRate.toFixed(0) : telemetryPacketRate.toFixed(1)} Hz`;
   $: telemetryRateDetail = telemetryRateStatusText(adapter);
@@ -710,10 +508,7 @@
     selectedTuningScope === 'global'
       ? 'Controller-only tuning'
       : telemetryRateDetail;
-  $: overrideScope =
-    controller && snapshot
-      ? `${profileTargetSummary()} / ${profileContextLabel}`
-      : profileContextLabel;
+  $: overrideScope = profileWorkspace.overrideScope;
   // Sync the override dropdown when the ACTIVE profile changes (server-side
   // activation, override flip, snapshot refresh) — but never fight the user
   // who is manually picking from the dropdown. The tracker remembers the last
@@ -724,13 +519,17 @@
     selectedOverrideProfileId = activeProfileId;
     lastSyncedActiveProfileId = activeProfileId;
   }
-  $: if (profiles.length > 0 && !profiles.some((profile) => profile.id === selectedOverrideProfileId)) {
-    selectedOverrideProfileId =
-      profileContextDefaultProfileId ||
-      activeProfileId ||
-      snapshot?.profileResolution.overrideProfileId ||
-      snapshot?.profileResolution.selectedProfileId ||
-      profiles[0].id;
+  $: {
+    const nextOverrideProfileId = reconcileSelectedOverrideProfileId({
+      profiles,
+      selectedOverrideProfileId,
+      profileContextDefaultProfileId: profileContextDefaultProfileIdForReconcile,
+      activeProfileId,
+      profileResolution: snapshot?.profileResolution
+    });
+    if (nextOverrideProfileId !== selectedOverrideProfileId) {
+      selectedOverrideProfileId = nextOverrideProfileId;
+    }
   }
 
   const trackEffectActivity = (effect: CurrentEffectState) => {
@@ -869,300 +668,24 @@
     window.setTimeout(() => dismissToast(id), toastDurationMs(tone));
   };
 
-  const normalizedSteamControllerType = (controllerLike: string | null | undefined) => {
-    const value = (controllerLike ?? '').toLowerCase();
-    if (value.includes('edge')) return 'controller_ps5_edge';
-    if (value.includes('dualsense') || value.includes('ps5')) return 'controller_ps5';
-    if (value.includes('dualshock') || value.includes('ps4')) return 'controller_ps4';
-    return '';
-  };
+  const inputBridgeBindingProfileId = () => inputBridgeBindingProfileIdForWorkspace(profileWorkspace);
 
-  const selectSteamInputLayout = (
-    layouts: SteamInputLayout[],
-    game: SupportedGame | null | undefined,
-    controllerFamily: ControllerStatus['family'] | string | null | undefined
-  ) => {
-    if (!layouts.length) return null;
-    const appId = game?.appId ?? null;
-    const controllerType = normalizedSteamControllerType(controllerFamily);
-    const sameApp = appId ? layouts.filter((layout) => layout.appId === appId) : [];
-    if (!appId || !sameApp.length) return null;
-    const candidates = sameApp;
-    return (
-      candidates.find((layout) => layout.controllerType === controllerType) ??
-      candidates.find((layout) => layout.controllerType === 'controller_ps5_edge') ??
-      candidates.find((layout) => layout.controllerType === 'controller_ps5') ??
-      candidates[0] ??
-      null
-    );
-  };
-
-  const inputBridgeBindingProfileId = () => {
-    if (!profileContextGameId) return null;
-    const selectedProfileId = selectedOverrideProfileId || profileContextDefaultProfileId;
-    const selectedProfile = profiles.find((profile) => profile.id === selectedProfileId);
-    if (
-      selectedProfile &&
-      !selectedProfile.builtIn &&
-      selectedProfile.scope === 'Game' &&
-      selectedProfile.gameId === profileContextGameId
-    ) {
-      return selectedProfile.id;
-    }
-    return profiles.find((profile) =>
-      !profile.builtIn &&
-      profile.scope === 'Game' &&
-      profile.gameId === profileContextGameId
-    )?.id ?? null;
-  };
-
-  // Update steamBindingDraft when one of the structured fields (target / label)
-  // is edited, preserving the rest. Touching the raw VDF input still wins.
-  const applySteamBindingTargetChange = (nextTargetRaw: string) => {
-    const next = parseSteamBindingTriple(nextTargetRaw);
-    const current = parseSteamBindingTriple(steamBindingDraft);
-    steamBindingDraft = assembleSteamBindingRaw({
-      command: next.command,
-      param: next.param,
-      icon: current.icon,
-      label: current.label
-    });
-  };
-  const applySteamBindingLabelChange = (nextLabel: string) => {
-    steamBindingLabelDraft = nextLabel;
-    const current = parseSteamBindingTriple(steamBindingDraft);
-    steamBindingDraft = assembleSteamBindingRaw({
-      ...current,
-      label: nextLabel
-    });
-  };
-  const syncSteamBindingLabelFromRaw = () => {
-    steamBindingLabelDraft = parseSteamBindingTriple(steamBindingDraft).label;
-  };
-
-  const applySteamBindingRawChange = (nextRaw: string) => {
-    steamBindingDraft = nextRaw;
-    syncSteamBindingLabelFromRaw();
-  };
-
-  const clearSteamBindingMessage = () => {
-    steamBindingMessage = '';
-  };
-
-  const setSteamBindingMessage = (message: string, tone: ToastTone = toastToneForMessage(message, 'info')) => {
-    steamBindingMessage = message;
-    showToast(message, tone);
-  };
-
-  const selectSteamBinding = (binding: SteamInputBinding | null | undefined) => {
-    if (!binding) {
-      setSteamBindingMessage('That Steam input is not present in the loaded layout yet.', 'info');
-      return;
-    }
-    selectedSteamBindingKey = steamBindingKey(binding);
-    lastSteamBindingDraftKey = selectedSteamBindingKey;
-    steamBindingDraft = binding.rawBinding;
-    steamBindingLabelDraft = parseSteamBindingTriple(binding.rawBinding).label;
-    clearSteamBindingMessage();
-  };
-
-  const selectSteamSlot = (slot: SteamBindingSlot) => {
-    activeSteamSlotKey = slot.key;
-    const binding = steamBindingBySlotKey.get(slot.key) ?? null;
-    if (binding) {
-      selectSteamBinding(binding);
-    } else {
-      selectedSteamBindingKey = '';
-      lastSteamBindingDraftKey = '';
-      steamBindingDraft = '';
-      steamBindingLabelDraft = '';
-      setSteamBindingMessage(`${slot.label} has no Steam Input binding in this layout yet.`, 'info');
-    }
-  };
-
-  const hoverSteamSlot = (slot: SteamBindingSlot | null) => {
-    hoveredSteamSlotKey = slot?.key ?? '';
-  };
-
-  const applyOptimisticSteamBinding = (updatedBinding: SteamInputBinding) => {
-    const updatedKey = steamBindingKey(updatedBinding);
-    const baseBindings = optimisticSteamInputBindings ?? rawSteamInputBindings;
-    let replaced = false;
-    optimisticSteamInputBindings = baseBindings.map((binding) => {
-      if (steamBindingKey(binding) !== updatedKey) return binding;
-      replaced = true;
-      return updatedBinding;
-    });
-    if (!replaced) optimisticSteamInputBindings = [...optimisticSteamInputBindings, updatedBinding];
-  };
-
-  const saveSteamBinding = async (dryRun = false) => {
-    const bindingToSave = bridgeContextActive
-      ? focusedSlotBinding ?? selectedSteamBinding
-      : focusedSlotSelectedBinding ?? selectedSteamBinding;
-    if (bridgeContextActive) {
-      if (!bindingToSave) {
-        setSteamBindingMessage('Select a bridge input before saving.', 'error');
-        return;
-      }
-      if (!controller?.id) {
-        setSteamBindingMessage('Select a controller before saving bridge bindings.', 'error');
-        return;
-      }
-      if (!inputBridgeStatus?.available) {
-        setSteamBindingMessage(inputBridgeStatus?.message ?? 'DSCC Input Bridge backend is unavailable.', 'error');
-        return;
-      }
-      const rawBinding = steamBindingDraft.trim();
-      if (!rawBinding) {
-        setSteamBindingMessage('Choose a bridge target before saving.', 'error');
-        return;
-      }
-      steamBindingBusy = true;
-      setSteamBindingMessage(dryRun ? 'Validating DSCC Bridge binding...' : 'Saving DSCC Bridge binding...', 'info');
-      try {
-        const response = await writeInputBridgeBinding({
-          controllerId: controller.id,
-          profileId: inputBridgeBindingProfileId(),
-          inputId: bindingToSave.inputId,
-          target: rawBinding,
-          dryRun
-        });
-        const warningText = response.warnings.length ? ` ${response.warnings.join(' ')}` : '';
-        setSteamBindingMessage(`${response.message}${warningText}`, response.accepted ? 'success' : 'error');
-        if (response.accepted && !dryRun) {
-          const parsed = parseSteamBindingTriple(rawBinding);
-          const updatedBinding: SteamInputBinding = {
-            ...bindingToSave,
-            rawBinding,
-            binding: parsed.label || steamBindingTargetPart(rawBinding) || rawBinding,
-            synthetic: false
-          };
-          selectedSteamBindingKey = steamBindingKey(updatedBinding);
-          lastSteamBindingDraftKey = selectedSteamBindingKey;
-          applyOptimisticSteamBinding(updatedBinding);
-        }
-      } catch (caught) {
-        setSteamBindingMessage(caught instanceof Error ? caught.message : 'Unable to save DSCC Bridge binding.', 'error');
-      } finally {
-        steamBindingBusy = false;
-      }
-      return;
-    }
-    if (!steamInputLayout || !bindingToSave) {
-      setSteamBindingMessage('Load a Steam Input layout and select a binding first.', 'error');
-      return;
-    }
-    if (bindingToSave.synthetic) {
-      setSteamBindingMessage('This input is using DSCC default mapping. Open or create a Steam Input layout for this game before saving a custom binding.', 'error');
-      return;
-    }
-    const rawBinding = steamBindingDraft.trim();
-    if (!rawBinding) {
-      setSteamBindingMessage('Choose a target binding before saving.', 'error');
-      return;
-    }
-    steamBindingBusy = true;
-    setSteamBindingMessage(dryRun ? 'Validating Steam Input write...' : 'Saving Steam Input binding...', 'info');
-    try {
-      const response = await writeSteamInputBinding({
-        layoutSource: steamInputLayout.source,
-        appId: steamInputLayout.appId ?? steamContextGame?.appId ?? null,
-        inputId: bindingToSave.inputId,
-        groupId: bindingToSave.groupId ?? null,
-        activator: bindingToSave.activator ?? null,
-        rawBinding,
-        profileName: activeProfileName || profileContextGame?.name || steamContextGame?.name || null,
-        dryRun
-      });
-      setSteamBindingMessage(
-        response.backupPath ? `${response.message} Backup: ${response.backupPath}` : response.message,
-        'success'
-      );
-      selectedSteamBindingKey = steamBindingKey(response.binding);
-      lastSteamBindingDraftKey = selectedSteamBindingKey;
-      steamBindingDraft = response.binding.rawBinding;
-      steamBindingLabelDraft = parseSteamBindingTriple(response.binding.rawBinding).label;
-      if (!dryRun) {
-        applyOptimisticSteamBinding(response.binding);
-        void refresh().finally(() => {
-          optimisticSteamInputBindings = null;
-        });
-      }
-    } catch (caught) {
-      setSteamBindingMessage(caught instanceof Error ? caught.message : 'Unable to write Steam Input binding.', 'error');
-    } finally {
-      steamBindingBusy = false;
-    }
-  };
-
-  const normalizePaddlePresetKey = (value: string) =>
-    value
-      .trim()
-      .replaceAll(' ', '_')
-      .replaceAll('-', '_')
-      .toUpperCase()
-      .replace(/[^A-Z0-9_]/g, '')
-      .slice(0, 32);
-
-  const setPaddlePresetLeftKey = (value: string) => {
-    paddlePresetLeftKey = normalizePaddlePresetKey(value);
-  };
-
-  const setPaddlePresetRightKey = (value: string) => {
-    paddlePresetRightKey = normalizePaddlePresetKey(value);
-  };
-
-  const applySteamPaddlePreset = async (dryRun = false) => {
-    if (!steamInputLayout) {
-      setSteamBindingMessage('Load a Steam Input layout before applying the paddle preset.', 'error');
-      return;
-    }
-    if (controller?.family !== 'DualSense Edge') {
-      setSteamBindingMessage('Steam Input paddle presets require a DualSense Edge layout.', 'error');
-      return;
-    }
-    if (!steamPaddlePresetAvailable) {
-      setSteamBindingMessage(steamPaddlePresetStatus, 'error');
-      return;
-    }
-    steamBindingBusy = true;
-    setSteamBindingMessage(dryRun ? 'Validating Edge paddle preset...' : 'Saving Edge paddle preset...', 'info');
-    try {
-      const response = await writeSteamInputPaddlePreset({
-        layoutSource: steamInputLayout.source,
-        appId: steamInputLayout.appId ?? steamContextGame?.appId ?? null,
-        leftKey: paddlePresetLeftKey || 'Q',
-        rightKey: paddlePresetRightKey || 'E',
-        profileName: activeProfileName || profileContextGame?.name || steamContextGame?.name || null,
-        dryRun
-      });
-      const warningText = response.warnings.length ? ` ${response.warnings.join(' ')}` : '';
-      setSteamBindingMessage(
-        response.backupPath ? `${response.message} Backup: ${response.backupPath}${warningText}` : `${response.message}${warningText}`,
-        'success'
-      );
-      if (!dryRun) {
-        for (const paddle of response.paddles) {
-          applyOptimisticSteamBinding(paddle.binding);
-        }
-        const selectedPaddle = response.paddles[0]?.binding;
-        if (selectedPaddle) {
-          selectedSteamBindingKey = steamBindingKey(selectedPaddle);
-          lastSteamBindingDraftKey = selectedSteamBindingKey;
-          steamBindingDraft = selectedPaddle.rawBinding;
-          steamBindingLabelDraft = parseSteamBindingTriple(selectedPaddle.rawBinding).label;
-        }
-        void refresh().finally(() => {
-          optimisticSteamInputBindings = null;
-        });
-      }
-    } catch (caught) {
-      setSteamBindingMessage(caught instanceof Error ? caught.message : 'Unable to save Edge paddle preset.', 'error');
-    } finally {
-      steamBindingBusy = false;
-    }
-  };
+  $: buttonMappingSession = createButtonMappingSession({
+    state: buttonMappingSessionState,
+    store: buttonMappingSessionStore,
+    active: buttonMappingActive,
+    controller,
+    controllerHeaderName,
+    selectedTuningScope,
+    steamContextGame,
+    steamInputStatus,
+    inputBridgeStatus,
+    activeProfileName,
+    profileContextGameName: profileContextGame?.name ?? null,
+    bridgeProfileId: inputBridgeBindingProfileId(),
+    refresh,
+    notify: showToast
+  });
 
   const setTriggerRangeValue = (side: TriggerSide, edge: TriggerRangeEdge, rawValue: number | string) => {
     const value = normalizeTriggerPercent(rawValue);
@@ -1195,66 +718,48 @@
     scheduleBaseFeelTestRefresh();
     scheduleLiveControllerConfigSync();
   };
-  const selectedProfileTargetIds = () =>
-    resolveSelectedProfileTargetIds({
-      profileTargetControllerIds,
-      connectedControllerIds,
-      controllerId: controller?.id
-    });
-
-  const profileTargetSummary = () => {
-    const ids = selectedProfileTargetIds();
-    return summarizeProfileTargets({
-      targetIds: ids,
-      controllers,
-      connectedControllerIds
-    });
-  };
+  const profileTargetSummary = () => profileTargetSummaryText;
 
   const setAllProfileTargets = () => {
     if (!connectedControllerIds.length) return;
-    profileTargetControllerIds = [...connectedControllerIds];
+    profileTargetControllerIds = allProfileTargetsForWorkspace(targetControllerWorkspace);
   };
 
   const setSingleProfileTargetController = (controllerId: string) => {
-    if (!connectedControllerIds.includes(controllerId)) return;
-    profileTargetControllerIds = [controllerId];
-    selectedControllerId = controllerId;
+    const selection = singleProfileTargetSelection(targetControllerWorkspace, controllerId);
+    if (!selection) return;
+    profileTargetControllerIds = selection.profileTargetControllerIds;
+    selectedControllerId = selection.selectedControllerId;
     configLoadedFor = '';
     stopTriggerInputPolling();
   };
 
-  const setProfileOverrideForTargets = async (profileId: string, gameId: string | null) => {
-    const targetIds = selectedProfileTargetIds();
-    let resolution = null;
-    for (const targetId of targetIds) {
-      resolution = await setProfileOverride({ controllerId: targetId, gameId, profileId });
-    }
-    return resolution ?? setProfileOverride({ controllerId: null, gameId, profileId });
-  };
+  const setProfileOverrideForTargets = (profileId: string, gameId: string | null) =>
+    setProfileOverrideForWorkspaceTargets({
+      workspace: targetControllerWorkspace,
+      profileId,
+      gameId
+    });
 
-  const clearProfileOverrideForTargets = async (gameId: string | null) => {
-    const targetIds = selectedProfileTargetIds();
-    let resolution = null;
-    for (const targetId of targetIds) {
-      resolution = await clearProfileOverride({ controllerId: targetId, gameId });
-    }
-    return resolution ?? (gameId ? clearProfileOverride({ gameId }) : null);
-  };
+  const clearProfileOverrideForTargets = (gameId: string | null) =>
+    clearProfileOverrideForWorkspaceTargets({
+      workspace: targetControllerWorkspace,
+      gameId
+    });
 
   const saveControllerConfigForProfileTargets = async (config: EditableControllerConfig) => {
-    let selectedUpdate: ControllerConfiguration | null = null;
-    for (const targetId of selectedProfileTargetIds()) {
-      const updated = await saveControllerConfig(targetId, config);
-      if (targetId === selectedControllerId) selectedUpdate = updated;
-    }
+    const selectedUpdate = await saveControllerConfigForWorkspaceTargets({
+      workspace: targetControllerWorkspace,
+      config
+    });
     if (selectedUpdate) currentControllerConfig = selectedUpdate;
   };
 
   const selectTargetController = (controllerId: string) => {
-    if (!controllerId || controllerId === selectedControllerId) return;
-    selectedControllerId = controllerId;
-    if (profileTargetControllerIds.length <= 1) profileTargetControllerIds = [controllerId];
+    const selection = targetControllerSelection(targetControllerWorkspace, controllerId);
+    if (!selection) return;
+    selectedControllerId = selection.selectedControllerId;
+    profileTargetControllerIds = selection.profileTargetControllerIds;
     configLoadedFor = '';
     stopTriggerInputPolling();
   };
@@ -1417,12 +922,7 @@
   const selectGlobalTuning = async () => {
     selectedTuningScope = 'global';
     selectedTuningGameId = '';
-    const profileId =
-      profiles.find((profile) => profile.id === 'global')?.id ??
-      profiles.find((profile) => profile.scope === 'Global')?.id ??
-      profiles.find((profile) => profile.scope !== 'Game' && profile.id === activeProfileId)?.id ??
-      profiles[0]?.id ??
-      '';
+    const profileId = globalTuningProfileSelection(profiles, activeProfileId);
     selectedOverrideProfileId = profileId;
     activeView = 'haptics';
     setViewHash('haptics');
@@ -1432,7 +932,12 @@
   const selectTuningGame = async (game: SupportedGame) => {
     selectedTuningScope = 'game';
     selectedTuningGameId = game.gameId;
-    const preferredProfileId = defaultProfileIdForGame(game, profiles, activeProfileId, currentControllerConfig);
+    const preferredProfileId = gameTuningProfileSelection({
+      game,
+      profiles,
+      activeProfileId,
+      currentControllerConfig
+    });
     if (preferredProfileId) selectedOverrideProfileId = preferredProfileId;
     activeView = 'haptics';
     setViewHash('haptics');
@@ -1459,7 +964,7 @@
     }
   };
 
-  const isEdgeController = () => controller?.family === 'DualSense Edge';
+  const isEdgeController = () => isEdgeTargetController(controller);
 
   const editableConfigFromController = (config: ControllerConfiguration): EditableControllerConfig =>
     createEditableConfigFromController(config, isEdgeController());
@@ -1857,7 +1362,17 @@
   };
 
   const loadEdgeProfiles = async (controllerId: string, force = false) => {
-    if (!force && edgeProfilesLoadedFor === controllerId && (edgeProfiles || edgeProfilesLoading)) return;
+    if (
+      !shouldReadEdgeOnboardProfiles({
+        controller,
+        loadedFor: edgeProfilesLoadedFor,
+        profiles: edgeProfiles,
+        loading: edgeProfilesLoading,
+        force
+      })
+    ) {
+      return;
+    }
     edgeProfilesLoadedFor = controllerId;
     edgeProfilesLoading = true;
     edgeProfilesError = '';
@@ -1872,45 +1387,19 @@
   };
 
   const resetEdgeProfiles = () => {
-    edgeProfilesLoadedFor = '';
-    edgeProfiles = null;
-    edgeProfilesLoading = false;
-    edgeProfilesBusySlot = '';
-    edgeProfilesError = '';
+    const empty = emptyEdgeOnboardProfileState();
+    edgeProfilesLoadedFor = empty.loadedFor;
+    edgeProfiles = empty.profiles;
+    edgeProfilesLoading = empty.loading;
+    edgeProfilesBusySlot = empty.busySlot;
+    edgeProfilesError = empty.error;
   };
 
-  const edgeSlotStatus = (slot: EdgeProfileSlot) => {
-    if (slot.state === 'default') return 'default';
-    if (slot.hardwareSynced) return 'on controller';
-    if (slot.staged) return 'staged';
-    return slot.state.replaceAll('_', ' ');
-  };
-
-  const edgeSlotName = (slot: EdgeProfileSlot) => slot.name || slot.staged?.name || 'Empty Slot';
-  const edgeSlotsReadTooltip =
-    'Reads onboard slots from a DualSense Edge over USB or Bluetooth when Windows exposes HID feature-report access. Fallback controllers only show local staged status.';
-  const edgeSlotInfoTooltip = (slot: EdgeProfileSlot) => {
-    if (slot.state === 'default') {
-      return 'The Fn + Triangle default profile is readable but not writable from DSCC.';
-    }
-    if (slot.hardwareSynced) {
-      return `${slot.shortcut} is currently synced with controller memory.`;
-    }
-    if (slot.staged) {
-      return `${slot.shortcut} has local staged settings that still need a controller hardware write.`;
-    }
-    return `${slot.shortcut} has no synced profile data available yet. Connect over USB or Bluetooth and read slots to refresh controller memory state.`;
-  };
+  const edgeSlotsReadTooltip = EDGE_ONBOARD_SLOTS_READ_TOOLTIP;
+  const edgeSlotInfoTooltip = edgeOnboardSlotInfoTooltip;
   const edgeSlotWriteTooltip = (slot: EdgeProfileSlot) =>
-    edgeProfiles?.supportState === 'read_write'
-      ? `Writes the current trigger ranges, lightbar color, stick presets, and supported button remaps to ${slot.shortcut}. Live telemetry effects still require DSCC to be running.`
-      : `Stages the current trigger ranges, lightbar color, stick presets, and supported button remaps for ${slot.shortcut}. Connect the DualSense Edge over USB or Bluetooth, then read slots again to sync controller memory.`;
-  const edgeSlotWriteLabel = () => (edgeProfiles?.supportState === 'read_write' ? 'Write' : 'Stage');
-
-  const edgeProfileNameForSlot = (slot: EdgeProfileSlot) => {
-    const profileName = activeProfileHeaderName || activeProfile?.name || 'DSCC Profile';
-    return `${profileName} ${slot.shortcut.replace('Fn + ', '')}`.trim().slice(0, 64);
-  };
+    edgeOnboardSlotWriteTooltip(slot, edgeProfiles);
+  const edgeSlotWriteLabel = () => edgeOnboardSlotWriteLabel(edgeProfiles);
 
   const writeCurrentConfigToEdgeSlot = async (slot: EdgeProfileSlot) => {
     if (!controller || !slot.editable || edgeProfilesBusySlot) return;
@@ -1918,13 +1407,15 @@
     edgeProfilesError = '';
     try {
       const config = buildControllerConfig();
-      const response = await writeEdgeProfile(controller.id, slot.slotId, {
-        name: edgeProfileNameForSlot(slot),
-        trigger: config.trigger,
-        lightbar: config.lightbar,
-        sticks: config.sticks,
-        buttons: config.buttons
-      });
+      const response = await writeEdgeProfile(
+        controller.id,
+        slot.slotId,
+        edgeProfileWriteRequest({
+          slot,
+          profileName: activeProfileHeaderName || activeProfile?.name || 'DSCC Profile',
+          config
+        })
+      );
       showToast(response.message, response.accepted ? 'success' : 'error');
       await loadEdgeProfiles(controller.id, true);
     } catch (caught) {
@@ -2842,9 +2333,15 @@
     void loadControllerConfig(controller.id);
   }
 
-  $: if (controller?.id && controller.family === 'DualSense Edge') {
+  $: if (controller?.id && isEdgeTargetController(controller)) {
     void loadEdgeProfiles(controller.id);
-  } else if (edgeProfilesLoadedFor || edgeProfiles) {
+  } else if (
+    shouldResetEdgeOnboardProfiles({
+      controller,
+      loadedFor: edgeProfilesLoadedFor,
+      profiles: edgeProfiles
+    })
+  ) {
     resetEdgeProfiles();
   }
 </script>
@@ -3186,48 +2683,7 @@
       />
       </HapticsView>
       {/if}
-    <ButtonMappingView
-      active={activeView === 'buttonMapping'}
-      steamInputRunning={Boolean(steamInputStatus?.running)}
-      providerLabel={mappingProviderLabel}
-      providerKind={bridgeContextActive ? 'bridge' : 'steam'}
-      providerOnline={mappingProviderOnline}
-      mappingAvailabilityMessage={mappingAvailabilityMessage}
-      {controllerHeaderName}
-      controllerTransport={controller?.transport}
-      gameName={selectedTuningScope === 'global' ? 'Global Profile' : steamContextGame?.name ?? 'No supported game selected'}
-      {steamLayoutTitle}
-      {mappedVisibleChipCount}
-      {steamMirrorGroups}
-      {focusedSlotMeta}
-      {focusedSlotBinding}
-      {focusedSlotSelectedBinding}
-      {steamBindingBusy}
-      steamInputLayoutAvailable={bridgeContextActive ? Boolean(inputBridgeStatus?.available) : Boolean(steamInputLayout)}
-      mappingReadOnly={bridgeContextActive ? !inputBridgeStatus?.available : !steamInputLayout}
-      defaultMirrorOnly={buttonMappingActive && !bridgeContextActive && !steamInputLayout}
-      paddlePresetVisible={steamPaddlePresetVisible}
-      paddlePresetAvailable={steamPaddlePresetAvailable}
-      paddlePresetStatus={steamPaddlePresetStatus}
-      {paddlePresetLeftKey}
-      {paddlePresetRightKey}
-      {steamBindingDraft}
-      {steamBindingLabelDraft}
-      bindingLabelFieldLabel={bridgeContextActive ? 'Label' : 'Label (Steam UI)'}
-      rawFieldLabel={bridgeContextActive ? 'Bridge mapping' : 'Raw VDF'}
-      rawFieldPlaceholder={bridgeContextActive ? 'xinput_button a, , A' : 'xinput_button ... / key_press ...'}
-      targetGroups={activeBindingTargetGroups}
-      onSelectSlot={selectSteamSlot}
-      onHoverSlot={hoverSteamSlot}
-      onPaddlePresetLeftKeyChange={setPaddlePresetLeftKey}
-      onPaddlePresetRightKeyChange={setPaddlePresetRightKey}
-      onApplyPaddlePreset={() => void applySteamPaddlePreset(false)}
-      onTargetChange={applySteamBindingTargetChange}
-      onLabelChange={applySteamBindingLabelChange}
-      onRawDraftChange={applySteamBindingRawChange}
-      onResetDraft={resetSteamBindingDraft}
-      onSaveBinding={() => void saveSteamBinding(false)}
-    />
+    <ButtonMappingView session={buttonMappingSession} />
     {/if}
   {/if}
   <ToastStack messages={toastMessages} onDismiss={dismissToast} />
