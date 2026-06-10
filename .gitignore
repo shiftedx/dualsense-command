@@ -109,3 +109,4 @@ pnpm-debug.log*
 
 # Upstream research clone kept out of this clean-room implementation repo.
 /Forza-Horizon-DualSense-Python/
+.superpowers/
