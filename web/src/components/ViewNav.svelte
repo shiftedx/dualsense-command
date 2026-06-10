@@ -3,18 +3,19 @@
   import type { AppView, AppViewDefinition } from '../app/navigation';
 
   export let views: AppViewDefinition[] = [];
-  export let activeView: AppView = 'games';
+  export let activeView: AppView = 'status';
   export let tooltips: Record<AppView, string>;
   export let tuningReady = false;
   export let buttonMappingReady = false;
   export let onNavigate: (view: AppView) => void = () => {};
 
   $: viewModels = views.map((view) => {
-    const disabled = (view.id === 'haptics' && !tuningReady) || (view.id === 'buttonMapping' && !buttonMappingReady);
+    const disabled =
+      (view.id === 'tuning' && !tuningReady) || (view.id === 'advancedButtonMapping' && !buttonMappingReady);
     const tooltip =
-      view.id === 'buttonMapping' && !buttonMappingReady
+      view.id === 'advancedButtonMapping' && !buttonMappingReady
         ? 'Select a game or local app scope before editing mappings.'
-        : view.id === 'haptics' && !tuningReady
+        : view.id === 'tuning' && !tuningReady
           ? 'Select a controller before tuning haptics.'
           : tooltips[view.id];
     return { ...view, disabled, tooltip };
