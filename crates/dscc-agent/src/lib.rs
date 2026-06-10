@@ -159,7 +159,6 @@ pub(crate) use game_detection::{
     parse_steam_localconfig_stats, parse_unix_process_names, user_game_id_for_app_id,
     SteamAppManifest, USER_GAME_PROCESS_CANDIDATE_LIMIT,
 };
-pub(crate) use game_detection_cache::*;
 pub use game_detection::{
     AddLocalGameRequest, AddUserGameRequest, AddUserGameResponse, BrowseSteamLibraryParams,
     GameArtwork, GameDetectionCandidate, GameDetectionResponse, SteamAchievementStats,
@@ -167,6 +166,7 @@ pub use game_detection::{
     SteamLibraryListResponse, SupportedGameSummary, UserGameConfig, ValidateLocalGameRequest,
     ValidateLocalGameResponse,
 };
+pub(crate) use game_detection_cache::*;
 #[cfg(test)]
 use game_modules::detect_running_game_from_processes;
 use game_modules::{
