@@ -77,6 +77,7 @@ mod input_bridge;
 mod persistence;
 mod profiles;
 mod routes;
+mod runtime;
 mod runtime_constants;
 mod runtime_paths;
 mod steam_input;
@@ -196,6 +197,7 @@ pub use routes::app;
 pub(crate) use routes::{configured_web_dist_dir, web_dist_dir};
 #[cfg(test)]
 pub(crate) use routes::{web_dist_candidates, web_dist_dir_from_parts};
+pub(crate) use runtime::*;
 pub(crate) use runtime_constants::*;
 pub use runtime_paths::{app_paths, init_tracing};
 pub(crate) use steam_input::{
@@ -1831,92 +1833,6 @@ fn hid_agent_state() -> AgentState {
             }],
             DeviceBackendSummary::unavailable(format!("hidapi backend unavailable: {error}")),
         ),
-    }
-}
-
-async fn device_scan_loop<T>(
-    state: AgentState,
-    mut manager: DeviceManager<T>,
-    scan_interval: Duration,
-) where
-    T: DeviceTransport,
-{
-    let mut interval = tokio::time::interval(scan_interval);
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    loop {
-        interval.tick().await;
-        match controller_events_from_device_manager(&mut manager) {
-            Ok(events) => {
-                for event in events {
-                    state.apply_controller_event(event).await;
-                }
-            }
-            Err(error) => {
-                state
-                    .apply_controller_event(ControllerDiscoveryEvent::Faulted {
-                        id: None,
-                        message: format!("HID scan failed: {error}"),
-                    })
-                    .await;
-            }
-        }
-    }
-}
-
-async fn output_watchdog_loop(state: AgentState, interval_duration: Duration) {
-    let mut interval = tokio::time::interval(interval_duration);
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-    loop {
-        interval.tick().await;
-        if !state.hardware_output_enabled()
-            || state.manual_output_override_active()
-            || !state.has_non_neutral_output_frames()
-        {
-            continue;
-        }
-
-        let game_detection = state.cached_hardware_game_detection().await;
-        let should_neutralize = {
-            let inner = state.inner.read().await;
-            !hardware_output_any_allowed(&inner, Some(&game_detection))
-        };
-
-        if should_neutralize {
-            state
-                .neutralize_active_output_and_release("the supported-game telemetry gate closed")
-                .await;
-        }
-    }
-}
-
-async fn hardware_output_loop(state: AgentState, interval_duration: Duration) {
-    let mut interval = tokio::time::interval(interval_duration);
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut game_detection = state.cached_hardware_game_detection().await;
-    let mut next_detection_refresh = Instant::now() + HARDWARE_GAME_DETECTION_INTERVAL;
-    loop {
-        interval.tick().await;
-        if !state.hardware_output_enabled() || state.manual_output_override_active() {
-            continue;
-        }
-
-        let now = Instant::now();
-        if now >= next_detection_refresh {
-            game_detection = state.cached_hardware_game_detection().await;
-            next_detection_refresh = now + HARDWARE_GAME_DETECTION_INTERVAL;
-        }
-
-        if let Err(error) = state
-            .write_current_output_frame_if_due(Some(&game_detection))
-            .await
-        {
-            state
-                .note_hardware_output_error(format!(
-                    "Hardware trigger output write failed: {error}"
-                ))
-                .await;
-        }
     }
 }
 
