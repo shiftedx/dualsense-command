@@ -124,6 +124,7 @@
     type CurveDragPoint,
     type CurveHoverState,
     type CurvePointEdit,
+    type TriggerCurveEditorContext,
     type TriggerRangeEdge
   } from './app/triggerCurveEditor';
   import {
@@ -1041,8 +1042,23 @@
     forzaBrakeTuning,
     forzaThrottleTuning
   });
-  const curveEditorContext = (side: TriggerSide) =>
-    side === 'l2' ? l2CurveEditorContext : r2CurveEditorContext;
+  // Handler-side context builder: reads the raw state directly so point edits
+  // made earlier in the same event see their own writes (the reactive
+  // l2/r2CurveEditorContext objects only refresh on Svelte's next flush).
+  const curveEditorContext = (side: TriggerSide): TriggerCurveEditorContext =>
+    triggerCurveEditorContext({
+      side,
+      from: side === 'l2' ? l2From : r2From,
+      to: side === 'l2' ? l2To : r2To,
+      curve: side === 'l2' ? l2Curve : r2Curve,
+      points: side === 'l2' ? l2CurvePoints : r2CurvePoints,
+      triggerEffect,
+      triggerIntensity,
+      displayMode: triggerCurveDisplayMode,
+      forzaEffects: forzaTuning.effects,
+      forzaBrakeTuning: forzaTuning.brake,
+      forzaThrottleTuning: forzaTuning.throttle
+    });
 
   $: l2CurveShape = curveShapeViewFor(l2CurveEditorContext);
   $: r2CurveShape = curveShapeViewFor(r2CurveEditorContext);
