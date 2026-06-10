@@ -10,16 +10,18 @@
     X
   } from '@lucide/svelte';
 
+  import type { AppView } from '../app/navigation';
+
   export let open = false;
   export let onClose: () => void = () => {};
-  export let onNavigate: (view: 'games' | 'controllers' | 'haptics' | 'buttonMapping') => void = () => {};
+  export let onNavigate: (view: AppView) => void = () => {};
 
   type TutorialStep = {
     title: string;
     eyebrow: string;
     body: string;
     actionLabel: string;
-    targetView?: 'games' | 'controllers' | 'haptics' | 'buttonMapping';
+    targetView?: AppView;
     icon: typeof Gamepad2;
   };
 
@@ -29,7 +31,7 @@
       title: 'Pick the controller and scope',
       body: 'Use Controllers for hardware state and live inputs, then use Profiles to choose Global or a supported game scope.',
       actionLabel: 'Open Controllers',
-      targetView: 'controllers',
+      targetView: 'advancedController',
       icon: Gamepad2
     },
     {
@@ -37,7 +39,7 @@
       title: 'Game effects wait for telemetry',
       body: 'DSCC keeps triggers neutral until a supported game is detected and fresh telemetry is flowing. Manual test buttons attach only for the short test window.',
       actionLabel: 'Open haptics',
-      targetView: 'haptics',
+      targetView: 'tuning',
       icon: RadioTower
     },
     {
@@ -45,7 +47,7 @@
       title: 'Shape L2 and R2 with curve points',
       body: 'Drag the trigger dots for custom brake and throttle response, then use Test Actuation to feel the current profile without starting a game.',
       actionLabel: 'Open haptics',
-      targetView: 'haptics',
+      targetView: 'tuning',
       icon: SlidersHorizontal
     },
     {

@@ -317,7 +317,7 @@
   let curveDragSide: TriggerSide | null = null;
   let curveDragPoint: CurveDragPoint | null = null;
   let triggerCurveDisplayMode: TriggerCurveDisplayMode = 'base';
-  let activeView: AppView = 'games';
+  let activeView: AppView = 'status';
   let triggerEffect = 'Adaptive resistance';
   let triggerIntensity = 'Strong (Standard)';
   let vibrationIntensity = 'Medium';
@@ -498,7 +498,15 @@
   $: activeProfileHeader = profileWorkspace.activeProfileHeader;
   $: activeProfileHeaderName = profileWorkspace.activeProfileHeaderName;
   $: activeProfileHeaderMeta = profileWorkspace.activeProfileHeaderMeta;
-  $: buttonMappingActive = activeView === 'buttonMapping';
+  $: buttonMappingActive = activeView === 'advancedButtonMapping';
+  // Temporary view composition (Tasks 3-5 replace this): 'status' renders the old
+  // default (GamesView) so the app is never blank; 'tuning' renders GamesView plus
+  // the haptics workspace; 'advancedEdgeSlots' renders ControllersView because the
+  // Edge onboard slots UI currently lives inside it.
+  $: showAdvancedControllerView = activeView === 'advancedController' || activeView === 'advancedEdgeSlots';
+  $: showGamesView = activeView === 'status' || activeView === 'tuning' || (!tuningReady && !showAdvancedControllerView);
+  $: showWorkspaceViews =
+    showAdvancedControllerView || (tuningReady && (activeView === 'tuning' || activeView === 'advancedButtonMapping'));
   $: steamInputStatus = snapshot?.steamInput;
   $: inputBridgeStatus = snapshot?.inputBridge;
   $: telemetryPacketRate = adapter?.packetRateHz ?? 0;
@@ -632,7 +640,7 @@
   };
 
   const appViewFromHash = (): AppView => {
-    if (typeof window === 'undefined') return 'games';
+    if (typeof window === 'undefined') return 'status';
     return viewFromHash(window.location.hash, { tuningReady, buttonMappingReady });
   };
 
@@ -916,8 +924,8 @@
     selectedTuningGameId = '';
     const profileId = globalTuningProfileSelection(profiles, activeProfileId);
     selectedOverrideProfileId = profileId;
-    activeView = 'haptics';
-    setViewHash('haptics');
+    activeView = 'tuning';
+    setViewHash('tuning');
     if (profileId) await selectProfileForScope(profileId, null, 'Global Profile');
   };
 
@@ -931,8 +939,8 @@
       currentControllerConfig
     });
     if (preferredProfileId) selectedOverrideProfileId = preferredProfileId;
-    activeView = 'haptics';
-    setViewHash('haptics');
+    activeView = 'tuning';
+    setViewHash('tuning');
     if (preferredProfileId) await selectProfileForScope(preferredProfileId, game.gameId, game.name);
   };
 
@@ -1727,7 +1735,7 @@
   function shouldPollTriggerInput() {
     return Boolean(
       controller?.id &&
-        activeView === 'haptics' &&
+        activeView === 'tuning' &&
         typeof window !== 'undefined' &&
         typeof document !== 'undefined' &&
         !document.hidden
@@ -1740,9 +1748,14 @@
 
   $: if (
     typeof window !== 'undefined' &&
-    (window.location.hash === '#/controllers' ||
+    (window.location.hash === '#/tuning' ||
+      window.location.hash === '#/advanced/controller' ||
+      window.location.hash === '#/advanced/button-mapping' ||
+      window.location.hash === '#/advanced/edge-slots' ||
+      window.location.hash === '#/controllers' ||
       window.location.hash === '#/adaptive-triggers-haptics' ||
-      window.location.hash === '#/button-mapping')
+      window.location.hash === '#/button-mapping' ||
+      window.location.hash === '#/games')
   ) {
     const routeView = appViewFromHash();
     if (routeView !== activeView) {
@@ -1957,7 +1970,7 @@
   // Live trigger polling feeds the haptics curve cursor and the base-feel test.
   // It is intentionally limited to the visible Haptics view so inactive routes
   // do not spend the 25Hz input budget or trigger extra DOM work.
-  $: if (controller?.id && activeView === 'haptics') {
+  $: if (controller?.id && activeView === 'tuning') {
     startTriggerInputPolling();
   } else {
     stopTriggerInputPolling();
@@ -2081,7 +2094,7 @@
       onNavigate={navigateToView}
     />
 
-    {#if activeView === 'games' || (!tuningReady && activeView !== 'controllers')}
+    {#if showGamesView}
       <GamesView
         {controller}
         {connectedControllers}
@@ -2103,7 +2116,8 @@
         onPickAllControllers={pickAllControllers}
         onPickControllerTarget={pickControllerTarget}
       />
-    {:else}
+    {/if}
+    {#if showWorkspaceViews}
       <ContextRibbon
         {controller}
         {connectedControllers}
@@ -2139,9 +2153,9 @@
         onUpdateGlyphOverride={updateForzaGlyphOverride}
       />
 
-      {#if activeView === 'controllers'}
+      {#if showAdvancedControllerView}
         <ControllersView
-          active={activeView === 'controllers'}
+          active={showAdvancedControllerView}
           {controllers}
           {controller}
           {selectedControllerId}
@@ -2179,7 +2193,7 @@
         />
       {/if}
 
-      {#if activeView === 'haptics'}
+      {#if activeView === 'tuning' && tuningReady}
       <HapticsView active>
       <TriggerCurvesPanel
         {selectedTuningScope}
