@@ -10,6 +10,8 @@ Start here:
   validation checklist.
 - [Contributing](contributing.md): how to work on the app safely.
 - [Architecture](architecture.md): short map of the Rust agent, tray, and web UI.
+- [Architecture Audit](architecture-audit.md): dated review of the largest files
+  and the highest-leverage decomposition opportunities.
 - [Game Module Guide](game-module-contribution-guide.md): how supported games
   and telemetry adapters fit together.
 - [Game Module PR Template](game-module-template.md): checklist for adding a
