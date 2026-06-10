@@ -9,6 +9,11 @@
   padding: 18px clamp(18px, 2.2vw, 34px) 22px;
   overflow-x: hidden;
   overflow-y: auto;
+  /* Reserve the vertical scrollbar's track so its appearance never reflows
+     content. On platforms with classic (16px) scrollbars this prevents the
+     transient horizontal overflow that intermittently tripped the visual
+     smoke test; on overlay-scrollbar platforms it is a no-op. */
+  scrollbar-gutter: stable;
   color: var(--haptic);
   background:
     radial-gradient(circle at 50% -18%, rgba(0, 112, 204, 0.14), transparent 36%),
