@@ -86,8 +86,6 @@
   import HapticsView from './lib/features/haptics/HapticsView.svelte';
   import TriggerCurvesPanel from './lib/features/haptics/TriggerCurvesPanel.svelte';
   import {
-    TRIGGER_CURVE_POINT_MAX,
-    TRIGGER_CURVE_POINT_MIN,
     clampUnit,
     defaultTriggerCurve,
     defaultTriggerCurvePoints,
@@ -101,22 +99,34 @@
     triggerCurvePointsFromCurve
   } from './lib/features/haptics/hapticsModel';
   import {
-    forzaTriggerForceModelFor,
     intensityTooltip,
     routeTooltip,
-    triggerCurveLiveView,
-    triggerCurveShapeView,
     triggerCurveTooltip,
-    triggerCurveValueFor,
     triggerPressLabel,
     triggerRangeTooltip,
-    triggerRangeValuesFor,
-    triggerStrengthScalarFor,
     vibrationIntensityPercent,
     vibrationModeRequest,
     type TriggerCurveDisplayMode,
     type TriggerSide
   } from './lib/features/haptics/hapticsCurvePresentation';
+  import {
+    beginCurveDrag,
+    curveGraphPointFromPointer,
+    curveHoverFor,
+    curveLiveViewFor,
+    curvePointFromGraphPoint,
+    curveShapeViewFor,
+    triggerCurveEditorContext,
+    triggerRangeWithEdgeSet,
+    withCurvePointAdded,
+    withCurvePointAddedOrSelected,
+    withCurvePointRemoved,
+    withCurvePointSet,
+    type CurveDragPoint,
+    type CurveHoverState,
+    type CurvePointEdit,
+    type TriggerRangeEdge
+  } from './app/triggerCurveEditor';
   import {
     bodyRumbleModeOptions,
     forzaEffectMetas,
@@ -131,7 +141,6 @@
     vibrationModeOptions
   } from './lib/features/haptics/hapticsOptions';
   import {
-    clamp,
     clampForzaIntensity,
     defaultForzaAbsTuning,
     defaultForzaBrakeTuning,
@@ -312,9 +321,9 @@
   let r2Curve = defaultTriggerCurve('r2');
   let l2CurvePoints: TriggerCurvePoint[] = defaultTriggerCurvePoints('l2');
   let r2CurvePoints: TriggerCurvePoint[] = defaultTriggerCurvePoints('r2');
-  let curveHover: { side: TriggerSide; x: number; y: number; left: number; top: number } | null = null;
+  let curveHover: CurveHoverState | null = null;
   let curveDragSide: TriggerSide | null = null;
-  let curveDragPoint: { side: TriggerSide; index: number } | null = null;
+  let curveDragPoint: CurveDragPoint | null = null;
   let triggerCurveDisplayMode: TriggerCurveDisplayMode = 'base';
   let activeView: AppView = 'games';
   let triggerEffect = 'Adaptive resistance';
@@ -629,7 +638,6 @@
     }
   };
 
-  type TriggerRangeEdge = 'from' | 'to';
   const appViewFromHash = (): AppView => {
     if (typeof window === 'undefined') return 'games';
     return viewFromHash(window.location.hash, { tuningReady, buttonMappingReady });
@@ -688,19 +696,10 @@
   });
 
   const setTriggerRangeValue = (side: TriggerSide, edge: TriggerRangeEdge, rawValue: number | string) => {
-    const value = normalizeTriggerPercent(rawValue);
     if (side === 'l2') {
-      if (edge === 'from') {
-        l2From = Math.min(value, l2To);
-      } else {
-        l2To = Math.max(value, l2From);
-      }
+      ({ from: l2From, to: l2To } = triggerRangeWithEdgeSet({ from: l2From, to: l2To }, edge, rawValue));
     } else {
-      if (edge === 'from') {
-        r2From = Math.min(value, r2To);
-      } else {
-        r2To = Math.max(value, r2From);
-      }
+      ({ from: r2From, to: r2To } = triggerRangeWithEdgeSet({ from: r2From, to: r2To }, edge, rawValue));
     }
     scheduleBaseFeelTestRefresh();
     scheduleLiveControllerConfigSync();
@@ -1084,20 +1083,39 @@
     return typeof value === 'number' && Number.isFinite(value) ? clampUnit(value) : 0;
   };
 
-  const triggerStrengthScalar = () => triggerStrengthScalarFor(triggerEffect, triggerIntensity);
+  $: l2CurveEditorContext = triggerCurveEditorContext({
+    side: 'l2',
+    from: l2From,
+    to: l2To,
+    curve: l2Curve,
+    points: l2CurvePoints,
+    triggerEffect,
+    triggerIntensity,
+    displayMode: triggerCurveDisplayMode,
+    forzaEffects,
+    forzaBrakeTuning,
+    forzaThrottleTuning
+  });
+  $: r2CurveEditorContext = triggerCurveEditorContext({
+    side: 'r2',
+    from: r2From,
+    to: r2To,
+    curve: r2Curve,
+    points: r2CurvePoints,
+    triggerEffect,
+    triggerIntensity,
+    displayMode: triggerCurveDisplayMode,
+    forzaEffects,
+    forzaBrakeTuning,
+    forzaThrottleTuning
+  });
+  const curveEditorContext = (side: TriggerSide) =>
+    side === 'l2' ? l2CurveEditorContext : r2CurveEditorContext;
 
-  const triggerRangeValues = (side: TriggerSide) =>
-    side === 'l2' ? triggerRangeValuesFor(l2From, l2To) : triggerRangeValuesFor(r2From, r2To);
-
-  const triggerCurveValue = (side: TriggerSide, position: number) =>
-    side === 'l2'
-      ? triggerCurveValueFor(side, position, l2From, l2To, l2Curve, l2CurvePoints, defaultTriggerCurve('l2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects, forzaBrakeTuning, forzaThrottleTuning)
-      : triggerCurveValueFor(side, position, r2From, r2To, r2Curve, r2CurvePoints, defaultTriggerCurve('r2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects, forzaBrakeTuning, forzaThrottleTuning);
-
-  $: l2CurveShape = triggerCurveShapeView('l2', l2From, l2To, l2Curve, l2CurvePoints, defaultTriggerCurve('l2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects, forzaBrakeTuning, forzaThrottleTuning);
-  $: r2CurveShape = triggerCurveShapeView('r2', r2From, r2To, r2Curve, r2CurvePoints, defaultTriggerCurve('r2'), triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects, forzaBrakeTuning, forzaThrottleTuning);
-  $: l2CurveLive = triggerCurveLiveView('l2', l2From, l2To, l2Curve, l2CurvePoints, defaultTriggerCurve('l2'), l2LivePress, triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects, forzaBrakeTuning, forzaThrottleTuning);
-  $: r2CurveLive = triggerCurveLiveView('r2', r2From, r2To, r2Curve, r2CurvePoints, defaultTriggerCurve('r2'), r2LivePress, triggerEffect, triggerIntensity, triggerCurveDisplayMode, forzaEffects, forzaBrakeTuning, forzaThrottleTuning);
+  $: l2CurveShape = curveShapeViewFor(l2CurveEditorContext);
+  $: r2CurveShape = curveShapeViewFor(r2CurveEditorContext);
+  $: l2CurveLive = curveLiveViewFor(l2CurveEditorContext, l2LivePress);
+  $: r2CurveLive = curveLiveViewFor(r2CurveEditorContext, r2LivePress);
   $: triggerRangeTooltipForCurrentTuning = (
     side: 'L2' | 'R2',
     edge: 'from' | 'to',
@@ -1107,54 +1125,7 @@
 
   const showTriggerPress = (_side: 'l2' | 'r2', value: number) =>
     baseFeelTestActive || clampUnit(value) > 0.01;
-  const curveGraphPointFromPointer = (event: PointerEvent, target: HTMLElement) => {
-    const rect = target.getBoundingClientRect();
-    const x = clampUnit((event.clientX - rect.left) / Math.max(1, rect.width));
-    const output = clampUnit(1 - (event.clientY - rect.top) / Math.max(1, rect.height));
-    return { x, output };
-  };
 
-  const setCurveHover = (side: TriggerSide, x: number) => {
-    const y = triggerCurveValue(side, x);
-    curveHover = {
-      side,
-      x,
-      y,
-      left: x * 100,
-      top: (1 - y) * 100
-    };
-  };
-
-  const curvePointFromGraphPoint = (side: TriggerSide, input: number, output: number) => {
-    const range = triggerRangeValues(side);
-    const start = range.from / 100;
-    const end = Math.max(start + 0.01, range.to / 100);
-    let activeTravel = clamp((input - start) / (end - start), 0.01, 0.99);
-    let normalizedOutput = output;
-
-    if (triggerCurveDisplayMode === 'forza') {
-      const model =
-        side === 'l2'
-          ? forzaTriggerForceModelFor(side, l2From, l2To, l2Curve, l2CurvePoints, defaultTriggerCurve(side), triggerEffect, triggerIntensity, forzaEffects, forzaBrakeTuning, forzaThrottleTuning)
-          : forzaTriggerForceModelFor(side, r2From, r2To, r2Curve, r2CurvePoints, defaultTriggerCurve(side), triggerEffect, triggerIntensity, forzaEffects, forzaBrakeTuning, forzaThrottleTuning);
-      if (model && model.normalForce > model.baselineForce) {
-        const editableEnd = model.rampStart ?? model.wall;
-        const editableInput = clamp(input, model.start + 0.0001, Math.max(model.start + 0.0001, editableEnd - 0.0001));
-        activeTravel = clamp((editableInput - model.start) / (editableEnd - model.start), 0.01, 0.99);
-        normalizedOutput = clamp((Math.min(output, model.normalForce) - model.baselineForce) / (model.normalForce - model.baselineForce), 0.01, 0.99);
-      }
-    } else {
-      const strength = triggerStrengthScalar();
-      normalizedOutput = clamp(strength > 0 ? output / strength : output, 0.01, 0.99);
-    }
-
-    return {
-      input: normalizeTriggerPercent(activeTravel * 100),
-      output: normalizeTriggerPercent(normalizedOutput * 100)
-    };
-  };
-
-  const pointsForSide = (side: TriggerSide) => (side === 'l2' ? l2CurvePoints : r2CurvePoints);
   const setPointsForSide = (side: TriggerSide, points: TriggerCurvePoint[]) => {
     const normalized = normalizeTriggerCurvePoints(points, side === 'l2' ? l2Curve : r2Curve);
     if (side === 'l2') {
@@ -1166,84 +1137,31 @@
     scheduleLiveControllerConfigSync();
   };
 
-  const setCurvePoint = (side: TriggerSide, index: number, point: TriggerCurvePoint) => {
-    const current = normalizeTriggerCurvePoints(pointsForSide(side), side === 'l2' ? l2Curve : r2Curve);
-    if (index <= 0 || index >= current.length - 1) return index;
-    const previous = current[index - 1];
-    const next = current[index + 1];
-    current[index] = {
-      input: normalizeTriggerPercent(clamp(point.input, previous.input + 1, next.input - 1)),
-      output: normalizeTriggerPercent(point.output)
-    };
-    setPointsForSide(side, current);
-    return index;
+  const applyCurvePointEdit = (side: TriggerSide, edit: CurvePointEdit) => {
+    if (edit.points) setPointsForSide(side, edit.points);
+    return edit.index;
   };
 
-  const addOrSelectCurvePoint = (side: TriggerSide, point: TriggerCurvePoint) => {
-    const current = normalizeTriggerCurvePoints(pointsForSide(side), side === 'l2' ? l2Curve : r2Curve);
-    if (current.length >= TRIGGER_CURVE_POINT_MAX) {
-      let nearest = 1;
-      let distance = Number.POSITIVE_INFINITY;
-      for (let index = 1; index < current.length - 1; index += 1) {
-        const nextDistance = Math.abs(current[index].input - point.input);
-        if (nextDistance < distance) {
-          distance = nextDistance;
-          nearest = index;
-        }
-      }
-      return setCurvePoint(side, nearest, point);
-    }
+  const setCurvePoint = (side: TriggerSide, index: number, point: TriggerCurvePoint) =>
+    applyCurvePointEdit(side, withCurvePointSet(curveEditorContext(side), index, point));
 
-    const nextPoints = [...current, point].sort((a, b) => a.input - b.input);
-    const index = Math.max(1, Math.min(nextPoints.length - 2, nextPoints.findIndex((candidate) => candidate === point)));
-    setPointsForSide(side, nextPoints);
-    return index;
-  };
+  const addOrSelectCurvePoint = (side: TriggerSide, point: TriggerCurvePoint) =>
+    applyCurvePointEdit(side, withCurvePointAddedOrSelected(curveEditorContext(side), point));
 
   const addCurvePoint = (side: TriggerSide) => {
-    const current = normalizeTriggerCurvePoints(pointsForSide(side), side === 'l2' ? l2Curve : r2Curve);
-    if (current.length >= TRIGGER_CURVE_POINT_MAX) return;
-
-    let bestIndex = 0;
-    let bestGap = 0;
-    for (let index = 0; index < current.length - 1; index += 1) {
-      const gap = current[index + 1].input - current[index].input;
-      if (gap > bestGap) {
-        bestGap = gap;
-        bestIndex = index;
-      }
-    }
-    const left = current[bestIndex];
-    const right = current[bestIndex + 1];
-    const input = normalizeTriggerPercent((left.input + right.input) / 2);
-    const output = normalizeTriggerPercent((left.output + right.output) / 2);
-    setPointsForSide(side, [...current, { input, output }]);
+    const points = withCurvePointAdded(curveEditorContext(side));
+    if (points) setPointsForSide(side, points);
   };
 
   const removeCurvePoint = (side: TriggerSide) => {
-    const current = normalizeTriggerCurvePoints(pointsForSide(side), side === 'l2' ? l2Curve : r2Curve);
-    if (current.length <= TRIGGER_CURVE_POINT_MIN) return;
-
-    let removeIndex = current.length - 2;
-    let smallestBend = Number.POSITIVE_INFINITY;
-    for (let index = 1; index < current.length - 1; index += 1) {
-      const left = current[index - 1];
-      const point = current[index];
-      const right = current[index + 1];
-      const expected = left.output + ((right.output - left.output) * (point.input - left.input)) / Math.max(1, right.input - left.input);
-      const bend = Math.abs(point.output - expected);
-      if (bend < smallestBend) {
-        smallestBend = bend;
-        removeIndex = index;
-      }
-    }
-    setPointsForSide(side, current.filter((_, index) => index !== removeIndex));
+    const points = withCurvePointRemoved(curveEditorContext(side));
+    if (points) setPointsForSide(side, points);
   };
 
   const updateCurveHover = (event: PointerEvent, side: TriggerSide) => {
     const target = event.currentTarget as HTMLElement;
     const { x } = curveGraphPointFromPointer(event, target);
-    setCurveHover(side, x);
+    curveHover = curveHoverFor(curveEditorContext(side), x);
   };
 
   const handleCurvePointer = (event: PointerEvent, side: TriggerSide) => {
@@ -1252,30 +1170,21 @@
 
     const target = event.currentTarget as HTMLElement;
     curveDragSide = side;
-    target.setPointerCapture(event.pointerId);
     let pointIndex = -1;
 
-    const applyPoint = (pointerEvent: PointerEvent) => {
-      const { x, output } = curveGraphPointFromPointer(pointerEvent, target);
-      const point = curvePointFromGraphPoint(side, x, output);
-      pointIndex = pointIndex < 0 ? addOrSelectCurvePoint(side, point) : setCurvePoint(side, pointIndex, point);
-      curveDragPoint = { side, index: pointIndex };
-      setCurveHover(side, x);
-    };
-
-    const stopDrag = () => {
-      curveDragSide = null;
-      curveDragPoint = null;
-      if (target.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId);
-      target.removeEventListener('pointermove', applyPoint);
-      target.removeEventListener('pointerup', stopDrag);
-      target.removeEventListener('pointercancel', stopDrag);
-    };
-
-    applyPoint(event);
-    target.addEventListener('pointermove', applyPoint);
-    target.addEventListener('pointerup', stopDrag);
-    target.addEventListener('pointercancel', stopDrag);
+    beginCurveDrag(event, target, {
+      applyInitialEvent: true,
+      onPoint: ({ x, output }) => {
+        const point = curvePointFromGraphPoint(curveEditorContext(side), x, output);
+        pointIndex = pointIndex < 0 ? addOrSelectCurvePoint(side, point) : setCurvePoint(side, pointIndex, point);
+        curveDragPoint = { side, index: pointIndex };
+        curveHover = curveHoverFor(curveEditorContext(side), x);
+      },
+      onEnd: () => {
+        curveDragSide = null;
+        curveDragPoint = null;
+      }
+    });
   };
 
   const handleCurvePointPointer = (event: PointerEvent, side: TriggerSide, index: number) => {
@@ -1286,25 +1195,17 @@
     if (!frame) return;
     curveDragSide = side;
     curveDragPoint = { side, index };
-    frame.setPointerCapture(event.pointerId);
 
-    const applyPoint = (pointerEvent: PointerEvent) => {
-      const { x, output } = curveGraphPointFromPointer(pointerEvent, frame);
-      setCurvePoint(side, index, curvePointFromGraphPoint(side, x, output));
-      setCurveHover(side, x);
-    };
-    const stopDrag = () => {
-      curveDragSide = null;
-      curveDragPoint = null;
-      if (frame.hasPointerCapture(event.pointerId)) frame.releasePointerCapture(event.pointerId);
-      frame.removeEventListener('pointermove', applyPoint);
-      frame.removeEventListener('pointerup', stopDrag);
-      frame.removeEventListener('pointercancel', stopDrag);
-    };
-
-    frame.addEventListener('pointermove', applyPoint);
-    frame.addEventListener('pointerup', stopDrag);
-    frame.addEventListener('pointercancel', stopDrag);
+    beginCurveDrag(event, frame, {
+      onPoint: ({ x, output }) => {
+        setCurvePoint(side, index, curvePointFromGraphPoint(curveEditorContext(side), x, output));
+        curveHover = curveHoverFor(curveEditorContext(side), x);
+      },
+      onEnd: () => {
+        curveDragSide = null;
+        curveDragPoint = null;
+      }
+    });
   };
 
   const clearCurveHover = (side: TriggerSide) => {
