@@ -39,7 +39,6 @@
     buildDefaultControllerConfig as createDefaultControllerConfig,
     editableConfigFromController as createEditableConfigFromController,
     editableConfigFromProfileExport as createEditableConfigFromProfileExport,
-    normalizeForzaBodyRumbleMode,
     normalizeInputBridgeConfig,
     profileConfigSignature as createProfileConfigSignature,
     type EditableControllerConfig,
@@ -131,8 +130,6 @@
     bodyRumbleModeOptions,
     forzaEffectMetas,
     forzaRoutes,
-    shiftThumpPresetHelp,
-    shiftThumpPresets,
     triggerEffectHelp,
     triggerEffectOptions,
     triggerStrengthHelp,
@@ -141,7 +138,6 @@
     vibrationModeOptions
   } from './lib/features/haptics/hapticsOptions';
   import {
-    clampForzaIntensity,
     defaultForzaAbsTuning,
     defaultForzaBrakeTuning,
     defaultForzaEffects,
@@ -159,6 +155,13 @@
     normalizeForzaShiftTuning,
     normalizeForzaThrottleTuning
   } from './app/hapticsState';
+  import {
+    createForzaEffectState,
+    defaultForzaTuningValues,
+    forzaEffectById,
+    forzaTuningFromConfig,
+    type ForzaTuningValues
+  } from './app/forzaEffectState';
   import {
     gameAccentColor,
     gameArtwork,
@@ -218,13 +221,7 @@
     EdgeProfilesResponse,
     EffectTestRequest,
     ExportedProfile,
-    ForzaAbsTuningConfiguration,
-    ForzaBrakeTuningConfiguration,
-    ForzaBodyRumbleMode,
     ForzaEffectConfiguration,
-    ForzaRevLimiterTuningConfiguration,
-    ForzaShiftTuningConfiguration,
-    ForzaThrottleTuningConfiguration,
     ProfileSummary,
     SteamLibraryEntry,
     SupportBundle,
@@ -330,12 +327,14 @@
   let triggerIntensity = 'Strong (Standard)';
   let vibrationIntensity = 'Medium';
   let vibrationMode = 'Balanced';
-  let forzaBodyRumbleMode: ForzaBodyRumbleMode = 'native_passthrough';
-  let forzaAbsTuning: ForzaAbsTuningConfiguration = defaultForzaAbsTuning();
-  let forzaBrakeTuning: ForzaBrakeTuningConfiguration = defaultForzaBrakeTuning();
-  let forzaThrottleTuning: ForzaThrottleTuningConfiguration = defaultForzaThrottleTuning();
-  let forzaShiftTuning: ForzaShiftTuningConfiguration = defaultForzaShiftTuning();
-  let forzaRevLimiterTuning: ForzaRevLimiterTuningConfiguration = defaultForzaRevLimiterTuning();
+  let forzaTuning: ForzaTuningValues = defaultForzaTuningValues();
+  $: forzaBodyRumbleMode = forzaTuning.bodyRumbleMode;
+  $: forzaEffects = forzaTuning.effects;
+  $: forzaAbsTuning = forzaTuning.abs;
+  $: forzaBrakeTuning = forzaTuning.brake;
+  $: forzaThrottleTuning = forzaTuning.throttle;
+  $: forzaShiftTuning = forzaTuning.shift;
+  $: forzaRevLimiterTuning = forzaTuning.revLimiter;
   let lightbarEnabled = true;
   let lightbarColor = '#4cc9f0';
   let rpmColor = '#ff3a2e';
@@ -343,7 +342,6 @@
   let leftStickDeadzone = 0;
   let rightStickDeadzone = 0;
 
-  let forzaEffects: ForzaEffectConfiguration[] = defaultForzaEffects();
   $: enabledForzaEffectCount = forzaEffects.filter((effect) => effect.enabled).length;
   $: allForzaEffectsEnabled = enabledForzaEffectCount === forzaEffectMetas.length;
   // Reactive lookup map so {@const tuning = ...} inside {#each} re-evaluates
@@ -995,87 +993,27 @@
     Boolean(currentControllerConfig && profileSaveBaselineSignature) &&
     profileConfigSignature(buildControllerConfig()) !== profileSaveBaselineSignature;
 
-  const forzaEffect = (id: string): ForzaEffectConfiguration =>
-    forzaEffects.find((effect) => effect.id === id) ??
-    defaultForzaEffects().find((effect) => effect.id === id) ??
-    defaultForzaEffects()[0];
+  const forzaEffectState = createForzaEffectState({
+    store: {
+      get: () => forzaTuning,
+      set: (next) => {
+        forzaTuning = next;
+      }
+    },
+    onChanged: () => scheduleLiveControllerConfigSync()
+  });
 
-  const updateForzaEffect = (id: string, patch: Partial<ForzaEffectConfiguration>) => {
-    forzaEffects = normalizeForzaEffects(
-      forzaEffects.map((effect) =>
-        effect.id === id
-          ? {
-              ...effect,
-              ...patch,
-              intensity:
-                patch.intensity === undefined ? effect.intensity : clampForzaIntensity(patch.intensity)
-            }
-          : effect
-      )
-    );
-    scheduleLiveControllerConfigSync();
-  };
-
-  const applyShiftThumpPreset = (intensity: number) => {
-    updateForzaEffect('gear_shift_thump', {
-      enabled: intensity > 0,
-      intensity,
-      route: 'r2_and_body'
-    });
-  };
-
-  const setAllForzaEffects = (enabled: boolean) => {
-    forzaEffects = normalizeForzaEffects(forzaEffects.map((effect) => ({ ...effect, enabled })));
-    scheduleLiveControllerConfigSync();
-  };
-
-  const setForzaBodyRumbleMode = (mode: ForzaBodyRumbleMode) => {
-    forzaBodyRumbleMode = normalizeForzaBodyRumbleMode(mode);
-    scheduleLiveControllerConfigSync();
-  };
-
-  const updateForzaAbsTuning = (patch: Partial<ForzaAbsTuningConfiguration>) => {
-    forzaAbsTuning = normalizeForzaAbsTuning({
-      ...forzaAbsTuning,
-      ...patch
-    });
-    scheduleLiveControllerConfigSync();
-  };
-
-  const updateForzaBrakeTuning = (patch: Partial<ForzaBrakeTuningConfiguration>) => {
-    forzaBrakeTuning = normalizeForzaBrakeTuning({
-      ...forzaBrakeTuning,
-      ...patch
-    });
-    scheduleLiveControllerConfigSync();
-  };
-
-  const updateForzaThrottleTuning = (patch: Partial<ForzaThrottleTuningConfiguration>) => {
-    forzaThrottleTuning = normalizeForzaThrottleTuning({
-      ...forzaThrottleTuning,
-      ...patch
-    });
-    scheduleLiveControllerConfigSync();
-  };
-
-  const updateForzaShiftTuning = (patch: Partial<ForzaShiftTuningConfiguration>) => {
-    forzaShiftTuning = normalizeForzaShiftTuning({
-      ...forzaShiftTuning,
-      ...patch
-    });
-    scheduleLiveControllerConfigSync();
-  };
-
-  const updateForzaRevLimiterTuning = (patch: Partial<ForzaRevLimiterTuningConfiguration>) => {
-    forzaRevLimiterTuning = normalizeForzaRevLimiterTuning({
-      ...forzaRevLimiterTuning,
-      ...patch
-    });
-    scheduleLiveControllerConfigSync();
-  };
+  const forzaEffect = (id: string): ForzaEffectConfiguration => forzaEffectById(forzaEffects, id);
+  const updateForzaEffect = forzaEffectState.updateEffect;
+  const setForzaBodyRumbleMode = forzaEffectState.setBodyRumbleMode;
+  const updateForzaAbsTuning = forzaEffectState.updateAbsTuning;
+  const updateForzaBrakeTuning = forzaEffectState.updateBrakeTuning;
+  const updateForzaThrottleTuning = forzaEffectState.updateThrottleTuning;
+  const updateForzaShiftTuning = forzaEffectState.updateShiftTuning;
+  const updateForzaRevLimiterTuning = forzaEffectState.updateRevLimiterTuning;
 
   const toggleAllForzaEffects = () => {
-    setAllForzaEffects(!allForzaEffectsEnabled);
+    forzaEffectState.setAllEffectsEnabled(!allForzaEffectsEnabled);
   };
 
   const telemetryUnitValue = (signal: string) => {
@@ -1232,13 +1170,7 @@
     lightbarBrightness = config.lightbar?.brightness ?? 72;
     leftStickDeadzone = normalizeStickDeadzone(config.sticks?.leftDeadzone ?? 0);
     rightStickDeadzone = normalizeStickDeadzone(config.sticks?.rightDeadzone ?? 0);
-    forzaBodyRumbleMode = normalizeForzaBodyRumbleMode(config.forza?.bodyRumbleMode);
-    forzaEffects = normalizeForzaEffects(config.forza?.effects);
-    forzaBrakeTuning = normalizeForzaBrakeTuning(config.forza?.brake);
-    forzaAbsTuning = normalizeForzaAbsTuning(config.forza?.abs);
-    forzaThrottleTuning = normalizeForzaThrottleTuning(config.forza?.throttle);
-    forzaShiftTuning = normalizeForzaShiftTuning(config.forza?.shift);
-    forzaRevLimiterTuning = normalizeForzaRevLimiterTuning(config.forza?.revLimiter);
+    forzaTuning = forzaTuningFromConfig(config.forza);
   };
   const applyControllerConfig = (config: ControllerConfiguration, updateProfileBaseline = true) => {
     currentControllerConfig = config;
