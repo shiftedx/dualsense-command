@@ -171,19 +171,17 @@
   } from './lib/features/games/gamePresentation';
   import {
     defaultProfileIdForGame,
-    profileImportPayload,
-    sanitizeFileName,
-    uniqueProfileName,
     usesForzaRuntimeProfile
   } from './lib/features/profiles/profileSelection';
+  import {
+    createProfileManagement,
+    type ProfileManagementStateStore
+  } from './app/profileManagement';
   import type { AppView } from './app/navigation';
   import {
-    activateProfile,
     addCustomGame,
     addLocalApp,
     connectAppSnapshotSocket,
-    createProfile,
-    deleteProfile,
     exportProfile,
     getAppSnapshot,
     getSupportBundle,
@@ -192,16 +190,13 @@
     getControllerConfig,
     getEdgeProfiles,
     getSteamLibrary,
-    importProfile,
     removeCustomGame,
-    renameProfile,
     runEffectTest,
     saveAppSettings,
     saveControllerConfig,
     startInputBridgeSession,
     stopInputBridgeSession,
     writeEdgeProfile,
-    saveProfileConfig,
     updateControllerName,
     validateLocalApp
   } from './lib/api';
@@ -283,7 +278,6 @@
   let updateDismissalLoaded = false;
   let onboardingOpen = false;
   let onboardingLoaded = false;
-  let newProfileName = '';
   let renameProfileId = '';
   let renameProfileName = '';
   let profileRenameBusy = false;
@@ -1617,198 +1611,77 @@
     }
   };
 
-  const activateProfileById = async (id: string) => {
-    // Optimistic UI update so rapid clicks feel instant: flip the active flag
-    // locally and align the dropdown BEFORE the server round-trip resolves.
-    if (snapshot) {
-      snapshot = {
-        ...snapshot,
-        profiles: snapshot.profiles.map((profile) => ({ ...profile, active: profile.id === id }))
-      };
-    }
-    selectedOverrideProfileId = id;
-    lastSyncedActiveProfileId = id;
-    try {
-      await activateProfile(id);
-      // After activation, reload the active controller's config so the
-      // Forza effect table reflects the profile's preset values immediately.
-      if (controller?.id) {
-        configLoadedFor = '';
-        await loadControllerConfig(controller.id);
-      }
-      await refresh();
-    } catch (caught) {
-      setApplyMessage(caught instanceof Error ? caught.message : 'Failed to activate profile');
-      // On failure, force a refresh so the UI snaps back to server truth.
-      await refresh();
+  const profileManagementStore: ProfileManagementStateStore = {
+    get: () => ({
+      renameProfileId,
+      renameProfileName,
+      renameBusy: profileRenameBusy,
+      saveBusy: profileSaveBusy,
+      saveAsOpen: saveAsProfileOpen,
+      saveAsName: saveAsProfileName,
+      saveAsBusy: profileSaveAsBusy,
+      fileBusy: profileFileBusy
+    }),
+    set: (next) => {
+      renameProfileId = next.renameProfileId;
+      renameProfileName = next.renameProfileName;
+      profileRenameBusy = next.renameBusy;
+      profileSaveBusy = next.saveBusy;
+      saveAsProfileOpen = next.saveAsOpen;
+      saveAsProfileName = next.saveAsName;
+      profileSaveAsBusy = next.saveAsBusy;
+      profileFileBusy = next.fileBusy;
     }
   };
 
-  const createProfileFromInput = async () => {
-    const name = newProfileName.trim();
-    if (!name) return;
-    try {
-      await createProfile(name, { gameId: selectedTuningScope === 'game' ? profileContextGameId : null });
-      newProfileName = '';
-      await refresh();
-    } catch (caught) {
-      setApplyMessage(caught instanceof Error ? caught.message : 'Failed to create profile');
-    }
-  };
+  const profileManagement = createProfileManagement({
+    store: profileManagementStore,
+    getSnapshot: () => snapshot,
+    setSnapshot: (next) => {
+      snapshot = next;
+    },
+    getProfiles: () => profiles,
+    getActiveProfileId: () => activeProfileId,
+    getSelectedActionProfile: () => selectedActionProfile ?? null,
+    getProfileContextGame: () => profileContextGame ?? null,
+    getProfileContextGameId: () => profileContextGameId,
+    getSelectedTuningScope: () => selectedTuningScope,
+    getSelectedOverrideProfileId: () => selectedOverrideProfileId,
+    setSelectedOverrideProfileId: (id) => {
+      selectedOverrideProfileId = id;
+    },
+    markActiveProfileSynced: (id) => {
+      lastSyncedActiveProfileId = id;
+    },
+    getControllerId: () => controller?.id,
+    resetConfigLoaded: () => {
+      configLoadedFor = '';
+    },
+    loadControllerConfig,
+    buildControllerConfig: () => buildControllerConfig(),
+    profileConfigSignature: (config) => profileConfigSignature(config),
+    setProfileSaveBaseline: (signature) => {
+      profileSaveBaselineSignature = signature;
+    },
+    saveControllerConfigForProfileTargets,
+    setProfileOverrideForTargets: (profileId, gameId) => setProfileOverrideForTargets(profileId, gameId),
+    refresh,
+    notify: setApplyMessage
+  });
 
-  const beginRenameSelectedProfile = () => {
-    if (!selectedActionProfile || selectedActionProfile.builtIn) return;
-    saveAsProfileOpen = false;
-    saveAsProfileName = '';
-    renameProfileId = selectedActionProfile.id;
-    renameProfileName = selectedActionProfile.name;
-  };
-
-  const cancelRenameProfile = () => {
-    renameProfileId = '';
-    renameProfileName = '';
-  };
-
-  const submitRenameProfile = async () => {
-    const profile = profiles.find((item) => item.id === renameProfileId);
-    const name = renameProfileName.trim();
-    if (!profile || profile.builtIn) {
-      cancelRenameProfile();
-      return;
-    }
-    if (!name) {
-      setApplyMessage('Profile name cannot be empty', 'error');
-      return;
-    }
-    if (name === profile.name) {
-      cancelRenameProfile();
-      return;
-    }
-    if (profiles.some((item) => item.id !== profile.id && item.name.trim().toLowerCase() === name.toLowerCase())) {
-      setApplyMessage('A profile with that name already exists', 'error');
-      return;
-    }
-
-    profileRenameBusy = true;
-    try {
-      const renamed = await renameProfile(profile.id, name);
-      if (snapshot) {
-        snapshot = {
-          ...snapshot,
-          profiles: snapshot.profiles.map((item) => (item.id === renamed.id ? { ...item, name: renamed.name } : item))
-        };
-      }
-      cancelRenameProfile();
-      await refresh();
-      setApplyMessage(`Renamed profile to ${renamed.name}`, 'success');
-    } catch (caught) {
-      setApplyMessage(caught instanceof Error ? caught.message : 'Unable to rename profile', 'error');
-      await refresh();
-    } finally {
-      profileRenameBusy = false;
-    }
-  };
-
-  const handleRenameProfileKeydown = (event: KeyboardEvent) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      void submitRenameProfile();
-    }
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      cancelRenameProfile();
-    }
-  };
-
-  const beginSaveAsProfile = () => {
-    if (!selectedActionProfile) {
-      setApplyMessage('No profile selected', 'error');
-      return;
-    }
-    cancelRenameProfile();
-    saveAsProfileName = uniqueProfileName(`${selectedActionProfile.name} copy`, profiles);
-    saveAsProfileOpen = true;
-  };
-
-  const cancelSaveAsProfile = () => {
-    saveAsProfileOpen = false;
-    saveAsProfileName = '';
-  };
-
-  const submitSaveAsProfile = async () => {
-    const name = saveAsProfileName.trim();
-    if (!selectedActionProfile || profileSaveAsBusy) {
-      if (!selectedActionProfile) setApplyMessage('No profile selected', 'error');
-      return;
-    }
-    if (!name) {
-      setApplyMessage('Profile name cannot be empty', 'error');
-      return;
-    }
-    if (profiles.some((profile) => profile.name.trim().toLowerCase() === name.toLowerCase())) {
-      setApplyMessage('A profile with that name already exists', 'error');
-      return;
-    }
-
-    profileSaveAsBusy = true;
-    try {
-      const config = buildControllerConfig();
-      const created = await createProfile(name, { gameId: selectedTuningScope === 'game' ? profileContextGameId : null });
-      const response = await saveProfileConfig(created.id, config);
-      await saveControllerConfigForProfileTargets(config);
-      const resolution = await setProfileOverrideForTargets(created.id, profileContextGameId);
-      if (snapshot && resolution) snapshot = { ...snapshot, profileResolution: resolution };
-      profileSaveBaselineSignature = profileConfigSignature(config);
-      selectedOverrideProfileId = created.id;
-      cancelSaveAsProfile();
-      await refresh();
-      selectedOverrideProfileId = created.id;
-      setApplyMessage(response.message || `Saved ${created.name}`, 'success');
-    } catch (caught) {
-      setApplyMessage(caught instanceof Error ? caught.message : 'Unable to save profile copy', 'error');
-      await refresh();
-    } finally {
-      profileSaveAsBusy = false;
-    }
-  };
-
-  const handleSaveAsProfileKeydown = (event: KeyboardEvent) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      void submitSaveAsProfile();
-    }
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      cancelSaveAsProfile();
-    }
-  };
-
-  const deleteProfileById = async (id: string, name: string) => {
-    const fallbackProfileId =
-      profiles.find((profile) => profile.id === 'global')?.id ??
-      profiles.find((profile) => profile.id !== id && profile.scope === 'Built-in')?.id ??
-      profiles.find((profile) => profile.id !== id)?.id ??
-      '';
-    if (renameProfileId === id) cancelRenameProfile();
-    profileFileBusy = true;
-    try {
-      if (snapshot) {
-        snapshot = {
-          ...snapshot,
-          profiles: snapshot.profiles.filter((profile) => profile.id !== id)
-        };
-      }
-      const response = await deleteProfile(id);
-      await refresh();
-      if (selectedOverrideProfileId === id) selectedOverrideProfileId = fallbackProfileId;
-      setApplyMessage(response?.message ?? `Deleted ${name}`);
-    } catch (caught) {
-      setApplyMessage(caught instanceof Error ? caught.message : 'Failed to delete profile');
-      await refresh();
-    } finally {
-      profileFileBusy = false;
-    }
-  };
+  const activateProfileById = profileManagement.activateProfileById;
+  const beginRenameSelectedProfile = profileManagement.beginRenameSelectedProfile;
+  const cancelRenameProfile = profileManagement.cancelRenameProfile;
+  const submitRenameProfile = profileManagement.submitRenameProfile;
+  const handleRenameProfileKeydown = profileManagement.handleRenameProfileKeydown;
+  const beginSaveAsProfile = profileManagement.beginSaveAsProfile;
+  const cancelSaveAsProfile = profileManagement.cancelSaveAsProfile;
+  const submitSaveAsProfile = profileManagement.submitSaveAsProfile;
+  const handleSaveAsProfileKeydown = profileManagement.handleSaveAsProfileKeydown;
+  const saveActiveProfile = profileManagement.saveActiveProfile;
+  const deleteProfileById = profileManagement.deleteProfileById;
+  const exportSelectedProfile = profileManagement.exportSelectedProfile;
+  const handleProfileImport = profileManagement.handleProfileImport;
 
   const telemetryRateStatusText = (item: AppSnapshot['adapters'][number] | undefined) => {
     if (!item) return 'no active stream';
@@ -1817,52 +1690,6 @@
     if (item.state === 'ready') return `${item.name} / listening`;
     if (item.state === 'faulted') return `${item.name} / blocked`;
     return item.name;
-  };
-
-  const exportSelectedProfile = async () => {
-    const profileId = selectedOverrideProfileId || activeProfileId;
-    if (!profileId || profileFileBusy) {
-      if (!profileId) setApplyMessage('Select a profile to export');
-      return;
-    }
-    profileFileBusy = true;
-    try {
-      const exported = await exportProfile(profileId);
-      const body = JSON.stringify(exported, null, 2);
-      const url = URL.createObjectURL(new Blob([body], { type: 'application/json' }));
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${sanitizeFileName(exported.name)}.dscc-profile.json`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-      setApplyMessage(`Exported ${exported.name}`);
-    } catch (caught) {
-      setApplyMessage(caught instanceof Error ? caught.message : 'Unable to export profile');
-    } finally {
-      profileFileBusy = false;
-    }
-  };
-
-  const handleProfileImport = async (event: Event) => {
-    const input = event.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = '';
-    if (!file || profileFileBusy) return;
-
-    profileFileBusy = true;
-    try {
-      const payload = profileImportPayload(JSON.parse(await file.text()), profiles);
-      const imported = await importProfile(payload);
-      selectedOverrideProfileId = imported.id;
-      await refresh();
-      setApplyMessage(`Imported ${imported.name}`);
-    } catch (caught) {
-      setApplyMessage(caught instanceof Error ? caught.message : 'Unable to import profile');
-    } finally {
-      profileFileBusy = false;
-    }
   };
 
   function stopTriggerInputPolling() {
@@ -2031,48 +1858,6 @@
       setApplyMessage(`${vibrationMode} body haptics previewed`);
     } catch (caught) {
       setApplyMessage(caught instanceof Error ? caught.message : 'Body haptics preview failed');
-    }
-  };
-
-  const saveActiveProfile = async () => {
-    if (!selectedActionProfile || profileSaveBusy) {
-      if (!selectedActionProfile) setApplyMessage('No profile selected');
-      return;
-    }
-
-    profileSaveBusy = true;
-    try {
-      const sourceProfileName = selectedActionProfile.name;
-      let targetProfile = selectedActionProfile;
-      let preservingStockProfile = false;
-      if (targetProfile?.builtIn) {
-        const name = uniqueProfileName(
-          profileContextGame ? `${profileContextGame.name} ${targetProfile.name} custom` : `${targetProfile.name} custom`,
-          profiles
-        );
-        targetProfile = await createProfile(name, { gameId: profileContextGameId });
-        preservingStockProfile = true;
-      }
-      if (!targetProfile) throw new Error('No profile selected');
-
-      const config = buildControllerConfig();
-      await saveControllerConfigForProfileTargets(config);
-      const response = await saveProfileConfig(targetProfile.id, config);
-      profileSaveBaselineSignature = profileConfigSignature(config);
-      const resolution = await setProfileOverrideForTargets(targetProfile.id, profileContextGameId);
-      if (snapshot && resolution) snapshot = { ...snapshot, profileResolution: resolution };
-      selectedOverrideProfileId = targetProfile.id;
-      await refresh();
-      selectedOverrideProfileId = targetProfile.id;
-      setApplyMessage(
-        preservingStockProfile
-          ? `Saved ${targetProfile.name}; stock ${sourceProfileName} preserved`
-          : response.message || `Saved ${targetProfile.name}`
-      );
-    } catch (caught) {
-      setApplyMessage(caught instanceof Error ? caught.message : 'Unable to save profile');
-    } finally {
-      profileSaveBusy = false;
     }
   };
 
