@@ -128,9 +128,8 @@ html {
    bind address, glyph override, system readout). */
 .app-toolbar {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 10px 16px;
+  flex-direction: column;
+  align-items: stretch;
   padding: 10px 12px;
   margin-bottom: 16px;
   background: var(--surface);
@@ -138,10 +137,45 @@ html {
   border-radius: var(--radius-m);
 }
 
+/* The toolbar is ambient context, not a destination: at narrow widths it
+   collapses to one quiet row so Status leads the screen. */
+.app-toolbar-disclosure {
+  display: none;
+  width: 100%;
+  padding: 4px 2px;
+  text-align: left;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.app-toolbar-disclosure:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 1px;
+}
+
+.app-toolbar-items {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 16px;
+  min-width: 0;
+  flex: 1;
+}
+
+@media (max-width: 759px) {
+  .app-toolbar { padding: 6px 12px; }
+  .app-toolbar-disclosure { display: block; }
+  .app-toolbar:not(.open) .app-toolbar-items { display: none; }
+  .app-toolbar.open .app-toolbar-items { padding-top: 6px; }
+}
+
 /* Each field is exactly two rows — label, then control — so every toolbar
-   item shares one label line and one control line. The optional caption
-   (e.g. the bind address) sits inline beside the control instead of below
-   it, keeping the row's baseline tidy. */
+   item shares one label line and one control line. */
 .app-toolbar-field {
   display: grid;
   grid-template-columns: auto minmax(0, auto);
@@ -171,7 +205,6 @@ html {
   border-radius: var(--radius-s);
 }
 
-.app-toolbar-field small,
 .app-toolbar-readout small {
   color: var(--ink-muted);
   font-size: 0.72rem;

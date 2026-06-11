@@ -160,7 +160,6 @@
 .dm-section-head h2 {
   margin: 5px 0 0;
   color: #FFFFFF;
-  font-family: "Space Grotesk", "Inter Tight", Inter, sans-serif;
   font-size: clamp(20px, 2.1vw, 28px);
   font-weight: 700;
   line-height: 1;

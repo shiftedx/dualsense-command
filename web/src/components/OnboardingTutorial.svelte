@@ -53,7 +53,7 @@
     {
       eyebrow: 'Get help',
       title: 'Support bundles stay sanitized',
-      body: 'The Support panel copies a diagnostic bundle that leaves out raw HID paths, serials, Bluetooth addresses, and private Steam account paths.',
+      body: 'The Support panel copies a diagnostic bundle that leaves out controller hardware identifiers, serial numbers, Bluetooth addresses, and private Steam account paths.',
       actionLabel: 'Stay here',
       icon: LifeBuoy
     }
