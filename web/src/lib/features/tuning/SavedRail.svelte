@@ -11,12 +11,12 @@
   "3s · nothing saved"; Save/Discard say in plain words what they touch.
 -->
 <script lang="ts">
-  import type { SavedDiffRow } from './savedDiff';
+  import { unsavedChangeCount, type SavedDiffRow } from './savedDiff';
 
   let {
     profileName = 'profile',
     rows = [],
-    dirtyCount = 0,
+    dirty = false,
     previewActive = false,
     previewBusy = false,
     previewDisabled = false,
@@ -28,7 +28,12 @@
   }: {
     profileName?: string;
     rows?: SavedDiffRow[];
-    dirtyCount?: number;
+    /**
+     * Signature-based dirtiness from App (profileConfigDirty). It covers more
+     * fields than the rail rows do (input mode, buttons, input bridge,
+     * profile assignments), so it can be true while every row is clean.
+     */
+    dirty?: boolean;
     previewActive?: boolean;
     previewBusy?: boolean;
     previewDisabled?: boolean;
@@ -41,12 +46,19 @@
 
   let barExpanded = $state(false);
 
+  const dirtyCount = $derived(unsavedChangeCount(rows));
+  const anyDirty = $derived(dirty || dirtyCount > 0);
+  // Dirty by signature only: the edits live outside the rail's rows.
+  const outsideOnly = $derived(dirty && dirtyCount === 0);
+
   // Collapse the expanded phone list once everything is saved or discarded.
   $effect(() => {
-    if (dirtyCount === 0) barExpanded = false;
+    if (!anyDirty) barExpanded = false;
   });
 
-  const changeSummary = $derived(`${dirtyCount} unsaved change${dirtyCount === 1 ? '' : 's'}`);
+  const changeSummary = $derived(
+    outsideOnly ? 'Unsaved changes' : `${dirtyCount} unsaved change${dirtyCount === 1 ? '' : 's'}`
+  );
 </script>
 
 {#snippet diffRows()}
@@ -54,15 +66,23 @@
     <div class="saved-row" class:dirty={item.dirty}>
       <span class="saved-row-label">{item.label}</span>
       <span class="saved-row-value">
-        {#if item.dirty}
+        {#if item.dirty && item.savedValue !== item.currentValue}
           <s class="saved-row-was">{item.savedValue}</s>
           <span class="saved-row-now">→ {item.currentValue}</span>
+        {:else if item.dirty}
+          <!-- Group summaries ("2 of 5 edited") have no single saved value to strike. -->
+          <span class="saved-row-now">{item.currentValue}</span>
         {:else}
           <span class="saved-row-saved">{item.savedValue}</span>
         {/if}
       </span>
     </div>
   {/each}
+  {#if outsideOnly}
+    <div class="saved-row">
+      <span class="saved-row-label saved-row-saved">Changes outside this panel are unsaved.</span>
+    </div>
+  {/if}
 {/snippet}
 
 {#snippet actionButtons()}
@@ -76,7 +96,7 @@
   <button
     class="saved-discard-button"
     type="button"
-    disabled={dirtyCount === 0}
+    disabled={!anyDirty}
     title={`Throws away the tweaks and puts back what ${profileName} has saved.`}
     onclick={onDiscard}
   >Discard</button>
@@ -105,7 +125,7 @@
   </div>
 </aside>
 
-{#if dirtyCount > 0}
+{#if anyDirty}
   <div class="saved-mobile-bar" role="region" aria-label="Unsaved changes">
     {#if barExpanded}
       <div class="saved-mobile-rows">

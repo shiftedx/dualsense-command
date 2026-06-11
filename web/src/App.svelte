@@ -89,6 +89,10 @@
   import { savedDiffRows, unsavedChangeCount } from './lib/features/tuning/savedDiff';
   import {
     clampUnit,
+    DEFAULT_BODY_FEEL,
+    DEFAULT_LIGHTBAR_BRIGHTNESS,
+    DEFAULT_LIGHTBAR_COLOR,
+    DEFAULT_REDLINE_COLOR,
     defaultTriggerCurve,
     defaultTriggerCurvePoints,
     type ForzaEffectMeta,
@@ -321,7 +325,7 @@
   let triggerEffect = 'Adaptive resistance';
   let triggerIntensity = 'Strong (Standard)';
   let vibrationIntensity = 'Medium';
-  let vibrationMode = 'Balanced';
+  let vibrationMode: string = DEFAULT_BODY_FEEL;
   let forzaTuning: ForzaTuningValues = defaultForzaTuningValues();
   $: forzaBodyRumbleMode = forzaTuning.bodyRumbleMode;
   $: forzaEffects = forzaTuning.effects;
@@ -331,9 +335,9 @@
   $: forzaShiftTuning = forzaTuning.shift;
   $: forzaRevLimiterTuning = forzaTuning.revLimiter;
   let lightbarEnabled = true;
-  let lightbarColor = '#4cc9f0';
-  let rpmColor = '#ff3a2e';
-  let lightbarBrightness = 72;
+  let lightbarColor: string = DEFAULT_LIGHTBAR_COLOR;
+  let rpmColor: string = DEFAULT_REDLINE_COLOR;
+  let lightbarBrightness: number = DEFAULT_LIGHTBAR_BRIGHTNESS;
   let leftStickDeadzone = 0;
   let rightStickDeadzone = 0;
 
@@ -1267,11 +1271,11 @@
     triggerEffect = config.trigger.effect;
     triggerIntensity = config.trigger.intensity;
     vibrationIntensity = config.trigger.vibration;
-    vibrationMode = config.trigger.vibrationMode ?? 'Balanced';
+    vibrationMode = config.trigger.vibrationMode ?? DEFAULT_BODY_FEEL;
     lightbarEnabled = config.lightbar?.enabled ?? true;
-    lightbarColor = config.lightbar?.color ?? '#4cc9f0';
-    rpmColor = config.lightbar?.rpmColor ?? '#ff3a2e';
-    lightbarBrightness = config.lightbar?.brightness ?? 72;
+    lightbarColor = config.lightbar?.color ?? DEFAULT_LIGHTBAR_COLOR;
+    rpmColor = config.lightbar?.rpmColor ?? DEFAULT_REDLINE_COLOR;
+    lightbarBrightness = config.lightbar?.brightness ?? DEFAULT_LIGHTBAR_BRIGHTNESS;
     leftStickDeadzone = normalizeStickDeadzone(config.sticks?.leftDeadzone ?? 0);
     rightStickDeadzone = normalizeStickDeadzone(config.sticks?.rightDeadzone ?? 0);
     forzaTuning = forzaTuningFromConfig(config.forza);
@@ -1423,7 +1427,7 @@
     triggerEffect = trigger.effect;
     triggerIntensity = trigger.intensity;
     vibrationIntensity = trigger.vibration;
-    vibrationMode = trigger.vibrationMode ?? 'Balanced';
+    vibrationMode = trigger.vibrationMode ?? DEFAULT_BODY_FEEL;
   };
 
   const resetTriggerCurvesToProfileDefaults = () => {
@@ -2435,7 +2439,7 @@
           <SavedRail
             profileName={savedRailProfileName}
             rows={savedRailRows}
-            dirtyCount={unsavedCount}
+            dirty={profileConfigDirty}
             previewActive={baseFeelTestActive}
             previewBusy={baseFeelTestBusy}
             previewDisabled={!snapshot}

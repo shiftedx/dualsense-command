@@ -1,4 +1,4 @@
-import type { ForzaEffectRoute, TriggerCurvePoint } from '../../types';
+import type { ForzaBodyRumbleMode, ForzaEffectRoute, TriggerCurvePoint } from '../../types';
 
 // Semantic tuning columns (Task 6): effects group by what is being tuned —
 // brake, throttle, road feel, or lights — never by control type.
@@ -30,6 +30,15 @@ export const LIGHTBAR_COLOR_PRESETS = [
   '#4ade80',
   '#facc15'
 ];
+
+// Shared profile defaults: the fallback values every config reader/writer
+// (profileDraft signature, saved rail diff, App's applyEditableConfig) must
+// agree on when a saved profile omits a field.
+export const DEFAULT_LIGHTBAR_COLOR = '#4cc9f0';
+export const DEFAULT_REDLINE_COLOR = '#ff3a2e';
+export const DEFAULT_LIGHTBAR_BRIGHTNESS = 72;
+export const DEFAULT_BODY_FEEL = 'Balanced';
+export const DEFAULT_BODY_RUMBLE_MODE: ForzaBodyRumbleMode = 'native_passthrough';
 
 export const TRIGGER_CURVE_POINT_MIN = 4;
 export const TRIGGER_CURVE_POINT_MAX = 8;
