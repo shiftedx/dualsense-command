@@ -70,6 +70,12 @@
   export let curveHover: CurveHover = null;
   export let curveDragPoint: CurveDragPoint = null;
 
+  // Saved-curve ghosts (Task 7): when the working draft drifts from the saved
+  // profile, the saved curve renders as a dashed ghost behind the live curve.
+  // null means clean (no ghost).
+  export let l2SavedCurvePath: string | null = null;
+  export let r2SavedCurvePath: string | null = null;
+
   export let l2LivePress = 0;
   export let r2LivePress = 0;
   export let l2From = 0;
@@ -177,6 +183,9 @@
           <rect class="curve-range-fill" x={l2CurveShape.rangeStart} y="96" width={l2CurveShape.rangeWidth} height="2.5" rx="1.25" />
           <line class="curve-range-edge" x1={l2CurveShape.rangeStart} y1="0" x2={l2CurveShape.rangeStart} y2="100" />
           <line class="curve-range-edge" x1={l2CurveShape.rangeEnd} y1="0" x2={l2CurveShape.rangeEnd} y2="100" />
+          {#if l2SavedCurvePath}
+            <path class="curve-saved-ghost" d={l2SavedCurvePath} />
+          {/if}
           <path class="curve-force" d={l2CurveShape.path} />
           {#if curveHover?.side === 'l2'}
             <line class="curve-crosshair" x1={curveHover.left.toFixed(2)} y1="0" x2={curveHover.left.toFixed(2)} y2="100" />
@@ -270,6 +279,9 @@
           <rect class="curve-range-fill" x={r2CurveShape.rangeStart} y="96" width={r2CurveShape.rangeWidth} height="2.5" rx="1.25" />
           <line class="curve-range-edge" x1={r2CurveShape.rangeStart} y1="0" x2={r2CurveShape.rangeStart} y2="100" />
           <line class="curve-range-edge" x1={r2CurveShape.rangeEnd} y1="0" x2={r2CurveShape.rangeEnd} y2="100" />
+          {#if r2SavedCurvePath}
+            <path class="curve-saved-ghost" d={r2SavedCurvePath} />
+          {/if}
           <path class="curve-force" d={r2CurveShape.path} />
           {#if curveHover?.side === 'r2'}
             <line class="curve-crosshair" x1={curveHover.left.toFixed(2)} y1="0" x2={curveHover.left.toFixed(2)} y2="100" />

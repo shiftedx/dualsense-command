@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import InitialBadge from '../../../components/InitialBadge.svelte';
+  import ProfileMenu from './ProfileMenu.svelte';
   import { gameAccentColor, gameArtwork } from '../games/gamePresentation';
   import { controllerModelText } from '../../controllerDisplay';
   import {
@@ -25,6 +26,7 @@
     canRenameSelectedProfile = false,
     canDeleteSelectedProfile = false,
     profileConfigDirty = false,
+    unsavedChangeCount = 0,
     profileSaveBusy = false,
     profileFileBusy = false,
     profileSaveAsBusy = false,
@@ -64,6 +66,7 @@
     canRenameSelectedProfile?: boolean;
     canDeleteSelectedProfile?: boolean;
     profileConfigDirty?: boolean;
+    unsavedChangeCount?: number;
     profileSaveBusy?: boolean;
     profileFileBusy?: boolean;
     profileSaveAsBusy?: boolean;
@@ -117,39 +120,47 @@
       ? `${controller.battery}%`
       : ''
   );
+  const unsavedNote = $derived(
+    unsavedChangeCount > 0
+      ? `· ${unsavedChangeCount} unsaved change${unsavedChangeCount === 1 ? '' : 's'}`
+      : profileConfigDirty
+        ? '· unsaved changes'
+        : ''
+  );
 
-  // --- menu state -----------------------------------------------------------
-  type MenuKind = 'game' | 'profile';
-  let openMenu = $state<MenuKind | null>(null);
+  // --- game menu state (the profile menu lives in ProfileMenu.svelte) -------
+  let gameMenuOpen = $state(false);
+  let profileMenuOpen = $state(false);
   let menuLeft = $state(0);
   let menuTop = $state(0);
   let gameTrigger: HTMLButtonElement | undefined = $state();
   let profileTrigger: HTMLButtonElement | undefined = $state();
   let menuEl: HTMLDivElement | undefined = $state();
-  let importInput: HTMLInputElement | undefined = $state();
 
-  const triggerFor = (kind: MenuKind) => (kind === 'game' ? gameTrigger : profileTrigger);
-
-  const closeMenu = (returnFocus = true) => {
-    if (!openMenu) return;
-    const trigger = triggerFor(openMenu);
-    openMenu = null;
-    if (returnFocus) trigger?.focus();
+  const closeGameMenu = (returnFocus = true) => {
+    if (!gameMenuOpen) return;
+    gameMenuOpen = false;
+    if (returnFocus) gameTrigger?.focus();
   };
 
-  const openMenuFor = async (kind: MenuKind) => {
-    if (openMenu === kind) {
-      closeMenu();
+  const toggleGameMenu = async () => {
+    profileMenuOpen = false;
+    if (gameMenuOpen) {
+      closeGameMenu();
       return;
     }
-    const trigger = triggerFor(kind);
-    if (!trigger) return;
-    const rect = trigger.getBoundingClientRect();
+    if (!gameTrigger) return;
+    const rect = gameTrigger.getBoundingClientRect();
     menuLeft = Math.max(8, Math.min(rect.left, window.innerWidth - 268));
     menuTop = Math.min(rect.bottom + 6, window.innerHeight - 60);
-    openMenu = kind;
+    gameMenuOpen = true;
     await tick();
     focusMenuItem(0);
+  };
+
+  const toggleProfileMenu = () => {
+    closeGameMenu(false);
+    profileMenuOpen = !profileMenuOpen;
   };
 
   const menuItems = (): HTMLButtonElement[] =>
@@ -165,12 +176,12 @@
   const handleMenuKeydown = (event: KeyboardEvent) => {
     if (event.key === 'Escape') {
       event.preventDefault();
-      closeMenu();
+      closeGameMenu();
       return;
     }
     if (event.key === 'Tab') {
       // Close so aria-expanded stays honest, but let Tab move focus naturally.
-      closeMenu(false);
+      closeGameMenu(false);
       return;
     }
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
@@ -181,21 +192,21 @@
   };
 
   const handleWindowPointerDown = (event: PointerEvent) => {
-    if (!openMenu) return;
+    if (!gameMenuOpen) return;
     const target = event.target as Node;
     if (menuEl?.contains(target)) return;
-    if (triggerFor(openMenu)?.contains(target)) return;
-    closeMenu(false);
+    if (gameTrigger?.contains(target)) return;
+    closeGameMenu(false);
   };
 
-  // The menus are position: fixed and placed once at open; any scroll or
-  // resize would leave them floating away from the trigger, so just close.
+  // The menu is position: fixed and placed once at open; any scroll or
+  // resize would leave it floating away from the trigger, so just close.
   $effect(() => {
-    if (!openMenu) return;
+    if (!gameMenuOpen) return;
     const closeOnViewportChange = (event: Event) => {
       // Ignore scrolls that originate inside the menu itself.
       if (event.target instanceof Node && menuEl?.contains(event.target)) return;
-      closeMenu(false);
+      closeGameMenu(false);
     };
     window.addEventListener('scroll', closeOnViewportChange, true);
     window.addEventListener('resize', closeOnViewportChange);
@@ -207,30 +218,10 @@
 
   const pickGameEntry = (entry: GameSelectEntry) => {
     if (entry.kind === 'setup-guide') return;
-    closeMenu();
+    closeGameMenu();
     if (entry.kind === 'everyday') void onSelectGlobal();
     else if (entry.kind === 'game') void onSelectGame(entry.game);
     else if (entry.kind === 'add-game') void onOpenAddGame();
-  };
-
-  const pickProfile = (profileId: string) => {
-    closeMenu();
-    if (profileId !== selectedProfileId) void onSelectProfile(profileId);
-  };
-
-  const runProfileAction = (action: () => void | Promise<void>) => {
-    closeMenu();
-    void action();
-  };
-
-  const requestImport = () => {
-    closeMenu();
-    if (!profileFileBusy) importInput?.click();
-  };
-
-  const deleteSelectedProfile = () => {
-    const profile = selectedActionProfile;
-    if (profile) runProfileAction(() => onDeleteProfile(profile));
   };
 </script>
 
@@ -262,8 +253,8 @@
             type="button"
             bind:this={gameTrigger}
             aria-haspopup="menu"
-            aria-expanded={openMenu === 'game'}
-            onclick={() => void openMenuFor('game')}
+            aria-expanded={gameMenuOpen}
+            onclick={() => void toggleGameMenu()}
           >
             <strong>{gameModel.title}</strong>
             <span class="tuning-caret" aria-hidden="true">▾</span>
@@ -287,16 +278,16 @@
             type="button"
             bind:this={profileTrigger}
             aria-haspopup="menu"
-            aria-expanded={openMenu === 'profile'}
+            aria-expanded={profileMenuOpen}
             disabled={!profiles.length}
-            onclick={() => void openMenuFor('profile')}
+            onclick={toggleProfileMenu}
           >
             <span class="tuning-profile-label">Profile:</span>
             <strong>{profileName}</strong>
             <span class="tuning-caret" aria-hidden="true">▾</span>
           </button>
-          {#if profileConfigDirty}
-            <span class="tuning-unsaved-note">· unsaved changes</span>
+          {#if unsavedNote}
+            <span class="tuning-unsaved-note">{unsavedNote}</span>
           {/if}
         </div>
       </div>
@@ -313,51 +304,41 @@
   </div>
 </header>
 
-{#if saveAsOpen || renameProfileId}
-  <div class="tuning-profile-editor">
-    {#if saveAsOpen}
-      <label>
-        <span>New profile name</span>
-        <input
-          bind:value={saveAsName}
-          disabled={profileSaveAsBusy}
-          maxlength="80"
-          spellcheck="false"
-          aria-label="New profile name"
-          onkeydown={onSaveAsKeydown}
-        />
-      </label>
-      <button class="dm-mini-button" type="button" disabled={profileSaveAsBusy} onclick={onCancelSaveAs}>Cancel</button>
-      <button
-        class="dm-mini-button primary"
-        type="button"
-        disabled={profileSaveAsBusy || !saveAsName.trim()}
-        onclick={() => void onSubmitSaveAs()}
-      >{profileSaveAsBusy ? 'Saving' : 'Create'}</button>
-    {:else}
-      <label>
-        <span>Profile name</span>
-        <input
-          bind:value={renameName}
-          disabled={profileRenameBusy}
-          maxlength="80"
-          spellcheck="false"
-          aria-label="Profile name"
-          onkeydown={onRenameKeydown}
-        />
-      </label>
-      <button class="dm-mini-button" type="button" disabled={profileRenameBusy} onclick={onCancelRename}>Cancel</button>
-      <button
-        class="dm-mini-button primary"
-        type="button"
-        disabled={profileRenameBusy || !renameName.trim()}
-        onclick={() => void onSubmitRename()}
-      >{profileRenameBusy ? 'Saving' : 'Apply'}</button>
-    {/if}
-  </div>
-{/if}
+<ProfileMenu
+  bind:open={profileMenuOpen}
+  anchor={profileTrigger}
+  {profiles}
+  {selectedProfileId}
+  {activeProfileId}
+  {selectedActionProfile}
+  {canRenameSelectedProfile}
+  {canDeleteSelectedProfile}
+  {profileConfigDirty}
+  {profileSaveBusy}
+  {profileFileBusy}
+  {profileSaveAsBusy}
+  {profileRenameBusy}
+  {saveAsOpen}
+  bind:saveAsName
+  {renameProfileId}
+  bind:renameName
+  {onSelectProfile}
+  {onSaveProfile}
+  {onBeginSaveAs}
+  {onCancelSaveAs}
+  {onSubmitSaveAs}
+  {onSaveAsKeydown}
+  {onBeginRename}
+  {onCancelRename}
+  {onSubmitRename}
+  {onRenameKeydown}
+  {onDeleteProfile}
+  {onRestoreDefaults}
+  {onImportFile}
+  {onExportProfile}
+/>
 
-{#if openMenu === 'game'}
+{#if gameMenuOpen}
   <div
     class="tuning-menu"
     role="menu"
@@ -416,91 +397,3 @@
     {/each}
   </div>
 {/if}
-
-{#if openMenu === 'profile'}
-  <div
-    class="tuning-menu"
-    role="menu"
-    tabindex="-1"
-    aria-label="Profile actions"
-    bind:this={menuEl}
-    style={`left:${menuLeft}px;top:${menuTop}px;`}
-    onkeydown={handleMenuKeydown}
-  >
-    <div class="tuning-menu-label">Profiles</div>
-    {#each profiles as profile (profile.id)}
-      <button
-        class="tuning-menu-item"
-        class:current={profile.id === selectedProfileId}
-        type="button"
-        role="menuitemradio"
-        aria-checked={profile.id === selectedProfileId}
-        onclick={() => pickProfile(profile.id)}
-      >
-        <span class="tuning-menu-item-text">{profile.name}</span>
-        {#if profile.id === activeProfileId}<span class="tuning-menu-item-meta">live</span>{/if}
-      </button>
-    {/each}
-    <div class="tuning-menu-divider" role="separator"></div>
-    <button
-      class="tuning-menu-item"
-      type="button"
-      role="menuitem"
-      disabled={!selectedActionProfile || profileSaveBusy || !profileConfigDirty}
-      onclick={() => runProfileAction(onSaveProfile)}
-    >
-      <span class="tuning-menu-item-text">{profileSaveBusy ? 'Saving…' : 'Save changes'}</span>
-    </button>
-    <button
-      class="tuning-menu-item"
-      type="button"
-      role="menuitem"
-      disabled={!selectedActionProfile || profileSaveAsBusy}
-      onclick={() => runProfileAction(onBeginSaveAs)}
-    >
-      <span class="tuning-menu-item-text">Duplicate as new profile…</span>
-    </button>
-    <button
-      class="tuning-menu-item"
-      type="button"
-      role="menuitem"
-      disabled={!canRenameSelectedProfile || profileRenameBusy}
-      onclick={() => runProfileAction(onBeginRename)}
-    >
-      <span class="tuning-menu-item-text">Rename…</span>
-    </button>
-    <button
-      class="tuning-menu-item"
-      type="button"
-      role="menuitem"
-      disabled={!canDeleteSelectedProfile || profileFileBusy}
-      onclick={deleteSelectedProfile}
-    >
-      <span class="tuning-menu-item-text">Delete</span>
-    </button>
-    <button class="tuning-menu-item" type="button" role="menuitem" onclick={() => runProfileAction(onRestoreDefaults)}>
-      <span class="tuning-menu-item-text">Reset to profile defaults</span>
-    </button>
-    <div class="tuning-menu-divider" role="separator"></div>
-    <button class="tuning-menu-item" type="button" role="menuitem" disabled={profileFileBusy} onclick={requestImport}>
-      <span class="tuning-menu-item-text">Import profile file…</span>
-    </button>
-    <button
-      class="tuning-menu-item"
-      type="button"
-      role="menuitem"
-      disabled={!selectedProfileId || profileFileBusy}
-      onclick={() => runProfileAction(onExportProfile)}
-    >
-      <span class="tuning-menu-item-text">Export profile file</span>
-    </button>
-  </div>
-{/if}
-
-<input
-  bind:this={importInput}
-  class="ops-hidden-file"
-  type="file"
-  accept="application/json,.json,.dscc-profile"
-  onchange={(event) => void onImportFile(event)}
-/>
