@@ -164,7 +164,7 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
     },
     {
       id: 'abs_slip_pulse',
-      label: 'ABS / front slip',
+      label: 'ABS pulse',
       signal: 'wheel.slip.front_max',
       group: 'Trigger',
       defaultIntensity: 100,
@@ -191,7 +191,7 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
     },
     {
       id: 'gear_shift_thump',
-      label: 'Paddle shift thump',
+      label: 'Gear-shift kick',
       signal: 'drivetrain.shift_pulse',
       group: 'Cue',
       defaultIntensity: FORZA_SHIFT_THUMP_DEFAULT_INTENSITY,
@@ -200,7 +200,7 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
     },
     {
       id: 'rev_limiter_buzz',
-      label: 'Rev limiter buzz',
+      label: 'Rev-limiter buzz',
       signal: 'vehicle.rpm_ratio',
       group: 'Cue',
       defaultIntensity: 120,
@@ -218,7 +218,7 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
     },
     {
       id: 'rumble_strip',
-      label: 'Rumble strips',
+      label: 'Surface detail',
       signal: 'surface.rumble_strip.max',
       group: 'Body',
       defaultIntensity: 72,
@@ -245,7 +245,7 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
     },
     {
       id: 'suspension_impact',
-      label: 'Suspension / impact',
+      label: 'Suspension impact',
       signal: 'suspension.impact_pulse',
       group: 'Body',
       defaultIntensity: 115,
@@ -262,3 +262,22 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
       help: 'Gradually warms the lightbar toward the redline color before the limiter, then blinks the lightbar and player LEDs at the rev-limiter buzz threshold.'
     }
   ];
+
+// Semantic tuning columns (Task 6): effects group by what is being tuned —
+// brake, throttle, road feel, or lights — never by control type. Effects
+// without an explicit column land in Road feel; the canvas teaches "More
+// effects appear here for games that send them."
+export type TuningColumnId = 'brake' | 'throttle' | 'road' | 'lights';
+
+const tuningColumnByEffectId: Record<string, TuningColumnId> = {
+  brake_resistance: 'brake',
+  abs_slip_pulse: 'brake',
+  handbrake_wall: 'brake',
+  throttle_resistance: 'throttle',
+  gear_shift_thump: 'throttle',
+  rev_limiter_buzz: 'throttle',
+  rpm_leds: 'lights'
+};
+
+export const tuningColumnForEffect = (meta: ForzaEffectMeta): TuningColumnId =>
+  tuningColumnByEffectId[meta.id] ?? (meta.group === 'Light' ? 'lights' : 'road');

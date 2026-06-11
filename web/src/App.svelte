@@ -80,9 +80,11 @@
     type TuningScope
   } from './app/profileWorkspace';
   import ControllersView from './lib/features/controllers/ControllersView.svelte';
-  import HapticsAside from './lib/features/haptics/HapticsAside.svelte';
-  import HapticsView from './lib/features/haptics/HapticsView.svelte';
+  import GlobalFeelPanel from './lib/features/haptics/GlobalFeelPanel.svelte';
+  import LightbarControls from './lib/features/haptics/LightbarControls.svelte';
+  import TelemetryRoutingPanel from './lib/features/haptics/TelemetryRoutingPanel.svelte';
   import TriggerCurvesPanel from './lib/features/haptics/TriggerCurvesPanel.svelte';
+  import TuningCanvas from './lib/features/tuning/TuningCanvas.svelte';
   import {
     clampUnit,
     defaultTriggerCurve,
@@ -130,6 +132,7 @@
     bodyRumbleModeOptions,
     forzaEffectMetas,
     forzaRoutes,
+    tuningColumnForEffect,
     triggerEffectHelp,
     triggerEffectOptions,
     triggerStrengthHelp,
@@ -335,6 +338,12 @@
   // when forzaEffects is reassigned (Svelte can't statically trace the
   // dependency through a plain function call to forzaEffect()).
   $: forzaEffectsById = new Map(forzaEffects.map((effect) => [effect.id, effect]));
+  // Semantic tuning columns: effects grouped by what is being tuned (never by
+  // control type); anything unmapped lands in Road feel.
+  const brakeEffectMetas = forzaEffectMetas.filter((meta) => tuningColumnForEffect(meta) === 'brake');
+  const throttleEffectMetas = forzaEffectMetas.filter((meta) => tuningColumnForEffect(meta) === 'throttle');
+  const roadEffectMetas = forzaEffectMetas.filter((meta) => tuningColumnForEffect(meta) === 'road');
+  const lightEffectMetas = forzaEffectMetas.filter((meta) => tuningColumnForEffect(meta) === 'lights');
 
   $: {
     const nextSelection = reconcileTargetControllerWorkspaceSelection({
@@ -2220,112 +2229,173 @@
       {/if}
 
       {#if activeView === 'tuning' && tuningReady}
-      <HapticsView active>
-      <TriggerCurvesPanel
-        {selectedTuningScope}
-        {snapshot}
-        {baseFeelTestActive}
-        {baseFeelTestBusy}
-        {resetTriggerCurvesToProfileDefaults}
-        {toggleBaseFeelTest}
-        {l2CurveShape}
-        {r2CurveShape}
-        {l2CurveLive}
-        {r2CurveLive}
-        {curveHover}
-        {curveDragPoint}
-        {l2LivePress}
-        {r2LivePress}
-        {l2From}
-        {l2To}
-        {r2From}
-        {r2To}
-        {l2Curve}
-        {r2Curve}
-        {l2CurvePoints}
-        {r2CurvePoints}
-        {triggerEffect}
-        {triggerIntensity}
-        {vibrationIntensity}
-        {vibrationMode}
-        {triggerEffectOptions}
-        {vibrationModeOptions}
-        {triggerEffectHelp}
-        {triggerStrengthHelp}
-        {vibrationHelp}
-        {vibrationModeHelp}
-        {triggerPressLabel}
-        triggerRangeTooltip={triggerRangeTooltipForCurrentTuning}
-        {triggerCurveTooltip}
-        {showTriggerPress}
-        {handleCurvePointer}
-        {updateCurveHover}
-        {clearCurveHover}
-        {handleCurvePointPointer}
-        {setTriggerRangeValue}
-        {setTriggerCurveValue}
-        {removeCurvePoint}
-        {addCurvePoint}
-        {setTriggerEffect}
-        {setTriggerIntensity}
-        {setVibrationIntensity}
-        {setVibrationMode}
-      />
-      <HapticsAside
-        {selectedTuningScope}
-        {snapshot}
-        {baseFeelTestActive}
-        {baseFeelTestBusy}
-        {triggerEffect}
-        {triggerIntensity}
-        {vibrationIntensity}
-        {vibrationMode}
-        {triggerEffectOptions}
-        {vibrationModeOptions}
-        {triggerEffectHelp}
-        {vibrationModeHelp}
-        {setTriggerEffect}
-        {setVibrationIntensity}
-        {setVibrationMode}
-        {toggleBaseFeelTest}
-        {previewBodyHaptics}
-        {enabledForzaEffectCount}
-        {allForzaEffectsEnabled}
-        {forzaEffectMetas}
-        {forzaEffectsById}
-        {effectStatusById}
-        {forzaBodyRumbleMode}
-        {forzaBrakeTuning}
-        {forzaAbsTuning}
-        {forzaThrottleTuning}
-        {forzaShiftTuning}
-        {forzaRevLimiterTuning}
-        {bodyRumbleModeOptions}
-        {forzaRoutes}
-        {forzaEffect}
-        {toggleAllForzaEffects}
-        {setForzaBodyRumbleMode}
-        {updateForzaBrakeTuning}
-        {updateForzaAbsTuning}
-        {updateForzaThrottleTuning}
-        {updateForzaShiftTuning}
-        {updateForzaRevLimiterTuning}
-        {updateForzaEffect}
-        {intensityTooltip}
-        {routeTooltip}
-        {forzaIntensityPercent}
-        {forzaIntensityFromPercent}
-        {lightbarEnabled}
-        bind:lightbarColor
-        bind:rpmColor
-        {lightbarBrightness}
-        onColorChange={handleLightbarColorChange}
-        {setLightbarBrightness}
-        {setLightbarEnabled}
-        {previewLightbar}
-        {previewRpmColor}
-      />
-      </HapticsView>
+      <!-- Each trigger column owns its own curve editor instrument. -->
+      {#snippet triggerCurveEditor(trigger: 'L2' | 'R2')}
+        <TriggerCurvesPanel
+          {trigger}
+          showControls={false}
+          {selectedTuningScope}
+          {snapshot}
+          {baseFeelTestActive}
+          {baseFeelTestBusy}
+          {resetTriggerCurvesToProfileDefaults}
+          {toggleBaseFeelTest}
+          {l2CurveShape}
+          {r2CurveShape}
+          {l2CurveLive}
+          {r2CurveLive}
+          {curveHover}
+          {curveDragPoint}
+          {l2LivePress}
+          {r2LivePress}
+          {l2From}
+          {l2To}
+          {r2From}
+          {r2To}
+          {l2Curve}
+          {r2Curve}
+          {l2CurvePoints}
+          {r2CurvePoints}
+          {triggerPressLabel}
+          triggerRangeTooltip={triggerRangeTooltipForCurrentTuning}
+          {triggerCurveTooltip}
+          {showTriggerPress}
+          {handleCurvePointer}
+          {updateCurveHover}
+          {clearCurveHover}
+          {handleCurvePointPointer}
+          {setTriggerRangeValue}
+          {setTriggerCurveValue}
+          {removeCurvePoint}
+          {addCurvePoint}
+        />
+      {/snippet}
+      <!-- One embedded effect list per semantic column (game scope only). -->
+      {#snippet forzaEffectGroup(metas: ForzaEffectMeta[])}
+        <TelemetryRoutingPanel
+          showChrome={false}
+          forzaEffectMetas={metas}
+          {forzaEffectsById}
+          {effectStatusById}
+          {forzaBrakeTuning}
+          {forzaAbsTuning}
+          {forzaThrottleTuning}
+          {forzaShiftTuning}
+          {forzaRevLimiterTuning}
+          {forzaRoutes}
+          {forzaEffect}
+          {updateForzaBrakeTuning}
+          {updateForzaAbsTuning}
+          {updateForzaThrottleTuning}
+          {updateForzaShiftTuning}
+          {updateForzaRevLimiterTuning}
+          {updateForzaEffect}
+          {intensityTooltip}
+          {routeTooltip}
+          {forzaIntensityPercent}
+          {forzaIntensityFromPercent}
+        />
+      {/snippet}
+      <TuningCanvas>
+        <svelte:fragment slot="brake">
+          {@render triggerCurveEditor('L2')}
+          {#if selectedTuningScope === 'game'}
+            {@render forzaEffectGroup(brakeEffectMetas)}
+          {/if}
+        </svelte:fragment>
+        <svelte:fragment slot="throttle">
+          {@render triggerCurveEditor('R2')}
+          {#if selectedTuningScope === 'game'}
+            {@render forzaEffectGroup(throttleEffectMetas)}
+          {/if}
+        </svelte:fragment>
+        <svelte:fragment slot="road">
+          {#if selectedTuningScope === 'game'}
+            {@render forzaEffectGroup(roadEffectMetas)}
+          {/if}
+        </svelte:fragment>
+        <svelte:fragment slot="lights">
+          <LightbarControls
+            {selectedTuningScope}
+            {lightbarEnabled}
+            bind:lightbarColor
+            bind:rpmColor
+            {lightbarBrightness}
+            onColorChange={handleLightbarColorChange}
+            {setLightbarBrightness}
+            {setLightbarEnabled}
+            {previewLightbar}
+            {previewRpmColor}
+          />
+          {#if selectedTuningScope === 'game'}
+            {@render forzaEffectGroup(lightEffectMetas)}
+          {/if}
+        </svelte:fragment>
+        <svelte:fragment slot="below">
+          <!-- Parked until Tasks 8-10 re-home it; nothing previously rendered
+               may be lost. Curve reset/test head + base feel strip: -->
+          <TriggerCurvesPanel
+            showCurves={false}
+            {selectedTuningScope}
+            {snapshot}
+            {baseFeelTestActive}
+            {baseFeelTestBusy}
+            {resetTriggerCurvesToProfileDefaults}
+            {toggleBaseFeelTest}
+            {triggerEffect}
+            {triggerIntensity}
+            {vibrationIntensity}
+            {vibrationMode}
+            {triggerEffectOptions}
+            {vibrationModeOptions}
+            {triggerEffectHelp}
+            {triggerStrengthHelp}
+            {vibrationHelp}
+            {vibrationModeHelp}
+            {setTriggerEffect}
+            {setTriggerIntensity}
+            {setVibrationIntensity}
+            {setVibrationMode}
+          />
+          {#if selectedTuningScope === 'game'}
+            <!-- Telemetry stream head + body rumble source routing chrome. -->
+            <div class="canvas-parked">
+              <TelemetryRoutingPanel
+                showEffects={false}
+                {enabledForzaEffectCount}
+                {allForzaEffectsEnabled}
+                {forzaEffectMetas}
+                {forzaBodyRumbleMode}
+                {bodyRumbleModeOptions}
+                {toggleAllForzaEffects}
+                {setForzaBodyRumbleMode}
+              />
+            </div>
+          {:else}
+            <!-- Global scope: base haptics panel (trigger pattern + body). -->
+            <div class="canvas-parked">
+              <GlobalFeelPanel
+                {snapshot}
+                {baseFeelTestActive}
+                {baseFeelTestBusy}
+                {triggerEffect}
+                {triggerIntensity}
+                {vibrationIntensity}
+                {vibrationMode}
+                {triggerEffectOptions}
+                {vibrationModeOptions}
+                {triggerEffectHelp}
+                {vibrationModeHelp}
+                {setTriggerEffect}
+                {setVibrationIntensity}
+                {setVibrationMode}
+                {toggleBaseFeelTest}
+                {previewBodyHaptics}
+              />
+            </div>
+          {/if}
+        </svelte:fragment>
+      </TuningCanvas>
       {/if}
     <ButtonMappingView session={buttonMappingSession} />
     {/if}

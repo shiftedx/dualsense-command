@@ -37,6 +37,14 @@
     route: 'body_both'
   });
 
+  // Semantic-column rendering (Task 6): the tuning canvas renders one
+  // embedded instance per column with a filtered `forzaEffectMetas` subset
+  // (showChrome=false), and parks the stream head + body source chrome below
+  // the grid in a chrome-only instance (showEffects=false). Defaults keep the
+  // legacy all-in-one panel behavior.
+  export let showChrome = true;
+  export let showEffects = true;
+
   export let enabledForzaEffectCount = 0;
   export let allForzaEffectsEnabled = false;
   export let forzaEffectMetas: ForzaEffectMeta[] = [];
@@ -226,6 +234,7 @@
   };
 </script>
 
+{#if showChrome}
 <div class="dm-section-head compact">
   <div>
     <span>Haptic Routing</span>
@@ -233,13 +242,15 @@
   </div>
   <div class="dm-effects-count">
     <code>{enabledForzaEffectCount}/{forzaEffectMetas.length}</code>
-    <button
-      class:active={advancedOpen}
-      class="dm-mini-button dm-advanced-toggle"
-      type="button"
-      aria-expanded={advancedOpen}
-      onclick={() => (advancedOpen = !advancedOpen)}
-    >Advanced</button>
+    {#if showEffects}
+      <button
+        class:active={advancedOpen}
+        class="dm-mini-button dm-advanced-toggle"
+        type="button"
+        aria-expanded={advancedOpen}
+        onclick={() => (advancedOpen = !advancedOpen)}
+      >Advanced</button>
+    {/if}
     <button
       class:active={allForzaEffectsEnabled}
       class="dm-toggle"
@@ -250,7 +261,9 @@
     ><span></span></button>
   </div>
 </div>
+{/if}
 
+{#if showChrome}
 <div class="dm-body-mode-panel" aria-label="Body rumble source">
   <div class="dm-body-mode-title">
     <span>Body Source</span>
@@ -274,7 +287,20 @@
     {/each}
   </div>
 </div>
+{/if}
 
+{#if showEffects}
+{#if !showChrome}
+  <div class="dm-effects-embedded-head">
+    <button
+      class:active={advancedOpen}
+      class="dm-mini-button dm-advanced-toggle"
+      type="button"
+      aria-expanded={advancedOpen}
+      onclick={() => (advancedOpen = !advancedOpen)}
+    >Advanced</button>
+  </div>
+{/if}
 <div
   class:advanced={advancedOpen}
   class="dm-channel-list"
@@ -923,3 +949,4 @@
     </article>
   {/each}
 </div>
+{/if}
