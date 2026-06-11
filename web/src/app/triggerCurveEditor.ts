@@ -273,11 +273,34 @@ export type CurveDragOptions = {
 export const beginCurveDrag = (event: PointerEvent, target: HTMLElement, options: CurveDragOptions) => {
   target.setPointerCapture(event.pointerId);
 
+  // Pointer capture pins the target for the whole drag, so one rect read at
+  // drag start replaces a forced layout per pointermove event.
+  const rect = target.getBoundingClientRect();
+  const pointFrom = (pointerEvent: PointerEvent) => ({
+    x: clampUnit((pointerEvent.clientX - rect.left) / Math.max(1, rect.width)),
+    output: clampUnit(1 - (pointerEvent.clientY - rect.top) / Math.max(1, rect.height))
+  });
+
+  // High-rate mice deliver up to 1000 pointermove events/s; coalesce to one
+  // application per animation frame.
+  let pending: PointerEvent | null = null;
+  let frame = 0;
+  const flush = () => {
+    frame = 0;
+    if (pending) {
+      const next = pending;
+      pending = null;
+      options.onPoint(pointFrom(next));
+    }
+  };
   const applyPoint = (pointerEvent: PointerEvent) => {
-    options.onPoint(curveGraphPointFromPointer(pointerEvent, target));
+    pending = pointerEvent;
+    if (!frame) frame = requestAnimationFrame(flush);
   };
 
   const stopDrag = () => {
+    if (frame) cancelAnimationFrame(frame);
+    flush();
     options.onEnd();
     if (target.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId);
     target.removeEventListener('pointermove', applyPoint);
@@ -285,7 +308,7 @@ export const beginCurveDrag = (event: PointerEvent, target: HTMLElement, options
     target.removeEventListener('pointercancel', stopDrag);
   };
 
-  if (options.applyInitialEvent) applyPoint(event);
+  if (options.applyInitialEvent) options.onPoint(pointFrom(event));
   target.addEventListener('pointermove', applyPoint);
   target.addEventListener('pointerup', stopDrag);
   target.addEventListener('pointercancel', stopDrag);

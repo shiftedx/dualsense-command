@@ -1255,8 +1255,8 @@
   const showTriggerPress = (_side: 'l2' | 'r2', value: number) =>
     baseFeelTestActive || clampUnit(value) > 0.01;
 
-  const setPointsForSide = (side: TriggerSide, points: TriggerCurvePoint[]) => {
-    const normalized = normalizeTriggerCurvePoints(points, side === 'l2' ? l2Curve : r2Curve);
+  const setPointsForSide = (side: TriggerSide, points: TriggerCurvePoint[], alreadyNormalized = false) => {
+    const normalized = alreadyNormalized ? points : normalizeTriggerCurvePoints(points, side === 'l2' ? l2Curve : r2Curve);
     if (side === 'l2') {
       l2CurvePoints = normalized;
     } else {
@@ -1266,8 +1266,11 @@
     scheduleLiveControllerConfigSync();
   };
 
+  // Point edits come from withCurvePointSet/withCurvePointAddedOrSelected,
+  // which already start from normalizeTriggerCurvePoints() output — skip the
+  // second normalization pass per pointermove.
   const applyCurvePointEdit = (side: TriggerSide, edit: CurvePointEdit) => {
-    if (edit.points) setPointsForSide(side, edit.points);
+    if (edit.points) setPointsForSide(side, edit.points, true);
     return edit.index;
   };
 
