@@ -1,15 +1,13 @@
 <script lang="ts">
   import { Cable, CircleHelp, ExternalLink, LifeBuoy, RefreshCw } from '@lucide/svelte';
   import { onMount } from 'svelte';
-  import Tooltip from './components/Tooltip.svelte';
-  import ContextRibbon from './components/ContextRibbon.svelte';
+  import AppSidebar from './components/AppSidebar.svelte';
   import AddGameDialog from './lib/features/games/AddGameDialog.svelte';
   import GamesView from './lib/features/games/GamesView.svelte';
   import OnboardingTutorial from './components/OnboardingTutorial.svelte';
-  import ViewNav from './components/ViewNav.svelte';
   import SupportPanel from './components/SupportPanel.svelte';
   import ToastStack from './components/ToastStack.svelte';
-  import { appViews, guardView, hashForView, viewFromHash, viewTooltips } from './app/navigation';
+  import { guardView, hashForView, isViewHash, viewFromHash } from './app/navigation';
   import { createAppRuntime } from './app/runtime';
   import {
     createButtonMappingSession,
@@ -1746,17 +1744,7 @@
     triggerInputPoller.sync();
   }
 
-  $: if (
-    typeof window !== 'undefined' &&
-    (window.location.hash === '#/tuning' ||
-      window.location.hash === '#/advanced/controller' ||
-      window.location.hash === '#/advanced/button-mapping' ||
-      window.location.hash === '#/advanced/edge-slots' ||
-      window.location.hash === '#/controllers' ||
-      window.location.hash === '#/adaptive-triggers-haptics' ||
-      window.location.hash === '#/button-mapping' ||
-      window.location.hash === '#/games')
-  ) {
+  $: if (typeof window !== 'undefined' && isViewHash(window.location.hash)) {
     const routeView = appViewFromHash();
     if (routeView !== activeView) {
       activeView = routeView;
@@ -1993,7 +1981,41 @@
   }
 </script>
 
-<main class="ops-shell">
+<div class="app-shell">
+  <AppSidebar
+    view={activeView}
+    readiness={{ tuningReady, buttonMappingReady }}
+    onNavigate={navigateToView}
+  >
+    {#snippet footer()}
+      <div class="sidebar-footer">
+        <button
+          class="sidebar-item"
+          type="button"
+          title="Open the quick start guide again. It explains Profiles, trigger tests, telemetry safety, and support bundles."
+          aria-label="Open quick start guide"
+          onclick={openOnboarding}
+        >
+          <CircleHelp size={14} /> Guide
+        </button>
+        <button
+          class:active={supportPanelOpen}
+          class="sidebar-item"
+          type="button"
+          title="Copy or export a sanitized support bundle for GitHub issues or Discord help. Raw hardware ids are excluded."
+          aria-expanded={supportPanelOpen}
+          aria-controls="support-bundle-panel"
+          onclick={() => {
+            supportPanelOpen = !supportPanelOpen;
+          }}
+        >
+          <LifeBuoy size={14} /> Support
+        </button>
+      </div>
+    {/snippet}
+  </AppSidebar>
+
+  <main class="app-main">
   {#if loading}
     <section class="ops-state">
       <RefreshCw class="spin" size={24} />
@@ -2008,56 +2030,100 @@
       <button class="solid-action compact" type="button" onclick={refresh}>Retry</button>
     </section>
   {:else if snapshot}
-    <header class="dm-hud" aria-label="Global command state">
-      <div class="dm-hardware-state">
-        <span class="dm-controller-glyph" aria-hidden="true"></span>
-        <div>
-          <h1>DualSense Command Center</h1>
-          <p><span class="dm-app-tagline">Adaptive triggers, haptics, and live telemetry &mdash; tuned locally.</span></p>
-        </div>
+    <!-- TEMPORARY toolbar: the controller/scope/profile context the old ribbon
+         carried. Task 4 re-houses it on Status; Task 5 in the Tuning header. -->
+    <section class="app-toolbar" aria-label="Controller, scope, and profile context">
+      <label class="app-toolbar-field">
+        <span>Target Controller</span>
+        <select
+          aria-label="Target controller"
+          disabled={!connectedControllerIds.length}
+          value={profileTargetsAllConnected ? '__all__' : profileTargetControllerIds[0] ?? controller?.id ?? ''}
+          onchange={(event) => {
+            const picked = event.currentTarget.value;
+            if (picked === '__all__') pickAllControllers();
+            else if (picked) pickControllerTarget(picked);
+          }}
+        >
+          {#if connectedControllerIds.length > 1}
+            <option value="__all__">All Connected</option>
+          {/if}
+          {#each connectedControllers as item (item.id)}
+            <option value={item.id}>{item.name || controllerModelText(item)}</option>
+          {/each}
+        </select>
+      </label>
+      <label class="app-toolbar-field">
+        <span>Scope</span>
+        <select
+          aria-label="Tuning scope"
+          value={selectedTuningScope === 'game' ? selectedTuningGameId : '__global__'}
+          onchange={(event) => {
+            const picked = event.currentTarget.value;
+            if (picked === '__global__') {
+              if (selectedTuningScope !== 'global') void selectGlobalTuning();
+            } else {
+              const game = discoveredGames.find((item) => item.gameId === picked);
+              if (game) void selectTuningGame(game);
+            }
+          }}
+        >
+          <option value="__global__">Global Profile</option>
+          {#each discoveredGames as game (game.gameId)}
+            <option value={game.gameId}>{game.name}</option>
+          {/each}
+        </select>
+      </label>
+      <label class="app-toolbar-field">
+        <span>Live Profile</span>
+        <select
+          aria-label="Live profile"
+          disabled={!profileContextProfiles.length}
+          value={selectedOverrideProfileId || activeProfileId}
+          onchange={(event) => {
+            const picked = event.currentTarget.value;
+            if (picked && picked !== (selectedOverrideProfileId || activeProfileId)) void selectProfileForScope(picked);
+          }}
+        >
+          {#each profileContextProfiles as profile (profile.id)}
+            <option value={profile.id}>{profile.name}</option>
+          {/each}
+        </select>
+      </label>
+      <label class="app-toolbar-field">
+        <span>Web UI Location</span>
+        <select
+          aria-label="Web UI location"
+          disabled={appSettingsBusy}
+          value={listenOnAllInterfaces ? 'lan' : 'local'}
+          onchange={(event) => void updateLanAccess(event.currentTarget.value === 'lan')}
+        >
+          <option value="local">Local Only</option>
+          <option value="lan">LAN Access</option>
+        </select>
+        <small>{lanRestartRequired ? `restart -> ${appSettings?.desiredBindAddress}` : status?.bindAddress}</small>
+      </label>
+      <button
+        class="app-toolbar-toggle"
+        class:active={glyphOverrideEnabled}
+        type="button"
+        disabled={appSettingsBusy}
+        aria-pressed={glyphOverrideEnabled}
+        title={forzaGlyphs?.lastStatus ?? glyphInstallPath}
+        onclick={() => void updateForzaGlyphOverride()}
+      >
+        Controller Glyphs: {glyphOverrideEnabled ? 'PlayStation Icons' : 'Game Default'}
+      </button>
+      <div class="app-toolbar-spacer"></div>
+      <div
+        class="app-toolbar-readout"
+        title={selectedTuningScope === 'global' ? systemReadoutDetail : adapter?.setupHint ?? telemetryRateDetail}
+      >
+        <span>{systemReadoutTitle}</span>
+        <strong>{systemReadoutValue}</strong>
+        <small>{systemReadoutDetail}</small>
       </div>
-
-      <ViewNav
-        views={appViews}
-        {activeView}
-        tooltips={viewTooltips}
-        {tuningReady}
-        {buttonMappingReady}
-        onNavigate={navigateToView}
-      />
-
-      <div class="dm-system-cluster">
-        <div class="dm-system-readout" title={selectedTuningScope === 'global' ? systemReadoutDetail : adapter?.setupHint ?? telemetryRateDetail}>
-          <span>{systemReadoutTitle}</span>
-          <strong>{systemReadoutValue}</strong>
-          <small>{systemReadoutDetail}</small>
-        </div>
-        <Tooltip text="Open the quick start guide again. It explains Profiles, trigger tests, telemetry safety, and support bundles." side="bottom" align="end">
-          <button
-            class="dm-support-trigger"
-            type="button"
-            aria-label="Open quick start guide"
-            onclick={openOnboarding}
-          >
-            <CircleHelp size={14} /> Guide
-          </button>
-        </Tooltip>
-        <Tooltip text="Copy or export a sanitized support bundle for GitHub issues or Discord help. Raw hardware ids are excluded." side="bottom" align="end">
-          <button
-            class:active={supportPanelOpen}
-            class="dm-support-trigger"
-            type="button"
-            aria-expanded={supportPanelOpen}
-            aria-controls="support-bundle-panel"
-            onclick={() => {
-              supportPanelOpen = !supportPanelOpen;
-            }}
-          >
-            <LifeBuoy size={14} /> Support
-          </button>
-        </Tooltip>
-      </div>
-    </header>
+    </section>
 
     {#if showPartialErrorBanner}
       <aside class="ops-warning dm-warning" role="status" aria-live="polite">
@@ -2118,41 +2184,6 @@
       />
     {/if}
     {#if showWorkspaceViews}
-      <ContextRibbon
-        {controller}
-        {connectedControllers}
-        {connectedControllerIds}
-        {profileTargetsAllConnected}
-        {profileTargetControllerIds}
-        {selectedTuningScope}
-        {selectedTuningGameId}
-        {steamContextGame}
-        {steamContextArt}
-        {steamContextBackdropArt}
-        {steamContextMeta}
-        {discoveredGames}
-        {profileContextProfiles}
-        {selectedOverrideProfileId}
-        {activeProfileId}
-        {activeProfileHeaderName}
-        {activeProfileHeaderMeta}
-        {listenOnAllInterfaces}
-        {appSettingsBusy}
-        {lanRestartRequired}
-        desiredBindAddress={appSettings?.desiredBindAddress}
-        currentBindAddress={status?.bindAddress}
-        {glyphOverrideEnabled}
-        glyphStatus={forzaGlyphs?.lastStatus ?? glyphInstallPath}
-        {gameAccentColor}
-        onPickGlobal={selectGlobalTuning}
-        onPickGame={selectTuningGame}
-        onPickProfile={selectProfileForScope}
-        onPickAllControllers={pickAllControllers}
-        onPickController={pickControllerTarget}
-        onUpdateLanAccess={updateLanAccess}
-        onUpdateGlyphOverride={updateForzaGlyphOverride}
-      />
-
       {#if showAdvancedControllerView}
         <ControllersView
           active={showAdvancedControllerView}
@@ -2347,4 +2378,5 @@
     onValidateLocal={validateLocalGameFromDialog}
     onAddLocal={addLocalGameFromDialog}
   />
-</main>
+  </main>
+</div>

@@ -36,6 +36,16 @@ const legacyRedirects: Record<string, string> = {
   '#/button-mapping': '#/advanced/button-mapping'
 };
 
+/** Every hash the router answers to: current view hashes plus legacy redirects. */
+export const knownViewHashes: string[] = [
+  ...appViews.map((item) => item.hash),
+  ...Object.keys(legacyRedirects)
+];
+
+export function isViewHash(hash: string): boolean {
+  return knownViewHashes.includes(hash);
+}
+
 export function hashForView(view: AppView): string {
   return appViews.find((item) => item.id === view)?.hash ?? '#/status';
 }
