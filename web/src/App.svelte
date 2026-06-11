@@ -26,6 +26,7 @@
     edgeSlotWriteLabel as edgeOnboardSlotWriteLabel,
     edgeSlotWriteTooltip as edgeOnboardSlotWriteTooltip,
     emptyEdgeOnboardProfileState,
+    friendlyEdgeSlotsError,
     isEdgeTargetController,
     shouldReadEdgeOnboardProfiles,
     shouldResetEdgeOnboardProfiles
@@ -1495,7 +1496,9 @@
       edgeProfiles = await getEdgeProfiles(controllerId);
     } catch (caught) {
       edgeProfiles = null;
-      edgeProfilesError = caught instanceof Error ? caught.message : 'Unable to read Edge onboard slots.';
+      edgeProfilesError = friendlyEdgeSlotsError(
+        caught instanceof Error ? caught.message : 'Unable to read Edge onboard slots.'
+      );
     } finally {
       edgeProfilesLoading = false;
     }
@@ -1534,7 +1537,9 @@
       showToast(response.message, response.accepted ? 'success' : 'error');
       await loadEdgeProfiles(controller.id, true);
     } catch (caught) {
-      edgeProfilesError = caught instanceof Error ? caught.message : 'Unable to write Edge onboard slot.';
+      edgeProfilesError = friendlyEdgeSlotsError(
+        caught instanceof Error ? caught.message : 'Unable to write Edge onboard slot.'
+      );
       showToast(edgeProfilesError, 'error');
     } finally {
       edgeProfilesBusySlot = '';
