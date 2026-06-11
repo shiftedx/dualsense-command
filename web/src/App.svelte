@@ -1130,6 +1130,7 @@
     });
   };
   $: {
+    // Touched (not used) so the legacy compiler re-runs this block when they change.
     void profileDraftSnapshot;
     void profileSaveBaselineConfig;
     void selectedTuningScope;
@@ -2127,6 +2128,7 @@
         liveConfigSync.clear();
         clearBaseFeelTestTimers();
         stopTriggerInputPolling();
+        window.clearTimeout(savedRailDiffTimer);
       }
     });
     appRuntime.start();
