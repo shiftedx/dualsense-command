@@ -2643,68 +2643,73 @@
           />
         </svelte:fragment>
         <svelte:fragment slot="below">
-          <!-- Parked until Tasks 8-10 re-home it; nothing previously rendered
-               may be lost. Curve reset/test head + base feel strip: -->
-          <TriggerCurvesPanel
-            showCurves={false}
-            {selectedTuningScope}
-            {snapshot}
-            {baseFeelTestActive}
-            {baseFeelTestBusy}
-            {resetTriggerCurvesToProfileDefaults}
-            {toggleBaseFeelTest}
-            {triggerEffect}
-            {triggerIntensity}
-            {vibrationIntensity}
-            {vibrationMode}
-            {triggerEffectOptions}
-            {vibrationModeOptions}
-            {triggerEffectHelp}
-            {triggerStrengthHelp}
-            {vibrationHelp}
-            {vibrationModeHelp}
-            {setTriggerEffect}
-            {setTriggerIntensity}
-            {setVibrationIntensity}
-            {setVibrationMode}
-          />
-          {#if selectedTuningScope === 'game'}
-            <!-- Telemetry stream head + body rumble source routing chrome. -->
-            <div class="canvas-parked">
-              <TelemetryRoutingPanel
-                showEffects={false}
-                {enabledForzaEffectCount}
-                {allForzaEffectsEnabled}
-                {forzaEffectMetas}
-                {forzaBodyRumbleMode}
-                {bodyRumbleModeOptions}
-                {toggleAllForzaEffects}
-                {setForzaBodyRumbleMode}
-              />
-            </div>
-          {:else}
-            <!-- Global scope: base haptics panel (trigger pattern + body). -->
-            <div class="canvas-parked">
-              <GlobalFeelPanel
-                {snapshot}
-                {baseFeelTestActive}
-                {baseFeelTestBusy}
-                {triggerEffect}
-                {triggerIntensity}
-                {vibrationIntensity}
-                {vibrationMode}
-                {triggerEffectOptions}
-                {vibrationModeOptions}
-                {triggerEffectHelp}
-                {vibrationModeHelp}
-                {setTriggerEffect}
-                {setVibrationIntensity}
-                {setVibrationMode}
-                {toggleBaseFeelTest}
-                {previewBodyHaptics}
-              />
-            </div>
-          {/if}
+          <!-- Parked until these controls get real homes; collapsed so the
+               canvas keeps one voice. Nothing previously rendered is lost. -->
+          <details class="canvas-more">
+            <summary>More tuning controls</summary>
+            <!-- Parked until Tasks 8-10 re-home it; nothing previously rendered
+                 may be lost. Curve reset/test head + base feel strip: -->
+            <TriggerCurvesPanel
+              showCurves={false}
+              {selectedTuningScope}
+              {snapshot}
+              {baseFeelTestActive}
+              {baseFeelTestBusy}
+              {resetTriggerCurvesToProfileDefaults}
+              {toggleBaseFeelTest}
+              {triggerEffect}
+              {triggerIntensity}
+              {vibrationIntensity}
+              {vibrationMode}
+              {triggerEffectOptions}
+              {vibrationModeOptions}
+              {triggerEffectHelp}
+              {triggerStrengthHelp}
+              {vibrationHelp}
+              {vibrationModeHelp}
+              {setTriggerEffect}
+              {setTriggerIntensity}
+              {setVibrationIntensity}
+              {setVibrationMode}
+            />
+            {#if selectedTuningScope === 'game'}
+              <!-- Telemetry stream head + body rumble source routing chrome. -->
+              <div class="canvas-parked">
+                <TelemetryRoutingPanel
+                  showEffects={false}
+                  {enabledForzaEffectCount}
+                  {allForzaEffectsEnabled}
+                  {forzaEffectMetas}
+                  {forzaBodyRumbleMode}
+                  {bodyRumbleModeOptions}
+                  {toggleAllForzaEffects}
+                  {setForzaBodyRumbleMode}
+                />
+              </div>
+            {:else}
+              <!-- Global scope: base haptics panel (trigger pattern + body). -->
+              <div class="canvas-parked">
+                <GlobalFeelPanel
+                  {snapshot}
+                  {baseFeelTestActive}
+                  {baseFeelTestBusy}
+                  {triggerEffect}
+                  {triggerIntensity}
+                  {vibrationIntensity}
+                  {vibrationMode}
+                  {triggerEffectOptions}
+                  {vibrationModeOptions}
+                  {triggerEffectHelp}
+                  {vibrationModeHelp}
+                  {setTriggerEffect}
+                  {setVibrationIntensity}
+                  {setVibrationMode}
+                  {toggleBaseFeelTest}
+                  {previewBodyHaptics}
+                />
+              </div>
+            {/if}
+          </details>
         </svelte:fragment>
       </TuningCanvas>
       {/if}

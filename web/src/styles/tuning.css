@@ -723,6 +723,41 @@
   border-radius: var(--radius-m);
 }
 
+/* Parked controls live behind one quiet door below the canvas. */
+.canvas-more {
+  margin-top: 18px;
+  border-top: 1px solid var(--hairline);
+}
+
+.canvas-more > summary {
+  padding: 10px 2px;
+  font-size: 0.78rem;
+  color: var(--ink-muted);
+  cursor: pointer;
+  list-style: none;
+  transition: color var(--speed) var(--ease);
+}
+
+.canvas-more > summary::-webkit-details-marker { display: none; }
+
+.canvas-more > summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 6px;
+  transition: transform var(--speed) var(--ease);
+}
+
+.canvas-more[open] > summary::before { transform: rotate(90deg); }
+
+.canvas-more > summary:hover,
+.canvas-more > summary:focus-visible { color: var(--ink); }
+
+.canvas-more > summary:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 2px;
+  border-radius: var(--radius-s);
+}
+
 /* The parked trigger-controls panel sits directly in .canvas-below; give it
    the same bounded field the .canvas-parked wrappers provide (the HUD-era
    panel background it used to lean on is gone). */
