@@ -84,9 +84,8 @@
   display: grid;
   gap: 5px;
   min-width: 0;
-  padding: 11px 13px 12px;
-  border: 0;
-  border-left: 3px solid var(--toast-accent);
+  padding: 11px 13px 12px 15px;
+  border: 1px solid var(--toast-accent);
   color: #FFFFFF;
   background:
     linear-gradient(90deg, var(--toast-bg), rgba(18, 18, 20, 0.96) 46%),
