@@ -192,7 +192,7 @@ impl TriggerConfig {
         self.l2_curve = self.l2_curve.normalized();
         self.r2_curve = self.r2_curve.normalized();
         self.l2_curve_points = normalize_trigger_curve_points(self.l2_curve_points, self.l2_curve);
-        if self.l2_curve_points == soft_l2_trigger_curve_points() {
+        if self.l2_curve_points == previous_soft_l2_trigger_curve_points() {
             self.l2_curve = TriggerCurve::default_l2();
             self.l2_curve_points = default_l2_trigger_curve_points();
         }
