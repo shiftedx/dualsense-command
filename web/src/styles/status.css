@@ -259,3 +259,19 @@
     min-height: calc(100dvh - 130px); /* viewport minus measured app chrome */
   }
 }
+
+/* Very large windows: keep the user's wide/tall centering choice through the
+   1200-1600px band, then cap the dead-band so Status stays near the toolbar. */
+@media (min-width: 1800px) and (min-height: 900px) {
+  .status-view {
+    justify-content: flex-start;
+    min-height: auto;
+    max-width: 1180px;
+    margin-inline: auto;
+    padding-top: 56px;
+  }
+
+  .status-groups {
+    max-width: 1180px;
+  }
+}

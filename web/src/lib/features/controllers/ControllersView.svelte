@@ -63,6 +63,10 @@
   export let onSetStickDeadzone: (side: 'left' | 'right', value: number) => void | Promise<void> = () => {};
   export let onStartInputBridge: () => void | Promise<void> = () => {};
   export let onStopInputBridge: () => void | Promise<void> = () => {};
+  export let glyphOverrideEnabled = false;
+  export let glyphOverrideBusy = false;
+  export let glyphOverrideTitle = '';
+  export let onToggleGlyphOverride: () => void | Promise<void> = () => {};
   export let supportBundleBusy: 'copy' | 'download' | '' = '';
   export let onDownloadSupportBundle: () => void | Promise<void> = () => {};
 
@@ -613,6 +617,25 @@
         <p class="ctl-note">Ranges are observed while this page is open; move the sticks and pull the triggers to fill them in.</p>
       </div>
     {/if}
+
+    <div class="ctl-group narrow">
+      <div class="lbl">Button icons</div>
+      <div class="ctl-setting-row">
+        <div>
+          <strong>Forza button icons</strong>
+          <span>Show PlayStation icons where DSCC manages the supported Forza icon files.</span>
+        </div>
+        <button
+          type="button"
+          class="ctl-button"
+          class:active={glyphOverrideEnabled}
+          disabled={glyphOverrideBusy}
+          aria-pressed={glyphOverrideEnabled}
+          title={glyphOverrideTitle}
+          onclick={() => void onToggleGlyphOverride()}
+        >{glyphOverrideEnabled ? 'PlayStation icons' : 'Game default'}</button>
+      </div>
+    </div>
 
     <div class="ctl-group narrow">
       <div class="lbl">Support</div>

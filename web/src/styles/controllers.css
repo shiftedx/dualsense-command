@@ -318,7 +318,23 @@
   color: var(--ink-muted);
 }
 
+.ctl-note.status {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.ctl-note-label {
+  flex: none;
+  font-weight: 700;
+  color: var(--ink);
+}
+
 .ctl-note.error {
+  color: var(--danger);
+}
+
+.ctl-note.error .ctl-note-label {
   color: var(--danger);
 }
 
@@ -326,6 +342,35 @@
   display: grid;
   gap: 6px;
   margin-top: 8px;
+}
+
+.ctl-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ctl-setting-row > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ctl-setting-row strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ctl-setting-row span {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink-muted);
+}
+
+.ctl-setting-row .ctl-button {
+  flex: none;
 }
 
 /* Support group */
@@ -337,6 +382,25 @@
 }
 
 /* Edge onboard slots */
+.edge-slots-view {
+  max-width: 980px;
+  margin-inline: auto;
+}
+
+@media (min-width: 1800px) {
+  .edge-slots-view {
+    padding-top: 44px;
+  }
+
+  .edge-slots-view .ctl-groups {
+    max-width: 980px;
+  }
+
+  .edge-slots-view .ctl-group {
+    max-width: 560px;
+  }
+}
+
 .edge-slot-list {
   display: grid;
 }

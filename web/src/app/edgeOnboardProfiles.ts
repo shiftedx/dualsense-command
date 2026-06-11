@@ -97,10 +97,15 @@ export function edgeSlotWriteLabel(edgeProfiles: EdgeProfilesResponse | null): s
  * helper handles both the read and the write path, so the copy can't claim a
  * direction.
  */
+export const EDGE_SLOTS_AGENT_REQUIRED_MESSAGE = 'Onboard slots need DSCC running.';
+
+export const isEdgeSlotsAgentRequiredMessage = (message: string): boolean =>
+  message === EDGE_SLOTS_AGENT_REQUIRED_MESSAGE;
+
 export const friendlyEdgeSlotsError = (caught: unknown, fallback: string): string => {
   const message = caught instanceof Error ? caught.message : fallback;
   return message.includes('requires the real DSCC agent')
-    ? 'Onboard slots need DSCC running.'
+    ? EDGE_SLOTS_AGENT_REQUIRED_MESSAGE
     : message;
 };
 
