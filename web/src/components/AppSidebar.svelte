@@ -42,7 +42,10 @@
 </script>
 
 <nav class="sidebar" aria-label="Main">
-  <div class="sidebar-brand">DSCC</div>
+  <div class="sidebar-brand" title="DualSense Command Center">
+    <span class="dm-controller-glyph sidebar-brand-glyph" aria-hidden="true"></span>
+    <span class="visually-hidden">DualSense Command Center</span>
+  </div>
   {#each main as item (item.id)}
     <button
       class="sidebar-item"
