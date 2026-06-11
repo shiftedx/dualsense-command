@@ -168,6 +168,11 @@
       closeMenu();
       return;
     }
+    if (event.key === 'Tab') {
+      // Close so aria-expanded stays honest, but let Tab move focus naturally.
+      closeMenu(false);
+      return;
+    }
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
     event.preventDefault();
     const items = menuItems();
@@ -183,17 +188,26 @@
     closeMenu(false);
   };
 
-  const handleWindowKeydown = (event: KeyboardEvent) => {
-    if (event.key === 'Escape' && openMenu) {
-      event.preventDefault();
-      closeMenu();
-    }
-  };
+  // The menus are position: fixed and placed once at open; any scroll or
+  // resize would leave them floating away from the trigger, so just close.
+  $effect(() => {
+    if (!openMenu) return;
+    const closeOnViewportChange = (event: Event) => {
+      // Ignore scrolls that originate inside the menu itself.
+      if (event.target instanceof Node && menuEl?.contains(event.target)) return;
+      closeMenu(false);
+    };
+    window.addEventListener('scroll', closeOnViewportChange, true);
+    window.addEventListener('resize', closeOnViewportChange);
+    return () => {
+      window.removeEventListener('scroll', closeOnViewportChange, true);
+      window.removeEventListener('resize', closeOnViewportChange);
+    };
+  });
 
   const pickGameEntry = (entry: GameSelectEntry) => {
     if (entry.kind === 'setup-guide') return;
-    closeMenu(false);
-    triggerFor('game')?.focus();
+    closeMenu();
     if (entry.kind === 'everyday') void onSelectGlobal();
     else if (entry.kind === 'game') void onSelectGame(entry.game);
     else if (entry.kind === 'add-game') void onOpenAddGame();
@@ -220,7 +234,7 @@
   };
 </script>
 
-<svelte:window onpointerdown={handleWindowPointerDown} onkeydown={handleWindowKeydown} />
+<svelte:window onpointerdown={handleWindowPointerDown} />
 
 <header
   class="tuning-header"
