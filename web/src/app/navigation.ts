@@ -31,7 +31,7 @@ export const viewTooltips: Record<AppView, string> = {
 };
 
 /** Old routes keep working forever; they land on the new home for that content. */
-const legacyRedirects: Record<string, string> = {
+const oldRouteRedirects: Record<string, string> = {
   '#/games': '#/tuning',
   '#/adaptive-triggers-haptics': '#/tuning',
   '#/controllers': '#/advanced/controller',
@@ -41,7 +41,7 @@ const legacyRedirects: Record<string, string> = {
 /** Every hash the router answers to: current view hashes plus old-route redirects. */
 export const knownViewHashes: string[] = [
   ...appViews.map((item) => item.hash),
-  ...Object.keys(legacyRedirects)
+  ...Object.keys(oldRouteRedirects)
 ];
 
 export function isViewHash(hash: string): boolean {
@@ -62,7 +62,13 @@ export function guardView(view: AppView, readiness: ViewReadiness): AppView {
 }
 
 export function viewFromHash(rawHash: string, readiness: ViewReadiness): AppView {
-  const hash = legacyRedirects[rawHash] ?? rawHash;
+  const hash = oldRouteRedirects[rawHash] ?? rawHash;
   const match = appViews.find((item) => item.hash === hash);
   return guardView(match?.id ?? 'status', readiness);
+}
+
+/** The view a hash is asking for, before readiness guards — null for unknown hashes. */
+export function viewIntentFromHash(rawHash: string): AppView | null {
+  const hash = oldRouteRedirects[rawHash] ?? rawHash;
+  return appViews.find((item) => item.hash === hash)?.id ?? null;
 }

@@ -8,7 +8,7 @@
   import OnboardingTutorial from './components/OnboardingTutorial.svelte';
   import SupportPanel from './components/SupportPanel.svelte';
   import ToastStack from './components/ToastStack.svelte';
-  import { guardView, hashForView, isViewHash, viewFromHash } from './app/navigation';
+  import { guardView, hashForView, isViewHash, viewFromHash, viewIntentFromHash } from './app/navigation';
   import { createAppRuntime } from './app/runtime';
   import {
     createButtonMappingSession,
@@ -508,6 +508,19 @@
       setViewHash(guardedView);
     }
   }
+  $: if (requestedView && snapshot && !loading) {
+    const readiness = { tuningReady, buttonMappingReady, edgeSlotsReady };
+    const promoted = guardView(requestedView, readiness);
+    if (promoted === requestedView) {
+      activeView = requestedView;
+      setViewHash(requestedView);
+    } else {
+      const message = guardBounceMessages[requestedView];
+      if (message) showToast(message, 'info');
+      setViewHash(activeView);
+    }
+    requestedView = null;
+  }
   $: profileContextGame = profileWorkspace.profileContextGame;
   $: profileContextGameId = profileWorkspace.profileContextGameId;
   $: profileContextLabel = profileWorkspace.profileContextLabel;
@@ -743,10 +756,23 @@
     if (window.location.hash !== nextHash) window.location.hash = nextHash;
   };
 
+  // A deep link / reload may ask for a view whose readiness is still unknown
+  // (no snapshot yet). Park the intent instead of rewriting the hash, promote
+  // it when readiness flips true, and explain the bounce when it's permanent.
+  let requestedView: AppView | null = null;
+  const guardBounceMessages: Partial<Record<AppView, string>> = {
+    tuning: 'Tuning opens once a controller is connected.',
+    advancedButtonMapping: 'Button mapping needs a game selected in Tuning first.'
+  };
+
   const syncViewFromHash = () => {
+    const intent = typeof window === 'undefined' ? null : viewIntentFromHash(window.location.hash);
     const view = appViewFromHash();
+    requestedView = intent && intent !== view ? intent : null;
     activeView = view;
-    setViewHash(view);
+    // Only rewrite the hash once readiness is known (or the hash was junk);
+    // a pending intent keeps the user's original hash in the address bar.
+    if (snapshot || !requestedView) setViewHash(view);
   };
 
   const navigateToView = (view: AppView) => {
