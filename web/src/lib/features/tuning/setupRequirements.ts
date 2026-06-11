@@ -44,10 +44,21 @@ export type SetupModel = {
  * no adapter or no port is visible (the mock fixture, early startup).
  */
 export function telemetryPortFromAdapter(adapter: AdapterStatus | null | undefined): number {
-  for (const text of [adapter?.config, adapter?.setupHint]) {
-    const match = text?.match(/:(\d{2,5})(?!\d)/);
-    if (match) {
-      const port = Number(match[1]);
+  // Try address shape first: ipv4:port (e.g., 127.0.0.1:5300)
+  const config = adapter?.config;
+  if (config) {
+    const addressMatch = config.match(/(?:\d{1,3}\.){3}\d{1,3}:(\d{1,5})/);
+    if (addressMatch) {
+      const port = Number(addressMatch[1]);
+      if (Number.isInteger(port) && port > 0 && port <= 65535) return port;
+    }
+  }
+  // Fall back to hint field if config didn't match
+  const hint = adapter?.setupHint;
+  if (hint) {
+    const addressMatch = hint.match(/(?:\d{1,3}\.){3}\d{1,3}:(\d{1,5})/);
+    if (addressMatch) {
+      const port = Number(addressMatch[1]);
       if (Number.isInteger(port) && port > 0 && port <= 65535) return port;
     }
   }

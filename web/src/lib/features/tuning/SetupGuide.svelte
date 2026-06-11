@@ -87,6 +87,12 @@
     }, 1600);
   };
 
+  $effect(() => {
+    return () => {
+      window.clearTimeout(copyResetTimer);
+    };
+  });
+
   const stepNumber = (index: number) => index + 1;
 </script>
 
@@ -104,7 +110,7 @@
     </header>
 
     <div class="setup-guide-grid">
-      <ol class="setup-steps">
+      <ol class="setup-steps" role="list">
         {#each model.steps as step, index (step.id)}
           <li class="setup-step" data-state={step.state}>
             <span class="setup-stepnum" class:done={step.state === 'done'} class:now={step.state === 'now'} aria-hidden="true">
@@ -132,7 +138,7 @@
                     </div>
                   {/each}
                   {#if copyFailed}
-                    <div class="setup-copy-fallback">Copy is blocked in this browser — select the value and copy it yourself.</div>
+                    <div class="setup-copy-fallback" role="status">Copy is blocked in this browser — select the value and copy it yourself.</div>
                   {/if}
                 </div>
               {/if}
