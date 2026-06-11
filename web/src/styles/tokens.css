@@ -56,25 +56,3 @@
 @media (prefers-reduced-motion: reduce) {
   :root { --speed: 0ms; }
 }
-
-/* TEMPORARY legacy aliases — delete in cleanup task */
-:root {
-  --obsidian: var(--bg);
-  --carbon: var(--bg-rail);
-  --actuation: var(--accent);
-  --haptic: var(--ink);
-  --tungsten: var(--ink-muted);
-  --overdrive: var(--danger);
-  --ready: var(--ok);
-  --matte: rgba(214, 214, 220, 0.045);
-  --line: rgba(139, 139, 150, 0.28);
-
-  /* previously-undefined vars referenced by legacy CSS — verify zero usages
-     before deleting; --mono is a real value (not an alias) and must move to
-     the main block if monospace text survives the rework */
-  --muted: var(--ink-muted);
-  --text: var(--ink);
-  --ash: var(--ink-muted);
-  --mono: "Courier New", monospace;
-  --border-strong: var(--hairline-strong);
-}

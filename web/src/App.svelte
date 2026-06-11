@@ -1087,6 +1087,7 @@
     Boolean(currentControllerConfig && profileSaveBaselineSignature) &&
     profileConfigSignature(buildControllerConfig()) !== profileSaveBaselineSignature;
 
+
   // Saved rail diff (Task 7). The object literal mirrors
   // currentProfileDraftValues() but names every draft variable directly so
   // Svelte re-derives the snapshot the moment any tunable value moves (a
@@ -2215,8 +2216,9 @@
       <button class="solid-action compact" type="button" onclick={refresh}>Retry</button>
     </section>
   {:else if snapshot}
-    <!-- TEMPORARY toolbar: leftover ribbon context. Scope + profile pickers now
-         live in the Tuning header; the rest moves in Tasks 9-10. -->
+    <!-- Utility row: cross-view context that has no single page home — the
+         target controller for writes, the web UI bind address, the Forza glyph
+         override, and a compact system readout. -->
     <section class="app-toolbar" aria-label="Controller and display options">
       <label class="app-toolbar-field">
         <span>Target Controller</span>

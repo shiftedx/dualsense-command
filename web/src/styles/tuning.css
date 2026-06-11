@@ -362,10 +362,6 @@
   max-width: 320px;
 }
 
-.canvas-grid .control-slider {
-  max-width: var(--slider-cap);
-}
-
 @media (max-width: 760px) {
   .col-trigger,
   .col-small {
@@ -718,6 +714,15 @@
   display: grid;
   gap: 12px;
   padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-m);
+}
+
+/* The parked trigger-controls panel sits directly in .canvas-below; give it
+   the same bounded field the .canvas-parked wrappers provide (the HUD-era
+   panel background it used to lean on is gone). */
+.canvas-below > .dm-physics {
   background: var(--surface);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-m);

@@ -5,17 +5,6 @@
   padding: clamp(14px, 1.55vw, 22px);
 }
 
-.dm-routing {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
-  gap: 12px;
-  padding: clamp(16px, 1.6vw, 22px);
-}
-
-.dm-routing.dm-global-feel {
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
-}
-
 .dm-global-feel-panel {
   display: grid;
   align-content: start;
@@ -41,7 +30,7 @@
 .dm-global-feel-heading code {
   overflow: hidden;
   max-width: 50%;
-  color: var(--actuation);
+  color: var(--accent);
   font-size: 11px;
   font-weight: 800;
   text-align: right;
@@ -57,7 +46,7 @@
 }
 
 .dm-global-feel-panel article > span {
-  color: var(--tungsten);
+  color: var(--ink-muted);
   font-size: 12px;
   line-height: 1.35;
 }
@@ -87,7 +76,7 @@
 }
 
 .dm-global-feel-controls label > span {
-  color: var(--tungsten);
+  color: var(--ink-muted);
   font-size: 10px;
   font-weight: 800;
   line-height: 1;
@@ -131,7 +120,7 @@
 }
 
 .dm-pattern-option span {
-  color: var(--tungsten);
+  color: var(--ink-muted);
   font-size: 10px;
   font-weight: 800;
   line-height: 1;
@@ -142,7 +131,7 @@
 .dm-pattern-option.active {
   border-color: rgba(0, 112, 204, 0.92);
   background: rgba(0, 112, 204, 0.13);
-  box-shadow: inset 3px 0 0 var(--actuation);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .dm-section-head {
@@ -159,10 +148,9 @@
 
 .dm-section-head span,
 .dm-parameter-strip label > span,
-.dm-led-row > span,
-.dm-profile-line label > span {
+.dm-led-row > span {
   display: block;
-  color: var(--tungsten);
+  color: var(--ink-muted);
   font-size: 10px;
   font-weight: 800;
   line-height: 1;
@@ -192,8 +180,6 @@
 
 .dm-test-button,
 .dm-mini-button,
-.dm-action-button,
-.dm-apply-button,
 .solid-action {
   display: inline-flex;
   align-items: center;
@@ -210,8 +196,7 @@
 }
 
 .dm-test-button,
-.dm-mini-button,
-.dm-action-button {
+.dm-mini-button {
   border: 1px solid rgba(113, 113, 122, 0.78);
   color: #FFFFFF;
   background: transparent;
@@ -221,19 +206,22 @@
 
 .dm-test-button:hover,
 .dm-mini-button:hover,
-.dm-action-button:hover,
 .dm-test-button.active {
   border-color: #FFFFFF;
   background: rgba(226, 232, 240, 0.055);
 }
 
-.dm-action-button.primary {
-  border-color: rgba(0, 112, 204, 0.92);
-  background: var(--actuation);
-  color: #FFFFFF;
+/* Compact sizing + primary variant (Save/Create in the profile menu).
+   Moved from the retired haptics/profile-console.css. */
+.dm-mini-button {
+  width: 76px;
+  min-height: 30px;
+  padding-inline: 10px;
+  font-size: 12px;
 }
 
-.dm-action-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.52;
+.dm-mini-button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #FFFFFF;
 }

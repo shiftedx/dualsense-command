@@ -6,8 +6,8 @@
   width: min(1380px, 100%);
   margin: 0 auto 10px;
   padding: 10px 12px;
-  border-left: 2px solid var(--actuation);
-  color: var(--haptic);
+  border-left: 2px solid var(--accent);
+  color: var(--ink);
   background: rgba(18, 18, 20, 0.92);
   box-shadow:
     inset 0 1px 0 rgba(226, 232, 240, 0.055),
@@ -21,7 +21,7 @@
 }
 
 .dm-support-copy span {
-  color: var(--actuation);
+  color: var(--accent);
   font-size: 10px;
   font-weight: 850;
   letter-spacing: 0.12em;
@@ -39,7 +39,7 @@
 .dm-support-copy p,
 .dm-support-message {
   margin: 0;
-  color: var(--tungsten);
+  color: var(--ink-muted);
   font-size: 12px;
   font-weight: 600;
   line-height: 1.35;
@@ -99,17 +99,17 @@
 }
 
 .dm-toast.success {
-  --toast-accent: #22C55E;
-  --toast-bg: rgba(34, 197, 94, 0.18);
+  --toast-accent: var(--ok);
+  --toast-bg: var(--ok-tint);
 }
 
 .dm-toast.info {
-  --toast-accent: var(--actuation);
+  --toast-accent: var(--accent);
   --toast-bg: rgba(0, 112, 204, 0.18);
 }
 
 .dm-toast.error {
-  --toast-accent: var(--overdrive);
+  --toast-accent: var(--danger);
   --toast-bg: rgba(240, 62, 62, 0.2);
 }
 
@@ -127,4 +127,61 @@
   font-weight: 650;
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+/* Inline notice banners (partial-data + update notices in the main column).
+   Moved from the retired games-catalog.css. */
+.dm-warning {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 1380px;
+  margin: 0 auto 10px;
+  padding: 8px 12px;
+  border: 0;
+  border-left: 2px solid var(--danger);
+  color: #FECACA;
+  background: rgba(240, 62, 62, 0.08);
+  font-size: 12px;
+}
+
+.dm-warning button {
+  border: 1px solid rgba(254, 202, 202, 0.34);
+  border-radius: 4px;
+  color: #FECACA;
+  background: transparent;
+  font-size: 11px;
+}
+
+.dm-warning.update {
+  border-left-color: var(--accent);
+  color: #D8ECFF;
+  background: var(--accent-tint);
+}
+
+.dm-warning-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.dm-warning a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(216, 236, 255, 0.32);
+  border-radius: 4px;
+  color: #D8ECFF;
+  font-size: 11px;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.dm-warning.update button {
+  border-color: rgba(216, 236, 255, 0.32);
+  color: #D8ECFF;
 }

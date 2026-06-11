@@ -121,7 +121,7 @@
           <dd>{controllerDiagnosticDetail(item)}</dd>
         </div>
         <div class="wide">
-          <dt>HID ID</dt>
+          <dt>Sanitized ID</dt>
           <dd class="mono">{item.id}</dd>
         </div>
         {#if item.capabilities.length}
