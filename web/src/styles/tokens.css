@@ -8,6 +8,10 @@
   --hairline-strong: #2e2e36;
   --ink: #d6d6dc;
   --ink-muted: #8b8b96;      /* secondary text only; not body-sized prose */
+  /* Brighter muted ink for small text needing AA headroom: #8b8b96 computes
+     ≈4.46:1 on --surface-raised (a marginal fail); #93939d clears 4.5:1 on
+     every app surface. */
+  --ink-muted-raised: #93939d;
 
   /* accent — PlayStation blue */
   --accent: #0070cc;          /* primary buttons */
