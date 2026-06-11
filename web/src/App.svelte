@@ -8,7 +8,7 @@
   import OnboardingTutorial from './components/OnboardingTutorial.svelte';
   import SupportPanel from './components/SupportPanel.svelte';
   import ToastStack from './components/ToastStack.svelte';
-  import { guardView, hashForView, isViewHash, viewFromHash } from './app/navigation';
+  import { guardView, hashForView, isViewHash, viewFromHash, viewIntentFromHash } from './app/navigation';
   import { createAppRuntime } from './app/runtime';
   import {
     createButtonMappingSession,
@@ -258,6 +258,7 @@
   let applyMessage = '';
   let appSettingsMessage = '';
   let appSettingsBusy = false;
+  let toolbarOpen = false;
   let supportPanelOpen = false;
   let supportBundleBusy: SupportBundleBusy = '';
   let supportBundleMessage = '';
@@ -482,7 +483,19 @@
       ? { ...effect, state: 'active' }
       : effect;
   });
-  $: effectStatusById = new Map(displayedParityEffects.map((effect) => [normalizeEffectId(effect.id), effect]));
+  // Rebuild the Map (a prop of all TelemetryRoutingPanel instances) only when
+  // an effect's state actually changes, not on every snapshot tick.
+  let effectStatusById = new Map<string, (typeof displayedParityEffects)[number]>();
+  let effectStatusSignature = '__unset__';
+  $: {
+    const signature = displayedParityEffects
+      .map((effect) => `${normalizeEffectId(effect.id)}:${effect.state}`)
+      .join('|');
+    if (signature !== effectStatusSignature) {
+      effectStatusSignature = signature;
+      effectStatusById = new Map(displayedParityEffects.map((effect) => [normalizeEffectId(effect.id), effect]));
+    }
+  }
   $: activeProfileName = profileWorkspace.activeProfileName;
   $: activeProfile = profileWorkspace.activeProfile;
   $: selectedOverrideProfile = profileWorkspace.selectedOverrideProfile;
@@ -507,6 +520,19 @@
       activeView = guardedView;
       setViewHash(guardedView);
     }
+  }
+  $: if (requestedView && snapshot && !loading) {
+    const readiness = { tuningReady, buttonMappingReady, edgeSlotsReady };
+    const promoted = guardView(requestedView, readiness);
+    if (promoted === requestedView) {
+      activeView = requestedView;
+      setViewHash(requestedView);
+    } else {
+      const message = guardBounceMessages[requestedView];
+      if (message) showToast(message, 'info');
+      setViewHash(activeView);
+    }
+    requestedView = null;
   }
   $: profileContextGame = profileWorkspace.profileContextGame;
   $: profileContextGameId = profileWorkspace.profileContextGameId;
@@ -638,17 +664,23 @@
   const trackEffectActivity = (effect: CurrentEffectState) => {
     const now = Date.now();
     const nextActivity = { ...effectActivityUntil };
+    let changed = false;
     for (const item of effect.parityEffects) {
       const id = normalizeEffectId(item.id);
       if (item.state === 'disabled') {
-        delete nextActivity[id];
+        if (id in nextActivity) {
+          delete nextActivity[id];
+          changed = true;
+        }
       } else if (item.state === 'active') {
         nextActivity[id] = now + 550;
-      } else if ((nextActivity[id] ?? 0) <= now) {
+        changed = true;
+      } else if ((nextActivity[id] ?? 0) <= now && id in nextActivity) {
         delete nextActivity[id];
+        changed = true;
       }
     }
-    effectActivityUntil = nextActivity;
+    if (changed) effectActivityUntil = nextActivity;
   };
 
   const applySnapshot = (next: AppSnapshot) => {
@@ -743,16 +775,43 @@
     if (window.location.hash !== nextHash) window.location.hash = nextHash;
   };
 
+  // A deep link / reload may ask for a view whose readiness is still unknown
+  // (no snapshot yet). Park the intent instead of rewriting the hash, promote
+  // it when readiness flips true, and explain the bounce when it's permanent.
+  let requestedView: AppView | null = null;
+  const guardBounceMessages: Partial<Record<AppView, string>> = {
+    tuning: 'Tuning opens once a controller is connected.',
+    advancedButtonMapping: 'Button mapping needs a game selected in Tuning first.'
+  };
+
   const syncViewFromHash = () => {
+    const intent = typeof window === 'undefined' ? null : viewIntentFromHash(window.location.hash);
     const view = appViewFromHash();
+    requestedView = intent && intent !== view ? intent : null;
     activeView = view;
-    setViewHash(view);
+    // Only rewrite the hash once readiness is known (or the hash was junk);
+    // a pending intent keeps the user's original hash in the address bar.
+    if (snapshot || !requestedView) setViewHash(view);
   };
 
   const navigateToView = (view: AppView) => {
     view = guardView(view, { tuningReady, buttonMappingReady, edgeSlotsReady });
     activeView = view;
+    // An explicit navigation always wins over a parked deep-link intent.
+    requestedView = null;
     setViewHash(view);
+  };
+
+  // Cmd/Ctrl+S writes the draft into the profile when there is something to
+  // save — the same action as the rail's "Save changes". Always prevent the
+  // browser save dialog while the app has focus.
+  const handleGlobalKeydown = (event: KeyboardEvent) => {
+    if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      if (activeView === 'tuning' && profileConfigDirty && selectedActionProfile && !profileSaveBusy) {
+        void saveActiveProfile();
+      }
+    }
   };
 
   const dismissToast = (id: number) => {
@@ -772,22 +831,24 @@
 
   const inputBridgeBindingProfileId = () => inputBridgeBindingProfileIdForWorkspace(profileWorkspace);
 
-  $: buttonMappingSession = createButtonMappingSession({
-    state: buttonMappingSessionState,
-    store: buttonMappingSessionStore,
-    active: buttonMappingActive,
-    controller,
-    controllerHeaderName,
-    selectedTuningScope,
-    steamContextGame,
-    steamInputStatus,
-    inputBridgeStatus,
-    activeProfileName,
-    profileContextGameName: profileContextGame?.name ?? null,
-    bridgeProfileId: inputBridgeBindingProfileId(),
-    refresh,
-    notify: showToast
-  });
+  $: buttonMappingSession = buttonMappingActive
+    ? createButtonMappingSession({
+        state: buttonMappingSessionState,
+        store: buttonMappingSessionStore,
+        active: buttonMappingActive,
+        controller,
+        controllerHeaderName,
+        selectedTuningScope,
+        steamContextGame,
+        steamInputStatus,
+        inputBridgeStatus,
+        activeProfileName,
+        profileContextGameName: profileContextGame?.name ?? null,
+        bridgeProfileId: inputBridgeBindingProfileId(),
+        refresh,
+        notify: showToast
+      })
+    : EMPTY_BUTTON_MAPPING_VIEW_SESSION;
 
   const setTriggerRangeValue = (side: TriggerSide, edge: TriggerRangeEdge, rawValue: number | string) => {
     if (side === 'l2') {
@@ -1119,10 +1180,28 @@
     leftStickDeadzone,
     rightStickDeadzone
   };
-  $: savedRailRows = savedDiffRows(profileSaveBaselineConfig, profileDraftSnapshot, {
-    includeForza: selectedTuningScope === 'game',
-    intensityPercent: forzaIntensityPercent
-  });
+  // The rail diff is display-only (the dirty flag has its own signature path),
+  // so it recomputes on a 100ms trailing debounce instead of per input event.
+  let savedRailRows: ReturnType<typeof savedDiffRows> = [];
+  let savedRailDiffTimer = 0;
+  const refreshSavedRailRows = () => {
+    savedRailRows = savedDiffRows(profileSaveBaselineConfig, profileDraftSnapshot, {
+      includeForza: selectedTuningScope === 'game',
+      intensityPercent: forzaIntensityPercent
+    });
+  };
+  $: {
+    // Touched (not used) so the reactive compiler re-runs this block when they change.
+    void profileDraftSnapshot;
+    void profileSaveBaselineConfig;
+    void selectedTuningScope;
+    if (typeof window === 'undefined') {
+      refreshSavedRailRows();
+    } else {
+      window.clearTimeout(savedRailDiffTimer);
+      savedRailDiffTimer = window.setTimeout(refreshSavedRailRows, 100);
+    }
+  }
   $: unsavedCount = unsavedChangeCount(savedRailRows);
   $: savedRailProfileName =
     profiles.find((profile) => profile.id === (selectedOverrideProfileId || activeProfileId))?.name ??
@@ -1255,8 +1334,8 @@
   const showTriggerPress = (_side: 'l2' | 'r2', value: number) =>
     baseFeelTestActive || clampUnit(value) > 0.01;
 
-  const setPointsForSide = (side: TriggerSide, points: TriggerCurvePoint[]) => {
-    const normalized = normalizeTriggerCurvePoints(points, side === 'l2' ? l2Curve : r2Curve);
+  const setPointsForSide = (side: TriggerSide, points: TriggerCurvePoint[], alreadyNormalized = false) => {
+    const normalized = alreadyNormalized ? points : normalizeTriggerCurvePoints(points, side === 'l2' ? l2Curve : r2Curve);
     if (side === 'l2') {
       l2CurvePoints = normalized;
     } else {
@@ -1266,8 +1345,11 @@
     scheduleLiveControllerConfigSync();
   };
 
+  // Point edits come from withCurvePointSet/withCurvePointAddedOrSelected,
+  // which already start from normalizeTriggerCurvePoints() output — skip the
+  // second normalization pass per pointermove.
   const applyCurvePointEdit = (side: TriggerSide, edit: CurvePointEdit) => {
-    if (edit.points) setPointsForSide(side, edit.points);
+    if (edit.points) setPointsForSide(side, edit.points, true);
     return edit.index;
   };
 
@@ -1974,15 +2056,10 @@
     if (!refreshOnly) baseFeelTestBusy = true;
     try {
       if (!refreshOnly) await pollTriggerInput();
-      const result = await runEffectTest(baseFeelTestRequest(), controller?.id);
-
-      snapshot = {
-        ...snapshot,
-        effectState: {
-          ...snapshot.effectState,
-          output: result.output
-        }
-      };
+      // The test response's output frame has no UI consumers; reassigning the
+      // whole snapshot here invalidated every snapshot-derived statement per
+      // 35ms refresh tick. The 1Hz snapshot stream keeps effectState current.
+      await runEffectTest(baseFeelTestRequest(), controller?.id);
       baseFeelTestActive = true;
       startTriggerInputPolling();
       armBaseFeelTestTimer();
@@ -2005,7 +2082,8 @@
     baseFeelTestBusy = true;
     baseFeelTestRefreshTask.clear();
     try {
-      const result = await runEffectTest(
+      // Output frame has no UI consumers; the 1Hz snapshot stream keeps state current.
+      await runEffectTest(
         {
           target: 'base_feel',
           mode: 'off',
@@ -2014,13 +2092,6 @@
         },
         controller?.id
       );
-      snapshot = {
-        ...snapshot,
-        effectState: {
-          ...snapshot.effectState,
-          output: result.output
-        }
-      };
       setApplyMessage('Base feel test stopped');
     } catch (caught) {
       setApplyMessage(caught instanceof Error ? caught.message : 'Unable to stop Base feel test');
@@ -2047,7 +2118,8 @@
     }
 
     try {
-      const result = await runEffectTest(
+      // Output frame has no UI consumers; the 1Hz snapshot stream keeps state current.
+      await runEffectTest(
         {
           target: 'rumble',
           mode: vibrationModeRequest(vibrationMode),
@@ -2056,13 +2128,6 @@
         },
         controller?.id
       );
-      snapshot = {
-        ...snapshot,
-        effectState: {
-          ...snapshot.effectState,
-          output: result.output
-        }
-      };
       setApplyMessage(`${vibrationMode} body haptics previewed`);
     } catch (caught) {
       setApplyMessage(caught instanceof Error ? caught.message : 'Body haptics preview failed');
@@ -2076,7 +2141,8 @@
 
     const intensity = lightbarEnabled ? lightbarBrightness : 0;
     try {
-      const result = await runEffectTest(
+      // Output frame has no UI consumers; the 1Hz snapshot stream keeps state current.
+      await runEffectTest(
         {
           target: 'lightbar',
           mode: color,
@@ -2085,14 +2151,6 @@
         },
         controller?.id
       );
-
-      snapshot = {
-        ...snapshot,
-        effectState: {
-          ...snapshot.effectState,
-          output: result.output
-        }
-      };
     } catch (caught) {
       setApplyMessage(caught instanceof Error ? caught.message : `${label} preview failed`);
       return;
@@ -2131,6 +2189,7 @@
         liveConfigSync.clear();
         clearBaseFeelTestTimers();
         stopTriggerInputPolling();
+        window.clearTimeout(savedRailDiffTimer);
       }
     });
     appRuntime.start();
@@ -2171,6 +2230,8 @@
     resetEdgeProfiles();
   }
 </script>
+
+<svelte:window onkeydown={handleGlobalKeydown} />
 
 <div class="app-shell">
   <AppSidebar
@@ -2224,59 +2285,71 @@
     <!-- Utility row: cross-view context that has no single page home — the
          target controller for writes, the web UI bind address, the Forza glyph
          override, and a compact system readout. -->
-    <section class="app-toolbar" aria-label="Controller and display options">
-      <label class="app-toolbar-field">
-        <span>Target Controller</span>
-        <select
-          aria-label="Target controller"
-          disabled={!connectedControllerIds.length}
-          value={profileTargetsAllConnected ? '__all__' : profileTargetControllerIds[0] ?? controller?.id ?? ''}
-          onchange={(event) => {
-            const picked = event.currentTarget.value;
-            if (picked === '__all__') pickAllControllers();
-            else if (picked) pickControllerTarget(picked);
-          }}
-        >
-          {#if connectedControllerIds.length > 1}
-            <option value="__all__">All Connected</option>
-          {/if}
-          {#each connectedControllers as item (item.id)}
-            <option value={item.id}>{item.name || controllerModelText(item)}</option>
-          {/each}
-        </select>
-      </label>
-      <label class="app-toolbar-field">
-        <span>Web UI Location</span>
-        <select
-          aria-label="Web UI location"
-          disabled={appSettingsBusy}
-          title={lanRestartRequired ? `restart -> ${appSettings?.desiredBindAddress}` : status?.bindAddress}
-          value={listenOnAllInterfaces ? 'lan' : 'local'}
-          onchange={(event) => void updateLanAccess(event.currentTarget.value === 'lan')}
-        >
-          <option value="local">Local Only</option>
-          <option value="lan">LAN Access</option>
-        </select>
-        <small>{lanRestartRequired ? `restart -> ${appSettings?.desiredBindAddress}` : status?.bindAddress}</small>
-      </label>
+    <section class="app-toolbar" class:open={toolbarOpen} aria-label="Controller and display options">
       <button
-        class="app-toolbar-toggle"
-        class:active={glyphOverrideEnabled}
+        class="app-toolbar-disclosure"
         type="button"
-        disabled={appSettingsBusy}
-        aria-pressed={glyphOverrideEnabled}
-        title={forzaGlyphs?.lastStatus ?? glyphInstallPath}
-        onclick={() => void updateForzaGlyphOverride()}
+        aria-expanded={toolbarOpen}
+        aria-controls="app-toolbar-items"
+        onclick={() => {
+          toolbarOpen = !toolbarOpen;
+        }}
       >
-        Controller Glyphs: {glyphOverrideEnabled ? 'PlayStation Icons' : 'Game Default'}
+        Controller &amp; display options
       </button>
-      <div class="app-toolbar-spacer"></div>
-      <div
-        class="app-toolbar-readout"
-        title={selectedTuningScope === 'global' ? systemReadoutDetail : adapter?.setupHint ?? telemetryRateDetail}
-      >
-        <span>{systemReadoutTitle}</span>
-        <p><strong>{systemReadoutValue}</strong><small>{systemReadoutDetail}</small></p>
+      <div class="app-toolbar-items" id="app-toolbar-items">
+        <label class="app-toolbar-field">
+          <span>Target Controller</span>
+          <select
+            aria-label="Target controller"
+            disabled={!connectedControllerIds.length}
+            value={profileTargetsAllConnected ? '__all__' : profileTargetControllerIds[0] ?? controller?.id ?? ''}
+            onchange={(event) => {
+              const picked = event.currentTarget.value;
+              if (picked === '__all__') pickAllControllers();
+              else if (picked) pickControllerTarget(picked);
+            }}
+          >
+            {#if connectedControllerIds.length > 1}
+              <option value="__all__">All Connected</option>
+            {/if}
+            {#each connectedControllers as item (item.id)}
+              <option value={item.id}>{item.name || controllerModelText(item)}</option>
+            {/each}
+          </select>
+        </label>
+        <label class="app-toolbar-field">
+          <span>Web UI Location</span>
+          <select
+            aria-label="Web UI location"
+            disabled={appSettingsBusy}
+            title={lanRestartRequired ? `restart -> ${appSettings?.desiredBindAddress}` : status?.bindAddress}
+            value={listenOnAllInterfaces ? 'lan' : 'local'}
+            onchange={(event) => void updateLanAccess(event.currentTarget.value === 'lan')}
+          >
+            <option value="local">Local Only</option>
+            <option value="lan">LAN Access</option>
+          </select>
+        </label>
+        <button
+          class="app-toolbar-toggle"
+          class:active={glyphOverrideEnabled}
+          type="button"
+          disabled={appSettingsBusy}
+          aria-pressed={glyphOverrideEnabled}
+          title={forzaGlyphs?.lastStatus ?? glyphInstallPath}
+          onclick={() => void updateForzaGlyphOverride()}
+        >
+          Controller Glyphs: {glyphOverrideEnabled ? 'PlayStation Icons' : 'Game Default'}
+        </button>
+        <div class="app-toolbar-spacer"></div>
+        <div
+          class="app-toolbar-readout"
+          title={selectedTuningScope === 'global' ? systemReadoutDetail : adapter?.setupHint ?? telemetryRateDetail}
+        >
+          <span>{systemReadoutTitle}</span>
+          <p><strong>{systemReadoutValue}</strong><small>{systemReadoutDetail}</small></p>
+        </div>
       </div>
     </section>
 
@@ -2570,68 +2643,73 @@
           />
         </svelte:fragment>
         <svelte:fragment slot="below">
-          <!-- Parked until Tasks 8-10 re-home it; nothing previously rendered
-               may be lost. Curve reset/test head + base feel strip: -->
-          <TriggerCurvesPanel
-            showCurves={false}
-            {selectedTuningScope}
-            {snapshot}
-            {baseFeelTestActive}
-            {baseFeelTestBusy}
-            {resetTriggerCurvesToProfileDefaults}
-            {toggleBaseFeelTest}
-            {triggerEffect}
-            {triggerIntensity}
-            {vibrationIntensity}
-            {vibrationMode}
-            {triggerEffectOptions}
-            {vibrationModeOptions}
-            {triggerEffectHelp}
-            {triggerStrengthHelp}
-            {vibrationHelp}
-            {vibrationModeHelp}
-            {setTriggerEffect}
-            {setTriggerIntensity}
-            {setVibrationIntensity}
-            {setVibrationMode}
-          />
-          {#if selectedTuningScope === 'game'}
-            <!-- Telemetry stream head + body rumble source routing chrome. -->
-            <div class="canvas-parked">
-              <TelemetryRoutingPanel
-                showEffects={false}
-                {enabledForzaEffectCount}
-                {allForzaEffectsEnabled}
-                {forzaEffectMetas}
-                {forzaBodyRumbleMode}
-                {bodyRumbleModeOptions}
-                {toggleAllForzaEffects}
-                {setForzaBodyRumbleMode}
-              />
-            </div>
-          {:else}
-            <!-- Global scope: base haptics panel (trigger pattern + body). -->
-            <div class="canvas-parked">
-              <GlobalFeelPanel
-                {snapshot}
-                {baseFeelTestActive}
-                {baseFeelTestBusy}
-                {triggerEffect}
-                {triggerIntensity}
-                {vibrationIntensity}
-                {vibrationMode}
-                {triggerEffectOptions}
-                {vibrationModeOptions}
-                {triggerEffectHelp}
-                {vibrationModeHelp}
-                {setTriggerEffect}
-                {setVibrationIntensity}
-                {setVibrationMode}
-                {toggleBaseFeelTest}
-                {previewBodyHaptics}
-              />
-            </div>
-          {/if}
+          <!-- Parked until these controls get real homes; collapsed so the
+               canvas keeps one voice. Nothing previously rendered is lost. -->
+          <details class="canvas-more">
+            <summary>More tuning controls</summary>
+            <!-- Parked until Tasks 8-10 re-home it; nothing previously rendered
+                 may be lost. Curve reset/test head + base feel strip: -->
+            <TriggerCurvesPanel
+              showCurves={false}
+              {selectedTuningScope}
+              {snapshot}
+              {baseFeelTestActive}
+              {baseFeelTestBusy}
+              {resetTriggerCurvesToProfileDefaults}
+              {toggleBaseFeelTest}
+              {triggerEffect}
+              {triggerIntensity}
+              {vibrationIntensity}
+              {vibrationMode}
+              {triggerEffectOptions}
+              {vibrationModeOptions}
+              {triggerEffectHelp}
+              {triggerStrengthHelp}
+              {vibrationHelp}
+              {vibrationModeHelp}
+              {setTriggerEffect}
+              {setTriggerIntensity}
+              {setVibrationIntensity}
+              {setVibrationMode}
+            />
+            {#if selectedTuningScope === 'game'}
+              <!-- Telemetry stream head + body rumble source routing chrome. -->
+              <div class="canvas-parked">
+                <TelemetryRoutingPanel
+                  showEffects={false}
+                  {enabledForzaEffectCount}
+                  {allForzaEffectsEnabled}
+                  {forzaEffectMetas}
+                  {forzaBodyRumbleMode}
+                  {bodyRumbleModeOptions}
+                  {toggleAllForzaEffects}
+                  {setForzaBodyRumbleMode}
+                />
+              </div>
+            {:else}
+              <!-- Global scope: base haptics panel (trigger pattern + body). -->
+              <div class="canvas-parked">
+                <GlobalFeelPanel
+                  {snapshot}
+                  {baseFeelTestActive}
+                  {baseFeelTestBusy}
+                  {triggerEffect}
+                  {triggerIntensity}
+                  {vibrationIntensity}
+                  {vibrationMode}
+                  {triggerEffectOptions}
+                  {vibrationModeOptions}
+                  {triggerEffectHelp}
+                  {vibrationModeHelp}
+                  {setTriggerEffect}
+                  {setVibrationIntensity}
+                  {setVibrationMode}
+                  {toggleBaseFeelTest}
+                  {previewBodyHaptics}
+                />
+              </div>
+            {/if}
+          </details>
         </svelte:fragment>
       </TuningCanvas>
       {/if}

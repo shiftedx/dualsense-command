@@ -48,7 +48,7 @@
   let copyFailed = $state(false);
   let copyResetTimer = 0;
 
-  const legacyCopy = (value: string): boolean => {
+  const fallbackCopy = (value: string): boolean => {
     const area = document.createElement('textarea');
     area.value = value;
     area.setAttribute('readonly', '');
@@ -73,10 +73,10 @@
         await navigator.clipboard.writeText(value);
         ok = true;
       } else {
-        ok = legacyCopy(value);
+        ok = fallbackCopy(value);
       }
     } catch {
-      ok = legacyCopy(value);
+      ok = fallbackCopy(value);
     }
     copiedValue = ok ? value : '';
     copyFailed = !ok;

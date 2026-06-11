@@ -345,7 +345,7 @@ pub(crate) fn default_l2_trigger_curve_points() -> Vec<TriggerCurvePoint> {
     ]
 }
 
-pub(crate) fn legacy_soft_l2_trigger_curve_points() -> Vec<TriggerCurvePoint> {
+pub(crate) fn previous_soft_l2_trigger_curve_points() -> Vec<TriggerCurvePoint> {
     vec![
         TriggerCurvePoint {
             input: 0,

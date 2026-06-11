@@ -90,12 +90,12 @@
   <!-- Status dot, kept low-key so it reads as a stable indicator, not a notification -->
   <circle cx="54" cy="12" r="2" fill={accent} fill-opacity="0.85" />
 
-  <!-- The initial. Space Grotesk is the brand display face used in the app shell. -->
+  <!-- The initial. Inter is the brand display face used in the app shell. -->
   <text
     x="32"
     y="42"
     text-anchor="middle"
-    font-family="Space Grotesk, Inter Tight, Inter, sans-serif"
+    font-family="'Inter Variable', Inter, sans-serif"
     font-size="30"
     font-weight="700"
     fill="#FFFFFF"
