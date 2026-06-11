@@ -112,7 +112,9 @@ export function headerTitle(options: {
     const game = (options.games ?? []).find((item) => item.gameId === options.selectedGameId);
     if (game) return game.name;
   }
-  return 'Everyday (no game)';
+  /* "Everyday" is a presentation label and must always pair with its
+     domain term, Global Profile (CONTEXT.md / spec §13). */
+  return 'Everyday · Global Profile';
 }
 
 export type TelemetryChipState = 'fresh' | 'quiet' | 'setup' | 'none' | null;
