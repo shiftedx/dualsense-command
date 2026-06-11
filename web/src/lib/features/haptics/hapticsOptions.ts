@@ -20,10 +20,10 @@ export const FORZA_THROTTLE_BASELINE_FORCE = 3 / 255;
 export const FORZA_THROTTLE_NORMAL_FORCE = 28 / 255;
 export const FORZA_THROTTLE_ENDSTOP_FORCE = 106 / 255;
 export const FORZA_ENDSTOP_WALL_OFFSET = 0.03;
-export const FORZA_BRAKE_OVERTRAVEL_WALL_POSITION = 0.48;
+export const FORZA_BRAKE_OVERTRAVEL_WALL_POSITION = 0.98;
 export const FORZA_BRAKE_OVERTRAVEL_MIN_POSITION = 0.48;
 export const FORZA_BRAKE_OVERTRAVEL_RAMP_CURVE = 0.8;
-export const FORZA_BRAKE_FULL_FORCE_INPUT = 0.80;
+export const FORZA_BRAKE_FULL_FORCE_INPUT = 0.95;
 export const FORZA_THROTTLE_OVERTRAVEL_WALL_POSITION = 0.80;
 export const FORZA_THROTTLE_OVERTRAVEL_MIN_POSITION = 0.80;
 export const FORZA_BRAKE_ENDSTOP_FORCE_BOOST = 1.25;
@@ -159,7 +159,7 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
       label: 'Brake pressure',
       signal: 'input.brake',
       group: 'Trigger',
-      defaultIntensity: 100,
+      defaultIntensity: 77,
       defaultRoute: 'l2',
       help: 'Maps brake input to L2 resistance. Advanced tuning controls initial force, ramp force, wall position, full-force point, and ramp shape; best left on L2 for a natural brake pedal feel.'
     },
@@ -169,7 +169,7 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
       label: 'ABS pulse',
       signal: 'wheel.slip.front_max',
       group: 'Trigger',
-      defaultIntensity: 100,
+      defaultIntensity: 26,
       defaultRoute: 'l2',
       help: 'Adds a strong, fast L2 trigger pulse when front tires lose grip under braking. It is tuned to be obvious enough to read as ABS modulation during hard braking.'
     },

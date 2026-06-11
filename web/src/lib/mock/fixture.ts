@@ -28,9 +28,9 @@ export const MOCK_EXPORT_SCHEMA = 'dev.dscc.profile.v1';
 export type MockEditableControllerConfig = Omit<ControllerConfiguration, 'controllerId' | 'model'>;
 
 export const mockForzaEffects: ForzaEffectConfiguration[] = [
-  { id: 'brake_resistance', enabled: true, intensity: 115, route: 'l2' },
-  { id: 'abs_slip_pulse', enabled: true, intensity: 105, route: 'l2' },
-  { id: 'handbrake_wall', enabled: true, intensity: 95, route: 'l2' },
+  { id: 'brake_resistance', enabled: true, intensity: 77, route: 'l2' },
+  { id: 'abs_slip_pulse', enabled: true, intensity: 26, route: 'l2' },
+  { id: 'handbrake_wall', enabled: true, intensity: 100, route: 'l2' },
   { id: 'throttle_resistance', enabled: true, intensity: 120, route: 'r2' },
   { id: 'gear_shift_thump', enabled: true, intensity: 150, route: 'r2_and_body' },
   { id: 'rev_limiter_buzz', enabled: true, intensity: 126, route: 'r2' },
@@ -45,13 +45,13 @@ export const mockForzaEffects: ForzaEffectConfiguration[] = [
 export const mockForzaAbsTuning: ForzaAbsTuningConfiguration = {
   mode: 'strong_pulse',
   slipSource: 'auto_front_first',
-  slipThreshold: 0.5,
-  brakeThresholdRatio: 0.24,
-  minSpeedKmh: 6,
-  minStrength: 0.95,
+  slipThreshold: 0.68,
+  brakeThresholdRatio: 0.8,
+  minSpeedKmh: 12,
+  minStrength: 48 / 63,
   maxStrength: 1,
-  frequencyHz: 26,
-  curve: 0.55
+  frequencyHz: 34,
+  curve: 1
 };
 
 export const mockForzaBrakeTuning: ForzaBrakeTuningConfiguration = {
@@ -59,9 +59,9 @@ export const mockForzaBrakeTuning: ForzaBrakeTuningConfiguration = {
   normalForce: 1,
   endstopForce: 1,
   endstopBoost: 1.25,
-  wallPosition: 0.48,
+  wallPosition: 0.98,
   guardMinEnd: 0.48,
-  fullForceAt: 0.8,
+  fullForceAt: 0.95,
   rampCurve: 0.8
 };
 
@@ -174,7 +174,7 @@ export const mockControllerConfig: ControllerConfiguration = {
   inputMode: 'steam_input_companion',
   trigger: {
     sameRange: false,
-    l2From: 6,
+    l2From: 0,
     l2To: 100,
     r2From: 2,
     r2To: 100,
@@ -182,11 +182,9 @@ export const mockControllerConfig: ControllerConfiguration = {
     r2Curve: 2.1,
     l2CurvePoints: [
       { input: 0, output: 0 },
-      { input: 12, output: 18 },
-      { input: 25, output: 44 },
-      { input: 40, output: 68 },
-      { input: 58, output: 86 },
-      { input: 78, output: 96 },
+      { input: 25, output: 25 },
+      { input: 50, output: 50 },
+      { input: 75, output: 75 },
       { input: 100, output: 100 }
     ],
     r2CurvePoints: [

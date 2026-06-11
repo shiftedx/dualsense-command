@@ -163,7 +163,7 @@ impl Default for TriggerConfig {
     fn default() -> Self {
         Self {
             same_range: false,
-            l2_from: 6,
+            l2_from: 0,
             l2_to: 100,
             r2_from: 0,
             r2_to: 100,
@@ -325,8 +325,8 @@ mod forza_tuning {
 
     pub(super) fn default_effect_configs() -> Vec<ForzaEffectConfig> {
         [
-            ("brake_resistance", 100, "l2"),
-            ("abs_slip_pulse", 100, "l2"),
+            ("brake_resistance", 77, "l2"),
+            ("abs_slip_pulse", 26, "l2"),
             ("handbrake_wall", 100, "l2"),
             ("throttle_resistance", 100, "r2"),
             (

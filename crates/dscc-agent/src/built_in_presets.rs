@@ -47,9 +47,9 @@ pub(crate) fn forza_horizon_preset() -> ForzaTelemetryConfig {
     // effects (rumble strip, suspension impact, tire slip, puddle drag)
     // stay disabled by default; users can opt in via the tuning UI.
     let entries: &[(&str, bool, u8, &str)] = &[
-        ("brake_resistance", true, 100, "l2"),
+        ("brake_resistance", true, 77, "l2"),
         ("throttle_resistance", true, 100, "r2"),
-        ("abs_slip_pulse", true, 100, "l2"),
+        ("abs_slip_pulse", true, 26, "l2"),
         ("handbrake_wall", true, 100, "l2"),
         ("rev_limiter_buzz", true, 85, "r2"),
         (
@@ -104,9 +104,9 @@ pub(crate) fn forza_horizon_immersive_preset() -> ForzaTelemetryConfig {
     //   - Rumble strips -> both grips, but below shift and impact events.
     //   - Redline ramp -> enabled; it warms up near shift RPM and blinks at the limiter.
     let entries: &[(&str, bool, u8, &str)] = &[
-        ("brake_resistance", true, 100, "l2"),
+        ("brake_resistance", true, 77, "l2"),
         ("throttle_resistance", true, 100, "r2"),
-        ("abs_slip_pulse", true, 100, "l2"),
+        ("abs_slip_pulse", true, 26, "l2"),
         ("handbrake_wall", true, 100, "l2"),
         ("rev_limiter_buzz", true, 95, "r2"),
         (
@@ -193,13 +193,15 @@ pub(crate) fn assetto_corsa_rally_preset() -> ForzaTelemetryConfig {
 pub(crate) fn forza_horizon_trigger_preset() -> TriggerConfig {
     TriggerConfig {
         same_range: false,
-        l2_from: 6,
+        l2_from: 0,
         l2_to: 100,
         r2_from: 4,
         r2_to: 100,
         l2_curve: TriggerCurve::from_ratio(FORZA_BRAKE_CURVE),
         r2_curve: TriggerCurve::from_ratio(FORZA_THROTTLE_CURVE),
-        l2_curve_points: default_l2_trigger_curve_points(),
+        l2_curve_points: trigger_curve_points_from_curve(TriggerCurve::from_ratio(
+            FORZA_BRAKE_CURVE,
+        )),
         r2_curve_points: trigger_curve_points_from_curve(TriggerCurve::from_ratio(
             FORZA_THROTTLE_CURVE,
         )),
@@ -212,31 +214,24 @@ pub(crate) fn forza_horizon_trigger_preset() -> TriggerConfig {
 }
 
 fn forza_horizon_abs_tuning() -> ForzaAbsTuningConfig {
-    ForzaAbsTuningConfig {
-        mode: "strong_pulse".to_string(),
-        slip_source: "auto_front_first".to_string(),
-        slip_threshold: 0.58,
-        brake_threshold_ratio: 0.28,
-        min_speed_kmh: 8.0,
-        min_strength: 0.84,
-        max_strength: 1.0,
-        frequency_hz: 30.0,
-        curve: 0.65,
-    }
-    .normalized()
+    standard_forza_abs_tuning()
 }
 
 fn forza_horizon_immersive_abs_tuning() -> ForzaAbsTuningConfig {
+    standard_forza_abs_tuning()
+}
+
+fn standard_forza_abs_tuning() -> ForzaAbsTuningConfig {
     ForzaAbsTuningConfig {
         mode: "strong_pulse".to_string(),
         slip_source: "auto_front_first".to_string(),
-        slip_threshold: 0.50,
-        brake_threshold_ratio: 0.24,
-        min_speed_kmh: 6.0,
-        min_strength: 0.95,
+        slip_threshold: FORZA_ABS_SLIP_THRESHOLD,
+        brake_threshold_ratio: FORZA_ABS_RANGE_START_RATIO,
+        min_speed_kmh: FORZA_ABS_MIN_SPEED_KMH,
+        min_strength: FORZA_ABS_PULSE_MIN_AMPLITUDE,
         max_strength: 1.0,
-        frequency_hz: 26.0,
-        curve: 0.55,
+        frequency_hz: FORZA_ABS_PULSE_FREQUENCY_HZ,
+        curve: 1.0,
     }
     .normalized()
 }

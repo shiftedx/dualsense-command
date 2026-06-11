@@ -327,7 +327,7 @@
     }
   };
 
-  let l2From = 6;
+  let l2From = 0;
   let l2To = 100;
   let r2From = 0;
   let r2To = 100;

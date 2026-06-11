@@ -67,16 +67,16 @@ fn forza_horizon_preset_preserves_native_body_rumble_by_default() {
         .find(|effect| effect.id == "abs_slip_pulse")
         .expect("preset must contain 'abs_slip_pulse'");
     assert_eq!(
-        abs.intensity, 100,
-        "ABS preset intensity should preserve the 20-unit reference pulse"
+        abs.intensity, 26,
+        "ABS preset intensity should match the promoted New Brakes FH6 setting"
     );
     assert_eq!(preset.abs.mode, "strong_pulse");
-    assert!((preset.abs.slip_threshold - 0.58).abs() < f64::EPSILON);
-    assert!((preset.abs.brake_threshold_ratio - 0.28).abs() < f64::EPSILON);
-    assert!((preset.abs.min_speed_kmh - 8.0).abs() < f64::EPSILON);
-    assert!((preset.abs.min_strength - 0.84).abs() < f64::EPSILON);
-    assert!((preset.abs.frequency_hz - 30.0).abs() < f64::EPSILON);
-    assert!((preset.abs.curve - 0.65).abs() < f64::EPSILON);
+    assert!((preset.abs.slip_threshold - FORZA_ABS_SLIP_THRESHOLD).abs() < f64::EPSILON);
+    assert!((preset.abs.brake_threshold_ratio - FORZA_ABS_RANGE_START_RATIO).abs() < f64::EPSILON);
+    assert!((preset.abs.min_speed_kmh - FORZA_ABS_MIN_SPEED_KMH).abs() < f64::EPSILON);
+    assert!((preset.abs.min_strength - FORZA_ABS_PULSE_MIN_AMPLITUDE).abs() < f64::EPSILON);
+    assert!((preset.abs.frequency_hz - FORZA_ABS_PULSE_FREQUENCY_HZ).abs() < f64::EPSILON);
+    assert!((preset.abs.curve - 1.0).abs() < f64::EPSILON);
 
     let shift = preset
         .effects
@@ -161,13 +161,15 @@ fn forza_horizon_immersive_preset_layers_detail_without_stealing_core_cues() {
     );
     assert_eq!(rpm_leds.intensity, 100);
     assert_eq!(rpm_leds.route, "light_led");
+    assert_eq!(effect("brake_resistance").intensity, 77);
+    assert_eq!(effect("abs_slip_pulse").intensity, 26);
     assert_eq!(preset.abs.mode, "strong_pulse");
-    assert!((preset.abs.slip_threshold - 0.50).abs() < f64::EPSILON);
-    assert!((preset.abs.brake_threshold_ratio - 0.24).abs() < f64::EPSILON);
-    assert!((preset.abs.min_speed_kmh - 6.0).abs() < f64::EPSILON);
-    assert!((preset.abs.min_strength - 0.95).abs() < f64::EPSILON);
-    assert!((preset.abs.frequency_hz - 26.0).abs() < f64::EPSILON);
-    assert!((preset.abs.curve - 0.55).abs() < f64::EPSILON);
+    assert!((preset.abs.slip_threshold - FORZA_ABS_SLIP_THRESHOLD).abs() < f64::EPSILON);
+    assert!((preset.abs.brake_threshold_ratio - FORZA_ABS_RANGE_START_RATIO).abs() < f64::EPSILON);
+    assert!((preset.abs.min_speed_kmh - FORZA_ABS_MIN_SPEED_KMH).abs() < f64::EPSILON);
+    assert!((preset.abs.min_strength - FORZA_ABS_PULSE_MIN_AMPLITUDE).abs() < f64::EPSILON);
+    assert!((preset.abs.frequency_hz - FORZA_ABS_PULSE_FREQUENCY_HZ).abs() < f64::EPSILON);
+    assert!((preset.abs.curve - 1.0).abs() < f64::EPSILON);
 }
 
 #[test]
@@ -369,8 +371,18 @@ async fn activating_forza_profile_writes_preset_into_controller_config() {
         .find(|effect| effect.id == "brake_resistance")
         .expect("brake_resistance present after activation");
     assert!(brake.enabled);
-    assert_eq!(brake.intensity, 100);
+    assert_eq!(brake.intensity, 77);
     assert_eq!(brake.route, "l2");
+
+    let abs = config
+        .forza
+        .effects
+        .iter()
+        .find(|effect| effect.id == "abs_slip_pulse")
+        .expect("abs_slip_pulse present after activation");
+    assert!(abs.enabled);
+    assert_eq!(abs.intensity, 26);
+    assert_eq!(abs.route, "l2");
 
     let shift = config
         .forza
@@ -389,7 +401,7 @@ async fn activating_forza_profile_writes_preset_into_controller_config() {
         .find(|effect| effect.id == "rpm_leds")
         .expect("rpm_leds present after activation");
     assert!(rpm_leds.enabled);
-    assert_eq!(config.trigger.l2_from, 6);
+    assert_eq!(config.trigger.l2_from, 0);
     assert_eq!(config.trigger.r2_from, 4);
     assert_eq!(config.trigger.l2_to, 100);
     assert_eq!(config.trigger.r2_to, 100);
@@ -462,7 +474,7 @@ async fn activating_immersive_forza_profile_writes_layered_preset() {
         effect("rpm_leds").enabled,
         "Immersive should enable the redline ramp"
     );
-    assert_eq!(config.trigger.l2_from, 6);
+    assert_eq!(config.trigger.l2_from, 0);
     assert_eq!(config.trigger.r2_from, 4);
     assert_eq!(config.trigger.l2_to, 100);
     assert_eq!(config.trigger.r2_to, 100);

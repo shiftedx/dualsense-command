@@ -49,7 +49,7 @@ async fn detected_forza_auto_loads_profile_without_ui_apply() {
     assert!(effect_enabled("gear_shift_thump"));
     assert!(effect_enabled("rpm_leds"));
     assert!(effect_enabled("road_texture"));
-    assert_eq!(config.trigger.l2_from, 6);
+    assert_eq!(config.trigger.l2_from, 0);
     assert_eq!(config.trigger.r2_from, 4);
     assert_eq!(config.lightbar.color, "#f4a261");
     assert_eq!(config.lightbar.brightness, 44);

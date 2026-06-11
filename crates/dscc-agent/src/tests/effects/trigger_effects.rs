@@ -58,9 +58,9 @@ fn forza_trigger_resistance_uses_tensioned_throttle_curve() {
             start_position,
             strength,
         } => {
-            assert!((start_position - 0.06).abs() < f64::EPSILON);
+            assert!((start_position - 0.0).abs() < f64::EPSILON);
             assert!(
-                (0.24..0.27).contains(&strength),
+                (0.19..0.20).contains(&strength),
                 "idle brake should have a firm preload before pedal travel builds, got {strength}"
             );
         }
@@ -94,10 +94,10 @@ fn forza_trigger_resistance_uses_tensioned_throttle_curve() {
             start_position,
             strength,
         } => {
-            assert!((start_position - 0.80).abs() < f64::EPSILON);
+            assert!((start_position - 0.0).abs() < f64::EPSILON);
             assert!(
-                (0.99..=1.0).contains(&strength),
-                "partial brake should hold a throttle-like wall through the final travel, got {strength}"
+                (0.57..0.59).contains(&strength),
+                "partial brake should keep building toward the late pedal wall, got {strength}"
             );
         }
         other => panic!("expected brake resistance, got {other:?}"),
@@ -139,10 +139,10 @@ fn forza_full_pedal_press_arms_end_stop_force() {
             start_position,
             strength,
         } => {
-            assert!((start_position - 0.80).abs() < f64::EPSILON);
+            assert!((start_position - 0.98).abs() < f64::EPSILON);
             assert!(
-                strength > 0.98 && strength <= 1.0,
-                "full brake should create a throttle-wall-level end stop, got {strength}"
+                (0.82..0.84).contains(&strength),
+                "full brake should create the promoted New Brakes end stop, got {strength}"
             );
         }
         other => panic!("expected full brake force, got {other:?}"),
@@ -328,10 +328,10 @@ fn forza_brake_load_uses_global_wall_in_final_travel() {
             start_position,
             strength,
         } => {
-            assert!((start_position - 0.06).abs() < f64::EPSILON);
+            assert!((start_position - 0.0).abs() < f64::EPSILON);
             assert!(
-                (0.84..0.87).contains(&strength),
-                "brake should already have clear mid-pedal force before the end-load ramp, got {strength}"
+                (0.43..0.45).contains(&strength),
+                "brake should build progressively before the late end-load wall, got {strength}"
             );
         }
         other => panic!("expected continuous brake load before the end-load ramp, got {other:?}"),
@@ -343,10 +343,10 @@ fn forza_brake_load_uses_global_wall_in_final_travel() {
             start_position,
             strength,
         } => {
-            assert!((start_position - 0.80).abs() < f64::EPSILON);
+            assert!((start_position - 0.0).abs() < f64::EPSILON);
             assert!(
-                (0.99..=1.0).contains(&strength),
-                "brake should hold a throttle-like wall through the final travel, got {strength}"
+                (0.62..0.64).contains(&strength),
+                "brake should still be ramping before the configured end point, got {strength}"
             );
         }
         other => panic!("expected brake final-travel wall, got {other:?}"),
@@ -358,10 +358,10 @@ fn forza_brake_load_uses_global_wall_in_final_travel() {
             start_position,
             strength,
         } => {
-            assert!((start_position - 0.80).abs() < f64::EPSILON);
+            assert!((start_position - 0.90).abs() < f64::EPSILON);
             assert!(
-                strength > 0.98 && strength <= 1.0,
-                "brake should reach throttle-wall-level force near the configured end point, got {strength}"
+                (0.82..0.84).contains(&strength),
+                "brake should reach the promoted end-stop force near the configured end point, got {strength}"
             );
         }
         other => panic!("expected max brake force at the configured end point, got {other:?}"),
@@ -401,9 +401,9 @@ fn forza_brake_advanced_tuning_moves_wall_and_force_levels() {
             start_position,
             strength,
         } => {
-            assert!((start_position - 0.06).abs() < f64::EPSILON);
+            assert!((start_position - 0.0).abs() < f64::EPSILON);
             assert!(
-                (0.59..0.61).contains(&strength),
+                (0.45..0.46).contains(&strength),
                 "custom brake curve should hold the configured pedal force before the wall, got {strength}"
             );
         }
@@ -416,9 +416,9 @@ fn forza_brake_advanced_tuning_moves_wall_and_force_levels() {
             start_position,
             strength,
         } => {
-            assert!((start_position - 0.06).abs() < f64::EPSILON);
+            assert!((start_position - 0.0).abs() < f64::EPSILON);
             assert!(
-                (0.70..0.73).contains(&strength),
+                (0.54..0.56).contains(&strength),
                 "custom brake wall should begin ramping toward boosted force, got {strength}"
             );
         }
@@ -433,7 +433,7 @@ fn forza_brake_advanced_tuning_moves_wall_and_force_levels() {
         } => {
             assert!((start_position - 0.86).abs() < f64::EPSILON);
             assert!(
-                (0.82..0.84).contains(&strength),
+                (0.63..0.64).contains(&strength),
                 "custom brake full-force point should use the configured boosted force, got {strength}"
             );
         }
@@ -470,7 +470,7 @@ fn forza_trigger_range_end_controls_full_force_point() {
         } => {
             assert!((start_position - 0.60).abs() < f64::EPSILON);
             assert!(
-                strength > 0.98 && strength <= 1.0,
+                (0.82..0.84).contains(&strength),
                 "custom brake end point should arm full force at 60%, got {strength}"
             );
         }
@@ -497,7 +497,7 @@ fn forza_abs_pulse_uses_brake_speed_and_slip_thresholds() {
     let snapshot = SignalSnapshot::from_updates([
         signal_update("game.state", "driving"),
         signal_update("input.throttle", 0.0),
-        signal_update("input.brake", 0.50),
+        signal_update("input.brake", 0.85),
         signal_update("input.handbrake", 0.0),
         signal_update("vehicle.rpm_ratio", 0.40),
         signal_update("vehicle.speed_kmh", 55.0),
@@ -515,8 +515,8 @@ fn forza_abs_pulse_uses_brake_speed_and_slip_thresholds() {
         } => {
             assert!((frequency_hz - FORZA_ABS_PULSE_FREQUENCY_HZ).abs() < f64::EPSILON);
             assert!(
-                (0.99..=1.0).contains(&amplitude),
-                "ABS pulse should be impossible to miss when slip is high, got {amplitude}"
+                (0.25..0.27).contains(&amplitude),
+                "ABS pulse should use the promoted New Brakes intensity, got {amplitude}"
             );
         }
         other => panic!("expected strong ABS trigger pulse, got {other:?}"),
@@ -533,7 +533,7 @@ fn forza_abs_threshold_tracks_custom_brake_range() {
     let below_threshold = SignalSnapshot::from_updates([
         signal_update("game.state", "driving"),
         signal_update("input.throttle", 0.0),
-        signal_update("input.brake", 0.60),
+        signal_update("input.brake", 0.89),
         signal_update("input.handbrake", 0.0),
         signal_update("vehicle.rpm_ratio", 0.40),
         signal_update("vehicle.speed_kmh", 55.0),
@@ -550,7 +550,7 @@ fn forza_abs_threshold_tracks_custom_brake_range() {
     let above_threshold = SignalSnapshot::from_updates([
         signal_update("game.state", "driving"),
         signal_update("input.throttle", 0.0),
-        signal_update("input.brake", 0.70),
+        signal_update("input.brake", 0.91),
         signal_update("input.handbrake", 0.0),
         signal_update("vehicle.rpm_ratio", 0.40),
         signal_update("vehicle.speed_kmh", 55.0),
@@ -599,7 +599,7 @@ fn forza_abs_advanced_tuning_can_select_fine_flutter_mode() {
             frequency_hz,
             wall_zones,
         } => {
-            assert!((strength - 0.75).abs() < f64::EPSILON);
+            assert!((strength - 0.195).abs() < f64::EPSILON);
             assert!((frequency_hz - 42.0).abs() < f64::EPSILON);
             assert_eq!(wall_zones, FORZA_ABS_FINE_FLUTTER_WALL_ZONES as u8);
         }

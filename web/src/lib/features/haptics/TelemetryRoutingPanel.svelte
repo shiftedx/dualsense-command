@@ -56,16 +56,16 @@
     normalForce: 1,
     endstopForce: 1,
     endstopBoost: 1.25,
-    wallPosition: 0.48,
+    wallPosition: 0.98,
     guardMinEnd: 0.48,
-    fullForceAt: 0.8,
+    fullForceAt: 0.95,
     rampCurve: 0.8
   };
   export let forzaAbsTuning: ForzaAbsTuningConfiguration = {
     mode: 'strong_pulse',
     slipSource: 'auto_front_first',
     slipThreshold: 0.68,
-    brakeThresholdRatio: 0.38,
+    brakeThresholdRatio: 0.8,
     minSpeedKmh: 12,
     minStrength: 48 / 63,
     maxStrength: 1,

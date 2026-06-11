@@ -61,7 +61,7 @@ export function normalizeTriggerCurve(value: number | string | undefined, fallba
 }
 
 export function defaultTriggerCurve(side: 'l2' | 'r2') {
-  return side === 'l2' ? 1.45 : 2.25;
+  return side === 'l2' ? 1 : 2.25;
 }
 
 export function normalizeStickDeadzone(value: number | string | undefined | null) {
@@ -79,16 +79,7 @@ export function triggerCurvePointsFromCurve(curve: number): TriggerCurvePoint[] 
 }
 
 export function defaultTriggerCurvePoints(side: 'l2' | 'r2'): TriggerCurvePoint[] {
-  if (side === 'r2') return triggerCurvePointsFromCurve(defaultTriggerCurve(side));
-  return [
-    { input: 0, output: 0 },
-    { input: 12, output: 18 },
-    { input: 25, output: 44 },
-    { input: 40, output: 68 },
-    { input: 58, output: 86 },
-    { input: 78, output: 96 },
-    { input: 100, output: 100 }
-  ];
+  return triggerCurvePointsFromCurve(defaultTriggerCurve(side));
 }
 
 export function normalizeTriggerCurvePoints(
