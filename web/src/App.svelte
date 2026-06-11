@@ -4,6 +4,7 @@
   import AppSidebar from './components/AppSidebar.svelte';
   import AddGameDialog from './lib/features/games/AddGameDialog.svelte';
   import GamesView from './lib/features/games/GamesView.svelte';
+  import StatusView from './lib/features/status/StatusView.svelte';
   import OnboardingTutorial from './components/OnboardingTutorial.svelte';
   import SupportPanel from './components/SupportPanel.svelte';
   import ToastStack from './components/ToastStack.svelte';
@@ -497,12 +498,13 @@
   $: activeProfileHeaderName = profileWorkspace.activeProfileHeaderName;
   $: activeProfileHeaderMeta = profileWorkspace.activeProfileHeaderMeta;
   $: buttonMappingActive = activeView === 'advancedButtonMapping';
-  // Temporary view composition (Tasks 3-5 replace this): 'status' renders the old
-  // default (GamesView) so the app is never blank; 'tuning' renders GamesView plus
-  // the haptics workspace; 'advancedEdgeSlots' renders ControllersView because the
-  // Edge onboard slots UI currently lives inside it.
+  // Temporary view composition (Tasks 5-9 replace the rest): 'status' renders the
+  // new StatusView; 'tuning' renders GamesView plus the haptics workspace;
+  // 'advancedEdgeSlots' renders ControllersView because the Edge onboard slots UI
+  // currently lives inside it. Views the guard rejects land on 'status'.
   $: showAdvancedControllerView = activeView === 'advancedController' || activeView === 'advancedEdgeSlots';
-  $: showGamesView = activeView === 'status' || activeView === 'tuning' || (!tuningReady && !showAdvancedControllerView);
+  $: showStatusView = activeView === 'status';
+  $: showGamesView = activeView === 'tuning';
   $: showWorkspaceViews =
     showAdvancedControllerView || (tuningReady && (activeView === 'tuning' || activeView === 'advancedButtonMapping'));
   $: steamInputStatus = snapshot?.steamInput;
@@ -2160,6 +2162,26 @@
       onNavigate={navigateToView}
     />
 
+    {#if showStatusView}
+      <StatusView
+        {controllers}
+        {controller}
+        detectedGame={selectedGame}
+        detectedGameName={snapshot.gameDetection.activeGameName ?? null}
+        {activeProfile}
+        {activeProfileName}
+        {overrideActive}
+        {adapter}
+        adapters={snapshot.adapters ?? []}
+        renameActiveId={controllerRenameId}
+        bind:renameName={controllerRenameName}
+        renameBusy={controllerRenameBusy}
+        onBeginRename={beginControllerRename}
+        onSubmitRename={submitControllerRename}
+        onCancelRename={cancelControllerRename}
+        onRenameKeydown={handleControllerRenameKeydown}
+      />
+    {/if}
     {#if showGamesView}
       <GamesView
         {controller}
