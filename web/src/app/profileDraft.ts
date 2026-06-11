@@ -1,4 +1,9 @@
 import {
+  DEFAULT_BODY_FEEL,
+  DEFAULT_BODY_RUMBLE_MODE,
+  DEFAULT_LIGHTBAR_BRIGHTNESS,
+  DEFAULT_LIGHTBAR_COLOR,
+  DEFAULT_REDLINE_COLOR,
   defaultTriggerCurve,
   defaultTriggerCurvePoints,
   normalizeStickDeadzone,
@@ -132,7 +137,7 @@ const defaultForzaTelemetryConfig = (
   defaults: ForzaTuningDefaults,
   effects: ForzaEffectConfiguration[] = defaults.effects
 ): EditableControllerConfig['forza'] => ({
-  bodyRumbleMode: 'native_passthrough',
+  bodyRumbleMode: DEFAULT_BODY_RUMBLE_MODE,
   effects: cloneForzaEffects(effects),
   brake: cloneForzaTuning(defaults.brake),
   abs: cloneForzaTuning(defaults.abs),
@@ -172,7 +177,7 @@ const forzaTelemetryFromDraft = (
   );
 
 export const normalizeForzaBodyRumbleMode = (mode: string | undefined | null): ForzaBodyRumbleMode =>
-  mode === 'dscc_full_control' ? 'dscc_full_control' : 'native_passthrough';
+  mode === 'dscc_full_control' ? 'dscc_full_control' : DEFAULT_BODY_RUMBLE_MODE;
 
 export const defaultButtonAssignments = (edge = false): EditableControllerConfig['buttons'] => [
   { key: 'Cross', label: 'Cross' },
@@ -279,7 +284,7 @@ export function baseForzaTriggerDefaults(): EditableControllerConfig['trigger'] 
     effect: 'Adaptive resistance',
     intensity: 'Strong (Standard)',
     vibration: 'Medium',
-    vibrationMode: 'Balanced'
+    vibrationMode: DEFAULT_BODY_FEEL
   };
 }
 
@@ -301,13 +306,13 @@ export function buildDefaultControllerConfig(options: DraftConfigOptions): Edita
       effect: 'Adaptive resistance',
       intensity: 'Strong (Standard)',
       vibration: 'Medium',
-      vibrationMode: 'Balanced'
+      vibrationMode: DEFAULT_BODY_FEEL
     },
     lightbar: {
       enabled: true,
-      color: '#4cc9f0',
-      rpmColor: '#ff3a2e',
-      brightness: 72
+      color: DEFAULT_LIGHTBAR_COLOR,
+      rpmColor: DEFAULT_REDLINE_COLOR,
+      brightness: DEFAULT_LIGHTBAR_BRIGHTNESS
     },
     forza: defaultForzaTelemetryConfig(forzaDefaults),
     sticks: {
@@ -446,13 +451,13 @@ export function profileConfigSignature(
       effect: config.trigger.effect,
       intensity: config.trigger.intensity,
       vibration: config.trigger.vibration,
-      vibrationMode: config.trigger.vibrationMode ?? 'Balanced'
+      vibrationMode: config.trigger.vibrationMode ?? DEFAULT_BODY_FEEL
     },
     lightbar: {
       enabled: config.lightbar?.enabled ?? true,
-      color: config.lightbar?.color ?? '#4cc9f0',
-      rpmColor: config.lightbar?.rpmColor ?? '#ff3a2e',
-      brightness: normalizeTriggerPercent(config.lightbar?.brightness ?? 72)
+      color: config.lightbar?.color ?? DEFAULT_LIGHTBAR_COLOR,
+      rpmColor: config.lightbar?.rpmColor ?? DEFAULT_REDLINE_COLOR,
+      brightness: normalizeTriggerPercent(config.lightbar?.brightness ?? DEFAULT_LIGHTBAR_BRIGHTNESS)
     },
     forza: {
       bodyRumbleMode: forza.bodyRumbleMode,

@@ -11,6 +11,11 @@
 // `profileConfigDirty` flag in App.svelte.
 
 import {
+  DEFAULT_BODY_FEEL,
+  DEFAULT_BODY_RUMBLE_MODE,
+  DEFAULT_LIGHTBAR_BRIGHTNESS,
+  DEFAULT_LIGHTBAR_COLOR,
+  DEFAULT_REDLINE_COLOR,
   defaultTriggerCurve,
   normalizeStickDeadzone,
   normalizeTriggerCurve,
@@ -151,10 +156,15 @@ const tuningGroupRow = <T extends object>(
       changed += 1;
     }
   }
+  if (changed > 0) {
+    // Group rows summarize many fields; there is no single saved value to
+    // strike through, so both sides carry the same "N of M edited" text and
+    // the rail renders it once, without a strikethrough.
+    const edited = `${changed} of ${keys.length} edited`;
+    return row(id, label, edited, edited, true);
+  }
   const clean = `${keys.length} settings`;
-  return changed > 0
-    ? row(id, label, 'saved', `${changed} edited`, true)
-    : row(id, label, clean, clean, false);
+  return row(id, label, clean, clean, false);
 };
 
 const effectValue = (
@@ -224,27 +234,27 @@ export const savedDiffRows = (
     row(
       'body-feel',
       'Body feel',
-      saved.trigger.vibrationMode ?? 'Balanced',
+      saved.trigger.vibrationMode ?? DEFAULT_BODY_FEEL,
       draft.vibrationMode
     ),
     row(
       'lightbar',
       'Lightbar',
       saved.lightbar?.enabled ?? true
-        ? `On · ${normalizeTriggerPercent(saved.lightbar?.brightness ?? 72)}%`
+        ? `On · ${normalizeTriggerPercent(saved.lightbar?.brightness ?? DEFAULT_LIGHTBAR_BRIGHTNESS)}%`
         : 'Off',
       draft.lightbarEnabled ? `On · ${normalizeTriggerPercent(draft.lightbarBrightness)}%` : 'Off'
     ),
     row(
       'lightbar-color',
       'Lightbar color',
-      (saved.lightbar?.color ?? '#4cc9f0').toLowerCase(),
+      (saved.lightbar?.color ?? DEFAULT_LIGHTBAR_COLOR).toLowerCase(),
       draft.lightbarColor.toLowerCase()
     ),
     row(
       'redline-color',
       'Redline color',
-      (saved.lightbar?.rpmColor ?? '#ff3a2e').toLowerCase(),
+      (saved.lightbar?.rpmColor ?? DEFAULT_REDLINE_COLOR).toLowerCase(),
       draft.rpmColor.toLowerCase()
     ),
     row(
@@ -262,7 +272,7 @@ export const savedDiffRows = (
   ];
 
   if (options.includeForza) {
-    const savedMode = saved.forza?.bodyRumbleMode ?? 'native_passthrough';
+    const savedMode = saved.forza?.bodyRumbleMode ?? DEFAULT_BODY_RUMBLE_MODE;
     const modeLabel = (mode: ForzaBodyRumbleMode) =>
       mode === 'dscc_full_control' ? 'DSCC full control' : 'Game native';
     rows.push(row('rumble-source', 'Rumble source', modeLabel(savedMode), modeLabel(draft.forzaBodyRumbleMode)));
