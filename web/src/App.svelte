@@ -2276,13 +2276,14 @@
         class="app-toolbar-disclosure"
         type="button"
         aria-expanded={toolbarOpen}
+        aria-controls="app-toolbar-items"
         onclick={() => {
           toolbarOpen = !toolbarOpen;
         }}
       >
         Controller &amp; display options
       </button>
-      <div class="app-toolbar-items">
+      <div class="app-toolbar-items" id="app-toolbar-items">
         <label class="app-toolbar-field">
           <span>Target Controller</span>
           <select
