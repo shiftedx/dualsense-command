@@ -138,7 +138,9 @@
         <div class="status-surf">
           {#each controllers as item (item.id)}
             <div class="status-controller-card">
-              <div class="status-controller-icon" aria-hidden="true">🎮</div>
+              <div class="status-controller-icon" aria-hidden="true">
+                <span class="dm-controller-glyph status-controller-glyph"></span>
+              </div>
               <div class="status-controller-main">
                 {#if renameActiveId === item.id}
                   <div class="status-rename">
