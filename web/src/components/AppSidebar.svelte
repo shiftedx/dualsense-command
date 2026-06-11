@@ -32,7 +32,7 @@
   const itemTooltip = (id: AppView): string => {
     if (id === 'tuning' && !readiness.tuningReady) return 'Select a controller before tuning haptics.';
     if (id === 'advancedButtonMapping' && !readiness.buttonMappingReady) {
-      return 'Select a game or local app scope before editing mappings.';
+      return 'Pick a supported game in Tuning to map its buttons.';
     }
     if (id === 'advancedEdgeSlots' && !readiness.edgeSlotsReady) {
       return 'Onboard slots are available when the Target Controller is a DualSense Edge.';
@@ -50,9 +50,10 @@
     <button
       class="sidebar-item"
       class:active={view === item.id}
+      class:disabled={itemDisabled(item.id)}
       type="button"
       title={itemTooltip(item.id)}
-      disabled={itemDisabled(item.id)}
+      aria-disabled={itemDisabled(item.id) ? 'true' : undefined}
       aria-current={view === item.id ? 'page' : undefined}
       onclick={() => onNavigate(item.id)}
     >{item.label}</button>
@@ -68,9 +69,10 @@
       <button
         class="sidebar-item sidebar-sub"
         class:active={view === item.id}
+        class:disabled={itemDisabled(item.id)}
         type="button"
         title={itemTooltip(item.id)}
-        disabled={itemDisabled(item.id)}
+        aria-disabled={itemDisabled(item.id) ? 'true' : undefined}
         aria-current={view === item.id ? 'page' : undefined}
         onclick={() => onNavigate(item.id)}
       >{item.label}</button>

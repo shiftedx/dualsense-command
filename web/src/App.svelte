@@ -27,6 +27,7 @@
     edgeSlotWriteTooltip as edgeOnboardSlotWriteTooltip,
     emptyEdgeOnboardProfileState,
     friendlyEdgeSlotsError,
+    isEdgeSlotsAgentRequiredMessage,
     isEdgeTargetController,
     shouldReadEdgeOnboardProfiles,
     shouldResetEdgeOnboardProfiles
@@ -787,7 +788,8 @@
   let requestedView: AppView | null = null;
   const guardBounceMessages: Partial<Record<AppView, string>> = {
     tuning: 'Tuning opens once a controller is connected.',
-    advancedButtonMapping: 'Button mapping needs a game selected in Tuning first.'
+    advancedButtonMapping: 'Button mapping needs a game selected in Tuning first.',
+    advancedEdgeSlots: 'Edge onboard slots need a DualSense Edge as the Target Controller.'
   };
 
   const syncViewFromHash = () => {
@@ -801,7 +803,12 @@
   };
 
   const navigateToView = (view: AppView) => {
-    view = guardView(view, { tuningReady, buttonMappingReady, edgeSlotsReady });
+    const requested = view;
+    view = guardView(requested, { tuningReady, buttonMappingReady, edgeSlotsReady });
+    if (view !== requested) {
+      const message = guardBounceMessages[requested];
+      if (message) showToast(message, 'info');
+    }
     activeView = view;
     // An explicit navigation always wins over a parked deep-link intent.
     requestedView = null;
@@ -1541,7 +1548,7 @@
       await loadEdgeProfiles(controller.id, true);
     } catch (caught) {
       edgeProfilesError = friendlyEdgeSlotsError(caught, 'Unable to write Edge onboard slot.');
-      showToast(edgeProfilesError, 'error');
+      showToast(edgeProfilesError, isEdgeSlotsAgentRequiredMessage(edgeProfilesError) ? 'info' : 'error');
     } finally {
       edgeProfilesBusySlot = '';
     }
@@ -2288,9 +2295,9 @@
       <button class="solid-action compact" type="button" onclick={refresh}>Retry</button>
     </section>
   {:else if snapshot}
-    <!-- Utility row: cross-view context that has no single page home — the
-         target controller for writes, the web UI bind address, the Forza glyph
-         override, and a compact system readout. -->
+    <!-- Utility row: cross-view context that has no single page home: the
+         target controller for writes, the web UI bind address, and a compact
+         system readout. -->
     <section class="app-toolbar" class:open={toolbarOpen} aria-label="Controller and display options">
       <button
         class="app-toolbar-disclosure"
@@ -2337,17 +2344,6 @@
             <option value="lan">LAN Access</option>
           </select>
         </label>
-        <button
-          class="app-toolbar-toggle"
-          class:active={glyphOverrideEnabled}
-          type="button"
-          disabled={appSettingsBusy}
-          aria-pressed={glyphOverrideEnabled}
-          title={forzaGlyphs?.lastStatus ?? glyphInstallPath}
-          onclick={() => void updateForzaGlyphOverride()}
-        >
-          Controller Glyphs: {glyphOverrideEnabled ? 'PlayStation Icons' : 'Game Default'}
-        </button>
         <div class="app-toolbar-spacer"></div>
         <div
           class="app-toolbar-readout"
@@ -2488,6 +2484,10 @@
           onSetStickDeadzone={setStickDeadzone}
           onStartInputBridge={startControllerInputBridge}
           onStopInputBridge={stopControllerInputBridge}
+          {glyphOverrideEnabled}
+          glyphOverrideBusy={appSettingsBusy}
+          glyphOverrideTitle={forzaGlyphs?.lastStatus ?? glyphInstallPath}
+          onToggleGlyphOverride={updateForzaGlyphOverride}
           {supportBundleBusy}
           onDownloadSupportBundle={exportSupportBundle}
         />
@@ -2501,6 +2501,7 @@
           {edgeProfilesLoading}
           {edgeProfilesBusySlot}
           {edgeProfilesError}
+          edgeProfilesAgentRequired={isEdgeSlotsAgentRequiredMessage(edgeProfilesError)}
           {edgeSlotsReadTooltip}
           edgeSlotWriteLabel={edgeSlotWriteLabel()}
           onRefreshEdgeProfiles={() => controller && void loadEdgeProfiles(controller.id, true)}
