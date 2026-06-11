@@ -718,6 +718,12 @@
   .saved-mobile-bar {
     display: block;
   }
+
+  /* The fixed bar floats over the document; reserve room beneath the canvas
+     only while it's shown so the last row stays reachable. */
+  body:has(.saved-mobile-bar) .canvas-grid {
+    padding-bottom: 84px;
+  }
 }
 
 /* Content parked below the grid until Tasks 8-10 re-home it. */
