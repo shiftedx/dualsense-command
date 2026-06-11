@@ -12,11 +12,15 @@ const port = requestedPort > 0 ? requestedPort : await findOpenPort(5174);
 const baseUrl = `http://${host}:${port}`;
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const routeChecks = [
-  { hash: '#/games', pattern: /Profiles|Games|Selected Game/i },
-  { hash: '#/controllers', pattern: /Controllers|Live Input|Input Path/i },
-  { hash: '#/adaptive-triggers-haptics', pattern: /Trigger Curves|Base Haptics|Adaptive/i },
-  { hash: '#/button-mapping', pattern: /Customize Button Assignments|Button Mapping|Default mirror/i }
+  { hash: '#/status', pattern: /Status|Everything|controller/i },
+  { hash: '#/tuning', pattern: /Tuning|Profile/i },
+  { hash: '#/advanced/controller', pattern: /Controller details|Live input/i },
+  // Button mapping needs a game scope first; main() selects one via the
+  // toolbar before this route runs.
+  { hash: '#/advanced/button-mapping', pattern: /Button Mapping|Default mirror/i }
 ];
+// Old routes keep working forever; each lands on the new home for its content.
+const legacyRedirectChecks = [{ from: '#/games', to: '#/tuning' }];
 const viewports = [
   { width: 1366, height: 768 },
   { width: 1440, height: 900 },
@@ -114,6 +118,12 @@ async function main() {
       });
 
       for (const check of routeChecks) {
+        if (check.hash === '#/advanced/button-mapping') {
+          // Button mapping is guarded behind a game scope; pick the mock game
+          // (option 0 is the Global Profile) so the route does not bounce.
+          await page.selectOption('select[aria-label="Tuning scope"]', { index: 1 });
+          await page.waitForTimeout(300);
+        }
         await page.goto(`${baseUrl}/${check.hash}`, { waitUntil: 'domcontentloaded' });
         await page.waitForTimeout(300);
         const snapshot = await routeSnapshot(page);
@@ -122,8 +132,17 @@ async function main() {
         if (!check.pattern.test(snapshot.text)) failures.push(`${label}: expected route text was missing`);
         if (!snapshot.canReachBottom) failures.push(`${label}: page content could not scroll to the bottom`);
         if (snapshot.scrollWidth > snapshot.clientWidth + 2) failures.push(`${label}: horizontal overflow ${snapshot.scrollWidth - snapshot.clientWidth}px`);
-        if (check.hash === '#/button-mapping' && !/Default mirror only|No writable|read-only|Global Profile/i.test(snapshot.text)) {
+        if (check.hash === '#/advanced/button-mapping' && !/Default mirror only|No writable|read-only|Global Profile/i.test(snapshot.text)) {
           failures.push(`${label}: read-only/default-mirror mapping copy was missing`);
+        }
+      }
+
+      for (const redirect of legacyRedirectChecks) {
+        await page.goto(`${baseUrl}/${redirect.from}`, { waitUntil: 'domcontentloaded' });
+        await page.waitForTimeout(300);
+        const finalHash = await page.evaluate(() => location.hash);
+        if (finalHash !== redirect.to) {
+          failures.push(`${viewport.width}x${viewport.height} ${redirect.from}: redirected to ${finalHash}, expected ${redirect.to}`);
         }
       }
       if (consoleErrors.length) {

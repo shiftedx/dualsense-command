@@ -1,8 +1,7 @@
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Inter+Tight:wght@600;700;800&family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap");
 @import "./tokens.css";
 @import "./base.css";
-@import "./shell.css";
-@import "./ribbon.css";
+@import "./shell-v2.css";
 @import "./games.css";
 @import "./controllers.css";
 @import "./games-catalog.css";

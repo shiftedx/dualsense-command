@@ -1,0 +1,252 @@
+/* Shell v2 — slim sidebar + document-flow main column (calm console, flat fills). */
+
+/* The document scrolls again under the v2 shell; base.css pinned it for the old
+   HUD shell, which scrolled inside .ops-shell. Delete the base.css rules in the
+   cleanup task and fold these in. */
+html,
+body,
+#app {
+  height: auto;
+  min-height: 100%;
+}
+
+body {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+html {
+  /* Reserve the vertical scrollbar's track so its appearance never reflows
+     content (keeps the visual smoke overflow check stable on classic
+     scrollbar platforms). */
+  scrollbar-gutter: stable;
+}
+
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+.sidebar {
+  width: 168px;
+  flex: 0 0 auto;
+  background: var(--bg-rail);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 10px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  z-index: var(--z-sticky);
+}
+
+.sidebar-brand {
+  font-weight: 600;
+  padding: 6px 10px;
+}
+
+.sidebar-item,
+.sidebar-group {
+  text-align: left;
+  font: inherit;
+  color: var(--ink-muted);
+  background: none;
+  border: 0;
+  padding: 7px 10px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  transition: background var(--speed) var(--ease), color var(--speed) var(--ease);
+}
+
+.sidebar-item:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--surface-raised) 60%, transparent);
+}
+
+.sidebar-item.active {
+  color: var(--ink);
+  background: var(--surface-raised);
+}
+
+.sidebar-item:focus-visible,
+.sidebar-group:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 1px;
+}
+
+.sidebar-group {
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  margin-top: 12px;
+}
+
+.sidebar-sub {
+  padding-left: 20px;
+  font-size: 0.92em;
+}
+
+.sidebar-spacer {
+  flex: 1;
+}
+
+.sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-footer .sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.app-main {
+  flex: 1;
+  min-width: 0;
+  /* Clip latent horizontal overflow from legacy feature views (the old
+     .ops-shell did the same); remove once the views are rebuilt. */
+  overflow-x: hidden;
+  padding: 18px clamp(18px, 2.2vw, 34px) 22px;
+}
+
+/* TEMPORARY toolbar — controller/scope/profile context the old ribbon carried.
+   Tasks 4-5 re-house this in Status and the Tuning header; delete it then. */
+.app-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 16px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-m);
+}
+
+.app-toolbar-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.app-toolbar-field > span {
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.app-toolbar-field select {
+  max-width: 220px;
+  padding: 5px 8px;
+  color: var(--ink);
+  background: var(--surface-raised);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-s);
+}
+
+.app-toolbar-field small,
+.app-toolbar-readout small {
+  color: var(--ink-muted);
+  font-size: 0.72rem;
+}
+
+.app-toolbar-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.app-toolbar-readout > span {
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.app-toolbar-toggle {
+  padding: 6px 10px;
+  color: var(--ink-muted);
+  background: var(--surface-raised);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-s);
+  transition: color var(--speed) var(--ease), border-color var(--speed) var(--ease);
+}
+
+.app-toolbar-toggle.active {
+  color: var(--accent-text);
+  border-color: var(--accent-outline);
+  background: var(--accent-tint);
+}
+
+.app-toolbar-spacer {
+  flex: 1;
+}
+
+/* TEMPORARY carry-over from shell.css (still used by legacy feature views);
+   delete with the views in the cleanup task. */
+.dm-controller-glyph {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  color: var(--ink);
+  opacity: 0.82;
+  background: currentColor;
+  mask: url("/dualsense-controller.svg") center / contain no-repeat;
+  -webkit-mask: url("/dualsense-controller.svg") center / contain no-repeat;
+}
+
+.dm-battery-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--ink-muted);
+}
+
+.dm-battery {
+  width: 28px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--ink-muted);
+}
+
+.dm-battery rect:first-child,
+.dm-battery path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+
+.dm-battery-fill {
+  fill: var(--ink);
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    height: auto;
+    position: sticky;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .sidebar-spacer {
+    display: none;
+  }
+
+  .sidebar-footer {
+    flex-direction: row;
+  }
+}
