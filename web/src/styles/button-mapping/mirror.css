@@ -34,7 +34,7 @@
 }
 
 .dm-steam-layout-title {
-  color: var(--haptic);
+  color: var(--ink);
   font-size: 14px;
   font-weight: 800;
   letter-spacing: 0.04em;
@@ -45,7 +45,7 @@
 .dm-steam-empty-note {
   max-width: 52ch;
   margin: -4px auto 4px;
-  color: var(--tungsten);
+  color: var(--ink-muted);
   font-size: 12px;
   line-height: 1.4;
   text-align: center;
@@ -95,7 +95,7 @@
 }
 
 .dm-steam-group-title {
-  color: var(--tungsten);
+  color: var(--ink-muted);
   font-size: 12px;
   font-weight: 900;
   letter-spacing: 0.08em;
@@ -111,7 +111,7 @@
   min-height: 26px;
   padding: 3px 5px;
   border: 0;
-  color: var(--haptic);
+  color: var(--ink);
   background: transparent;
   font: inherit;
   letter-spacing: 0;
@@ -128,7 +128,7 @@
   outline: none;
   color: #FFFFFF;
   background: rgba(226, 232, 240, 0.08);
-  box-shadow: inset 3px 0 0 var(--actuation);
+  box-shadow: inset 3px 0 0 var(--accent-bright);
 }
 
 .dm-steam-row strong {
@@ -149,7 +149,7 @@
 }
 
 .dm-steam-static-row {
-  color: var(--haptic);
+  color: var(--ink);
 }
 
 .dm-steam-input-icon {
@@ -159,7 +159,7 @@
   min-width: 20px;
   height: 20px;
   color: #FFFFFF;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 900;
 }

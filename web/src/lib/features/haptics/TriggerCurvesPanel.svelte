@@ -48,6 +48,14 @@
   const emptyCurveLive: CurveLive = { liveX: 0, liveY: 100 };
   const noop = () => undefined;
 
+  // Semantic-column rendering (Task 6): 'L2'/'R2' renders a single trigger's
+  // curve editor so each tuning column owns its own instrument; 'both' keeps
+  // the original two-curve block. showCurves/showControls let the canvas park
+  // the shared head + base-feel strip separately without losing them.
+  export let trigger: 'L2' | 'R2' | 'both' = 'both';
+  export let showCurves = true;
+  export let showControls = true;
+
   export let selectedTuningScope: TuningScope = 'none';
   export let snapshot: unknown = null;
   export let baseFeelTestActive = false;
@@ -61,6 +69,12 @@
   export let r2CurveLive: CurveLive = emptyCurveLive;
   export let curveHover: CurveHover = null;
   export let curveDragPoint: CurveDragPoint = null;
+
+  // Saved-curve ghosts (Task 7): when the working draft drifts from the saved
+  // profile, the saved curve renders as a dashed ghost behind the live curve.
+  // null means clean (no ghost).
+  export let l2SavedCurvePath: string | null = null;
+  export let r2SavedCurvePath: string | null = null;
 
   export let l2LivePress = 0;
   export let r2LivePress = 0;
@@ -103,6 +117,7 @@
 </script>
 
 <section class="dm-physics" aria-label="Actuation curve tuning">
+  {#if showControls}
   <div class="dm-section-head">
     <div>
       <span>Actuation Engine</span>
@@ -135,8 +150,11 @@
       {/if}
     </div>
   </div>
+  {/if}
 
+  {#if showCurves}
   <div class="dm-curve-stack">
+    {#if trigger !== 'R2'}
     <article class="dm-curve-module" aria-label="L2 brake actuation curve">
       <div class="dm-module-title">
         <div>
@@ -165,6 +183,9 @@
           <rect class="curve-range-fill" x={l2CurveShape.rangeStart} y="96" width={l2CurveShape.rangeWidth} height="2.5" rx="1.25" />
           <line class="curve-range-edge" x1={l2CurveShape.rangeStart} y1="0" x2={l2CurveShape.rangeStart} y2="100" />
           <line class="curve-range-edge" x1={l2CurveShape.rangeEnd} y1="0" x2={l2CurveShape.rangeEnd} y2="100" />
+          {#if l2SavedCurvePath}
+            <path class="curve-saved-ghost" d={l2SavedCurvePath} />
+          {/if}
           <path class="curve-force" d={l2CurveShape.path} />
           {#if curveHover?.side === 'l2'}
             <line class="curve-crosshair" x1={curveHover.left.toFixed(2)} y1="0" x2={curveHover.left.toFixed(2)} y2="100" />
@@ -233,7 +254,9 @@
         </div>
       </div>
     </article>
+    {/if}
 
+    {#if trigger !== 'L2'}
     <article class="dm-curve-module" aria-label="R2 throttle actuation curve">
       <div class="dm-module-title">
         <div>
@@ -256,6 +279,9 @@
           <rect class="curve-range-fill" x={r2CurveShape.rangeStart} y="96" width={r2CurveShape.rangeWidth} height="2.5" rx="1.25" />
           <line class="curve-range-edge" x1={r2CurveShape.rangeStart} y1="0" x2={r2CurveShape.rangeStart} y2="100" />
           <line class="curve-range-edge" x1={r2CurveShape.rangeEnd} y1="0" x2={r2CurveShape.rangeEnd} y2="100" />
+          {#if r2SavedCurvePath}
+            <path class="curve-saved-ghost" d={r2SavedCurvePath} />
+          {/if}
           <path class="curve-force" d={r2CurveShape.path} />
           {#if curveHover?.side === 'r2'}
             <line class="curve-crosshair" x1={curveHover.left.toFixed(2)} y1="0" x2={curveHover.left.toFixed(2)} y2="100" />
@@ -324,8 +350,11 @@
         </div>
       </div>
     </article>
+    {/if}
   </div>
+  {/if}
 
+  {#if showControls}
   <div class="dm-parameter-strip" aria-label="Base force and light routing">
     <Tooltip block text={triggerEffectHelp[triggerEffect] ?? 'Selects the base adaptive trigger behavior.'} side="top" align="start">
       <label>
@@ -364,4 +393,5 @@
       </label>
     </Tooltip>
   </div>
+  {/if}
 </section>

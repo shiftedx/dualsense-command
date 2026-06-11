@@ -1,102 +1,10 @@
+/* Narrow-viewport adjustments for the tuning instruments. The document
+   scroll model lives in shell-v2.css and needs no overrides here. */
+
 @media (max-width: 1180px) {
-  body {
-    overflow: auto;
-  }
-
-  .ops-shell {
-    display: block;
-    height: auto;
-    min-height: 100vh;
-    overflow: visible;
-  }
-
-  .dm-hud,
-  .dm-tuning-ribbon,
-  .dm-games-page,
-  .dm-controllers-page,
-  .dm-controller-overview,
-  .dm-deck,
-  .dm-button-map-layout,
-  .dm-parameter-strip,
-  .dm-profile-line,
-  .dm-profile-rename {
+  .dm-parameter-strip {
     grid-template-columns: 1fr;
     height: auto;
-  }
-
-  .dm-hud {
-    align-items: stretch;
-  }
-
-  .dm-tuning-ribbon {
-    position: static;
-    top: auto;
-  }
-
-  .dm-steam-identity {
-    grid-template-columns: 1fr;
-    gap: 4px;
-  }
-
-  button.dm-ribbon-picker-trigger.dm-game-identity-cell {
-    grid-template-columns: 104px minmax(0, 1fr);
-    min-height: 64px;
-  }
-
-  .dm-system-cluster {
-    justify-content: flex-start;
-    flex-wrap: wrap;
-  }
-
-  .dm-system-readout {
-    justify-content: flex-start;
-    text-align: left;
-  }
-
-  .dm-view-nav {
-    justify-self: stretch;
-    overflow-x: auto;
-  }
-
-  .dm-deck,
-  .dm-games-page,
-  .dm-controllers-page,
-  .dm-button-map-page {
-    min-height: 0;
-  }
-
-  .dm-controller-stage {
-    grid-template-columns: 1fr;
-  }
-
-  .dm-map-callouts,
-  .dm-map-callouts.left,
-  .dm-map-callouts.right {
-    grid-template-columns: 1fr;
-    text-align: left;
-  }
-
-  .dm-map-callouts.left .dm-callout-head,
-  .dm-map-callouts.right .dm-callout-head {
-    flex-direction: row;
-  }
-
-  .dm-callout-cluster {
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: 10px;
-  }
-
-  .dm-callout-cluster-title {
-    grid-column: 1 / -1;
-  }
-
-  .dm-controller-canvas {
-    max-width: 720px;
-    margin: 0 auto;
-  }
-
-  .dm-map-source-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .dm-physics {
@@ -123,13 +31,6 @@
 }
 
 @media (max-width: 900px) {
-  .dm-live-stick-grid,
-  .dm-trigger-meter-grid,
-  .dm-controller-metric-grid,
-  .dm-calibration-grid {
-    grid-template-columns: 1fr;
-  }
-
   .dm-curve-stack {
     grid-template-columns: 1fr;
   }
@@ -148,36 +49,8 @@
 }
 
 @media (max-width: 720px) {
-  .ops-shell {
+  .dm-physics {
     padding: 14px;
-  }
-
-  .dm-physics,
-  .dm-routing,
-  .dm-button-map-panel {
-    padding: 14px;
-  }
-
-  .dm-view-nav {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 3px;
-  }
-
-  .dm-view-nav button {
-    width: 100%;
-    padding: 0 8px;
-    font-size: 11px;
-  }
-
-  .dm-app-tagline {
-    max-width: 100%;
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
-
-  .dm-slider-bank {
-    grid-template-columns: 1fr;
   }
 
   .dm-curve-module {
@@ -191,23 +64,7 @@
   .dm-slider-bank,
   .dm-channel-strip,
   .dm-led-row,
-  .dm-tuning-ribbon,
-  .dm-steam-identity,
-  .dm-system-toggles,
   .dm-support-panel,
-  .dm-action-row,
-  .dm-scope-strip button,
-  .dm-game-grid > button,
-  .dm-live-panel-head,
-  .dm-stick-head,
-  .dm-trigger-meter > div:first-child,
-  .dm-map-context-grid,
-  .dm-map-placeholder,
-  .dm-button-bind-list,
-  .dm-map-source-grid,
-  .dm-map-quick-grid > div,
-  .dm-steam-binding-row,
-  .dm-input-path-actions,
   .dm-global-feel-controls,
   .dm-pattern-grid,
   .dm-vibration-mode-grid,
@@ -217,43 +74,7 @@
     grid-template-columns: 1fr;
   }
 
-  button.dm-ribbon-picker-trigger.dm-game-identity-cell {
-    grid-template-columns: 86px minmax(0, 1fr);
-  }
-
-  .dm-steam-identity .dm-ribbon-game-media {
-    width: 86px;
-    height: 46px;
-  }
-
-  .dm-controller-stage {
-    min-height: 0;
-  }
-
-  .dm-controller-canvas {
-    min-width: 0;
-  }
-
-  .dm-map-source-row strong,
-  .dm-steam-binding-row em {
-    text-align: left;
-  }
-
   .dm-channel-strip {
     align-items: stretch;
-  }
-
-  .dm-action-row {
-    display: grid;
-  }
-
-  .dm-controller-card {
-    min-height: 220px;
-  }
-
-  .dm-game-card-media img,
-  .dm-game-art-fallback {
-    width: 100%;
-    height: 148px;
   }
 }

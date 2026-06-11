@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import ControllerCard from './ControllerCard.svelte';
-  import Tooltip from '../../../components/Tooltip.svelte';
   import { getControllerInput } from '../../api';
   import {
     controllerBatteryDetail,
@@ -18,8 +17,6 @@
     ControllerInputState,
     ControllerInputStickState,
     ControllerStatus,
-    EdgeProfileSlot,
-    EdgeProfilesResponse,
     InputBridgeStatus
   } from '../../types';
 
@@ -53,12 +50,6 @@
   export let currentControllerConfig: ControllerConfiguration | null = null;
   export let leftStickDeadzone = 0;
   export let rightStickDeadzone = 0;
-  export let edgeProfiles: EdgeProfilesResponse | null = null;
-  export let edgeProfilesLoading = false;
-  export let edgeProfilesBusySlot = '';
-  export let edgeProfilesError = '';
-  export let edgeSlotsReadTooltip = '';
-  export let edgeSlotWriteLabel = 'Write';
   export let inputBridge: InputBridgeStatus | null = null;
   export let activeGameName: string | null = null;
   export let activeInputProvider = 'native_dualsense';
@@ -72,12 +63,8 @@
   export let onSetStickDeadzone: (side: 'left' | 'right', value: number) => void | Promise<void> = () => {};
   export let onStartInputBridge: () => void | Promise<void> = () => {};
   export let onStopInputBridge: () => void | Promise<void> = () => {};
-  export let onRefreshEdgeProfiles: () => void | Promise<void> = () => {};
-  export let onWriteEdgeSlot: (slot: EdgeProfileSlot) => void | Promise<void> = () => {};
-  export let edgeSlotName: (slot: EdgeProfileSlot) => string = (slot) => slot.name ?? slot.shortcut;
-  export let edgeSlotStatus: (slot: EdgeProfileSlot) => string = (slot) => slot.state;
-  export let edgeSlotInfoTooltip: (slot: EdgeProfileSlot) => string = (slot) => edgeSlotStatus(slot);
-  export let edgeSlotWriteTooltip: (slot: EdgeProfileSlot) => string = (slot) => `Write ${edgeSlotName(slot)}`;
+  export let supportBundleBusy: 'copy' | 'download' | '' = '';
+  export let onDownloadSupportBundle: () => void | Promise<void> = () => {};
 
   let inputState: ControllerInputState | null = null;
   let inputFresh = false;
@@ -100,6 +87,8 @@
     currentControllerConfig?.inputMode === 'dscc_input_bridge' && Boolean(currentControllerConfig?.inputBridge?.enabled);
   $: bridgeSessionActive = bridgeSession?.state === 'active';
   $: powerDiagnostics = controller?.powerDiagnostics ?? null;
+  $: alias = controller?.name || controller?.family || 'No controller';
+  $: stickDriftLine = driftSummary(selectedInput, leftStick, rightStick);
   $: powerSuggestions = batteryFriendlySuggestions(controller, currentControllerConfig);
   $: if ((controller?.id ?? '') !== observedForController) {
     observedForController = controller?.id ?? '';
@@ -273,6 +262,18 @@
     return `${Math.min(40, Math.max(3, Math.ceil(stick.magnitude * 100 + 2)))}%`;
   }
 
+  /** Plain-words stick summary; raw per-stick values stay in the group below. */
+  function driftSummary(
+    input: ControllerInputState | null,
+    left: ControllerInputStickState,
+    right: ControllerInputStickState
+  ) {
+    if (!input) return 'waiting for input';
+    const max = Math.max(left.magnitude, right.magnitude);
+    if (max < 0.05) return 'centered · no drift detected';
+    return `reading ${percent(max)} of travel — fine while you move them; if untouched, raise the deadzone`;
+  }
+
   function inputFreshness(input: ControllerInputState | null) {
     if (!input?.available) return input?.message ?? 'Input unavailable';
     if (typeof input.ageMs === 'number') return `${input.source} / ${input.ageMs}ms`;
@@ -302,7 +303,7 @@
     if (bridgeSessionActive || controllerBridgeConfigured || appRequiresBridge) {
       return inputBridge?.available
         ? `${inputBridge.provider} / ${inputBridge.state}`
-        : inputBridge?.message ?? 'Bridge backend unavailable';
+        : inputBridge?.message ?? 'Bridge unavailable';
     }
     if (inputPathTitle() === 'Steam Input Companion') {
       return 'Steam handles game-facing mapping; DSCC keeps typed haptics and diagnostics.';
@@ -343,12 +344,6 @@
   function formatFlag(value: boolean | null | undefined, yes: string, no: string) {
     if (typeof value !== 'boolean') return 'Unavailable';
     return value ? yes : no;
-  }
-
-  function hasPowerMetrics(item: ControllerStatus | undefined) {
-    const diagnostics = item?.powerDiagnostics;
-    if (!diagnostics) return false;
-    return Object.values(diagnostics).some((value) => value !== null && value !== undefined);
   }
 
   function batteryFriendlySuggestions(
@@ -394,387 +389,243 @@
   onDestroy(stopInputPolling);
 </script>
 
-<section class="dm-controllers-page" aria-label="Controllers">
-  <div class="dm-games-column">
-    <div class="dm-games-head">
-      <span>Hardware</span>
-      <h2>Controllers</h2>
-    </div>
-    <div class="dm-controller-choice-list">
-      {#if controllers.length}
-        {#each controllers as item, index (item.id)}
-          <ControllerCard
-            {item}
-            {index}
-            selected={item.id === selectedControllerId}
-            renameActive={renameActiveId === item.id}
-            bind:renameName
-            renameBusy={renameBusy}
-            onSelect={onSelect}
-            onBeginRename={onBeginRename}
-            onSubmitRename={onSubmitRename}
-            onCancelRename={onCancelRename}
-            onRenameKeydown={onRenameKeydown}
-          />
-        {/each}
-      {:else}
-        <div class="dm-empty-choice">
-          <strong>No controller detected</strong>
-          <span>Controller unavailable</span>
-        </div>
-      {/if}
-    </div>
-
-    {#if controller?.family === 'DualSense Edge'}
-      <section class="dm-edge-slots" aria-label="DualSense Edge onboard profiles">
-        <div class="dm-edge-slots-head">
-          <div>
-            <span>Onboard Memory</span>
-            <strong>Edge Slots</strong>
-          </div>
-          <Tooltip text={edgeSlotsReadTooltip} side="bottom" align="end">
-            <button
-              type="button"
-              class="dm-mini-button"
-              disabled={edgeProfilesLoading}
-              aria-label="Refresh DualSense Edge onboard slots"
-              onclick={() => void onRefreshEdgeProfiles()}
-            >
-              {edgeProfilesLoading ? 'Reading' : 'Read'}
-            </button>
-          </Tooltip>
-        </div>
-
-        {#if edgeProfilesError}
-          <p class="dm-edge-slots-note error">{edgeProfilesError}</p>
-        {:else if edgeProfiles?.warning}
-          <p class="dm-edge-slots-note">{edgeProfiles.warning}</p>
-        {/if}
-
-        <div class="dm-edge-slot-list">
-          {#if edgeProfiles?.slots.length}
-            {#each edgeProfiles.slots as slot (slot.slotId)}
-              <div class="dm-edge-slot-row" class:disabled={!slot.editable}>
-                <Tooltip block text={edgeSlotInfoTooltip(slot)} side="right" align="start">
-                  <div class="dm-edge-slot-copy">
-                    <span>{slot.shortcut}</span>
-                    <strong>{edgeSlotName(slot)}</strong>
-                    <small>{edgeSlotStatus(slot)}</small>
-                  </div>
-                </Tooltip>
-                {#if slot.editable}
-                  <Tooltip text={edgeSlotWriteTooltip(slot)} side="left" align="center">
-                    <button
-                      type="button"
-                      class="dm-mini-button primary"
-                      disabled={!currentControllerConfig || edgeProfilesBusySlot === slot.slotId}
-                      onclick={() => void onWriteEdgeSlot(slot)}
-                    >
-                      {edgeProfilesBusySlot === slot.slotId ? 'Writing' : edgeSlotWriteLabel}
-                    </button>
-                  </Tooltip>
-                {/if}
-              </div>
-            {/each}
-          {:else}
-            <div class="dm-edge-slot-row disabled">
-              <div>
-                <span>Fn Slots</span>
-                <strong>{edgeProfilesLoading ? 'Reading slots' : 'No slot data'}</strong>
-                <small>{edgeProfilesLoading ? 'controller scan' : 'unavailable'}</small>
-              </div>
-            </div>
-          {/if}
-        </div>
-      </section>
-    {/if}
+<section class="ctl-view" aria-label="Controller details">
+  <div class="ctl-head">
+    <h1 class="ctl-title">Controller details</h1>
+    <span class="ctl-sub">{alias} &middot; live readouts for checking, not for everyday tuning</span>
   </div>
 
-  <div class="dm-controllers-workbench">
-    <section class="dm-controller-overview" aria-label="Selected controller details">
-      <div class="dm-controller-overview-copy">
-        <span>Selected</span>
-        <strong>{controllerModelText(controller)}</strong>
-        <small>{statusTone(controller)}</small>
+  <div class="ctl-groups">
+    {#if controllers.length > 1}
+      <div class="ctl-group ctl-group-controllers">
+        <div class="lbl">Controllers</div>
+        <div class="ctl-controller-list">
+          {#each controllers as item, index (item.id)}
+            <ControllerCard
+              {item}
+              {index}
+              selected={item.id === selectedControllerId}
+              renameActive={renameActiveId === item.id}
+              bind:renameName
+              renameBusy={renameBusy}
+              onSelect={onSelect}
+              onBeginRename={onBeginRename}
+              onSubmitRename={onSubmitRename}
+              onCancelRename={onCancelRename}
+              onRenameKeydown={onRenameKeydown}
+            />
+          {/each}
+        </div>
       </div>
-      {#if controller}
-        <dl class="dm-controller-metric-grid">
-          <div>
-            <dt>Connection</dt>
-            <dd>{controllerTransportDetail(controller)}</dd>
-          </div>
-          <div>
-            <dt>Battery</dt>
-            <dd>{controllerBatteryDetail(controller)}</dd>
-          </div>
-          <div>
-            <dt>Permission</dt>
-            <dd>{controllerPermissionDetail(controller)}</dd>
-          </div>
-          <div>
-            <dt>Diagnostics</dt>
-            <dd>{controllerDiagnosticDetail(controller)}</dd>
-          </div>
-          <div class="wide">
-            <dt>Sanitized ID</dt>
-            <dd class="mono">{controller.id}</dd>
-          </div>
-        </dl>
-      {/if}
-    </section>
+    {/if}
 
     {#if !controller}
-      <section class="dm-controller-empty-state" aria-label="No controller selected">
-        <strong>No controller selected</strong>
-        <span>Connect a DualSense controller to view input routing, live stick plots, trigger travel, and calibration readings.</span>
-      </section>
+      <div class="ctl-group">
+        <div class="lbl">Live input</div>
+        <div class="ctl-surf ctl-empty">
+          <strong>No controller selected</strong>
+          <span>Connect a DualSense controller to view live input, trigger travel, and calibration readings.</span>
+        </div>
+      </div>
     {:else}
-    <section class="dm-input-path-panel" aria-label="Controller input path">
-      <div class="dm-live-panel-head">
-        <div>
-          <span>Input Path</span>
-          <strong>{inputPathTitle()}</strong>
-        </div>
-        <code>{activeGameName ?? 'No active app'}</code>
-      </div>
-      <dl class="dm-controller-metric-grid compact">
-        <div>
-          <dt>Provider</dt>
-          <dd>{inputPathDetail()}</dd>
-        </div>
-        <div>
-          <dt>Duplicate Input</dt>
-          <dd>{duplicateInputDetail()}</dd>
-        </div>
-        <div class="wide">
-          <dt>Bridge Session</dt>
-          <dd>{bridgeSessionState()}</dd>
-        </div>
-      </dl>
-      <div class="dm-input-path-actions" aria-label="Input path controls">
-        <button
-          type="button"
-          class:active={currentControllerConfig?.inputMode === 'native_dualsense'}
-          disabled={!controller || !currentControllerConfig || Boolean(inputBridgeBusy)}
-          aria-pressed={currentControllerConfig?.inputMode === 'native_dualsense'}
-          onclick={() => void onSetInputMode('native_dualsense')}
-        >Native</button>
-        <button
-          type="button"
-          class:active={currentControllerConfig?.inputMode === 'steam_input_companion'}
-          disabled={!controller || !currentControllerConfig || Boolean(inputBridgeBusy)}
-          aria-pressed={currentControllerConfig?.inputMode === 'steam_input_companion'}
-          onclick={() => void onSetInputMode('steam_input_companion')}
-        >Steam</button>
-        <button
-          type="button"
-          class:active={controllerBridgeConfigured}
-          disabled={!controller || !currentControllerConfig || Boolean(inputBridgeBusy)}
-          aria-pressed={controllerBridgeConfigured}
-          onclick={() => void onSetInputMode('dscc_input_bridge')}
-        >Bridge</button>
-        <span></span>
-        <button
-          type="button"
-          class="primary"
-          disabled={!controller || !controllerBridgeConfigured || !appRequiresBridge || bridgeSessionActive || !inputBridge?.available || Boolean(inputBridgeBusy)}
-          onclick={() => void onStartInputBridge()}
-        >{inputBridgeBusy === 'start' ? 'Starting' : 'Start'}</button>
-        <button
-          type="button"
-          disabled={!controller || !bridgeSession || !bridgeSessionActive || Boolean(inputBridgeBusy)}
-          onclick={() => void onStopInputBridge()}
-        >{inputBridgeBusy === 'stop' ? 'Stopping' : 'Stop'}</button>
-      </div>
-      {#if controllerBridgeConfigured && !appRequiresBridge}
-        <p class="dm-edge-slots-note">Bridge sessions start only while the selected local app is active.</p>
-      {/if}
-      {#if inputBridge?.warnings.length && inputPathTitle() === 'DSCC Input Bridge'}
-        <p class="dm-edge-slots-note">{inputBridge.warnings[0]}</p>
-      {/if}
-    </section>
-
-    <section class="dm-power-diagnostics-panel" aria-label="Power diagnostics">
-      <div class="dm-live-panel-head">
-        <div>
-          <span>Power Diagnostics</span>
-          <strong>{hasPowerMetrics(controller) ? 'Output Cadence' : 'Awaiting Agent Metrics'}</strong>
-        </div>
-        <code>{controller.transport}</code>
-      </div>
-      <dl class="dm-controller-metric-grid compact">
-        <div>
-          <dt>Write Rate</dt>
-          <dd>{formatHz(powerDiagnostics?.outputWriteRateHz)}</dd>
-        </div>
-        <div>
-          <dt>Cadence</dt>
-          <dd>{formatMs(powerDiagnostics?.outputCadenceMs)}</dd>
-        </div>
-        <div>
-          <dt>Suppressed</dt>
-          <dd>{formatCount(powerDiagnostics?.suppressedRedundantReports)}</dd>
-        </div>
-        <div>
-          <dt>Keepalive</dt>
-          <dd>{formatMs(powerDiagnostics?.keepaliveIntervalMs)}</dd>
-        </div>
-        <div>
-          <dt>Last Write</dt>
-          <dd>{formatMs(powerDiagnostics?.lastWriteAgeMs)}</dd>
-        </div>
-        <div>
-          <dt>Rumble Path</dt>
-          <dd>{formatFlag(powerDiagnostics?.nativeRumblePassthrough, 'native passthrough', 'DSCC shaped')}</dd>
-        </div>
-        <div class="wide">
-          <dt>Trigger Policy</dt>
-          <dd>{formatFlag(powerDiagnostics?.adaptiveTriggersRetained, 'adaptive triggers retained', 'adaptive triggers not retained')}</dd>
-        </div>
-      </dl>
-      <div class="dm-power-suggestion-list" aria-label="Battery-friendly haptic guidance">
-        {#each powerSuggestions as suggestion}
-          <p>{suggestion}</p>
-        {/each}
-      </div>
-    </section>
-
-    <section class="dm-live-input-panel" aria-label="Live controller input">
-      <div class="dm-live-panel-head">
-        <div>
-          <span>Live Input</span>
-          <strong>{inputFresh ? 'Streaming' : 'Unavailable'}</strong>
-        </div>
-        <code>{inputFreshness(inputState)}</code>
-      </div>
-
-      <div class="dm-live-stick-grid">
-        <article class="dm-stick-module">
-          <div class="dm-stick-head">
-            <span>Left Stick</span>
-            <code>{signedPercent(leftStick.x)} / {signedPercent(leftStick.y)}</code>
-          </div>
-          <div class="dm-stick-plot" style={stickStyle(leftStick)} aria-hidden="true">
-            <span class="dm-stick-ring"></span>
-            <span class="dm-stick-dot"></span>
-          </div>
-          <dl>
-            <div>
-              <dt>Drift</dt>
-              <dd>{percent(leftStick.magnitude)}</dd>
-            </div>
-            <div>
-              <dt>Suggested DZ</dt>
-              <dd>{suggestedDeadzone(leftStick)}</dd>
-            </div>
-          </dl>
-          <div class="dm-stick-tuning-row">
-            <span>Deadzone</span>
-            <input
-              class="dm-mini-range"
-              style="--value:{leftStickDeadzone * 2.5}%"
-              type="range"
-              min="0"
-              max="40"
-              value={leftStickDeadzone}
-              disabled={!controller || !currentControllerConfig}
-              aria-label="Left stick deadzone"
-              oninput={(event) => void onSetStickDeadzone('left', event.currentTarget.valueAsNumber)}
-            />
-            <code>{leftStickDeadzone}%</code>
-          </div>
-        </article>
-
-        <article class="dm-stick-module">
-          <div class="dm-stick-head">
-            <span>Right Stick</span>
-            <code>{signedPercent(rightStick.x)} / {signedPercent(rightStick.y)}</code>
-          </div>
-          <div class="dm-stick-plot" style={stickStyle(rightStick)} aria-hidden="true">
-            <span class="dm-stick-ring"></span>
-            <span class="dm-stick-dot"></span>
-          </div>
-          <dl>
-            <div>
-              <dt>Drift</dt>
-              <dd>{percent(rightStick.magnitude)}</dd>
-            </div>
-            <div>
-              <dt>Suggested DZ</dt>
-              <dd>{suggestedDeadzone(rightStick)}</dd>
-            </div>
-          </dl>
-          <div class="dm-stick-tuning-row">
-            <span>Deadzone</span>
-            <input
-              class="dm-mini-range"
-              style="--value:{rightStickDeadzone * 2.5}%"
-              type="range"
-              min="0"
-              max="40"
-              value={rightStickDeadzone}
-              disabled={!controller || !currentControllerConfig}
-              aria-label="Right stick deadzone"
-              oninput={(event) => void onSetStickDeadzone('right', event.currentTarget.valueAsNumber)}
-            />
-            <code>{rightStickDeadzone}%</code>
-          </div>
-        </article>
-      </div>
-
-      <div class="dm-trigger-meter-grid">
-        <article class="dm-trigger-meter" style={triggerStyle(l2Value)}>
-          <div>
+      <div class="ctl-group">
+        <div class="lbl">Live input</div>
+        <div class="ctl-surf" aria-label="Live controller input">
+          <div class="ctl-meter-row">
             <span>L2</span>
-            <strong>{percent(l2Value)}</strong>
+            <span class="ctl-mut">{percent(l2Value)}</span>
           </div>
-          <div class="dm-trigger-bar" aria-hidden="true"><span></span></div>
-        </article>
-        <article class="dm-trigger-meter" style={triggerStyle(r2Value)}>
-          <div>
+          <div class="ctl-meter" aria-hidden="true"><span style={triggerStyle(l2Value)}></span></div>
+          <div class="ctl-meter-row">
             <span>R2</span>
-            <strong>{percent(r2Value)}</strong>
+            <span class="ctl-mut">{percent(r2Value)}</span>
           </div>
-          <div class="dm-trigger-bar" aria-hidden="true"><span></span></div>
-        </article>
+          <div class="ctl-meter" aria-hidden="true"><span style={triggerStyle(r2Value)}></span></div>
+          <div class="ctl-meter-row">
+            <span>Sticks</span>
+            <span class="ctl-mut">{stickDriftLine}</span>
+          </div>
+          <div class="ctl-meter-row">
+            <span>Feed</span>
+            <span class="ctl-mut ctl-mono">{inputFreshness(inputState)}</span>
+          </div>
+        </div>
+
+        <div class="ctl-stick-grid">
+          <article class="ctl-stick">
+            <div class="ctl-meter-row">
+              <span>Left stick</span>
+              <span class="ctl-mut ctl-mono">{signedPercent(leftStick.x)} / {signedPercent(leftStick.y)}</span>
+            </div>
+            <div class="ctl-stick-plot" style={stickStyle(leftStick)} aria-hidden="true">
+              <span class="ctl-stick-ring"></span>
+              <span class="ctl-stick-dot"></span>
+            </div>
+            <div class="ctl-rows">
+              <div class="ctl-row"><span>Off-center now</span><span class="ctl-mut">{percent(leftStick.magnitude)}</span></div>
+              <div class="ctl-row"><span>Suggested deadzone</span><span class="ctl-mut">{suggestedDeadzone(leftStick)}</span></div>
+            </div>
+            <div class="ctl-deadzone-row">
+              <span>Deadzone</span>
+              <input
+                type="range"
+                min="0"
+                max="40"
+                value={leftStickDeadzone}
+                disabled={!controller || !currentControllerConfig}
+                aria-label="Left stick deadzone"
+                oninput={(event) => void onSetStickDeadzone('left', event.currentTarget.valueAsNumber)}
+              />
+              <span class="ctl-mono">{leftStickDeadzone}%</span>
+            </div>
+          </article>
+          <article class="ctl-stick">
+            <div class="ctl-meter-row">
+              <span>Right stick</span>
+              <span class="ctl-mut ctl-mono">{signedPercent(rightStick.x)} / {signedPercent(rightStick.y)}</span>
+            </div>
+            <div class="ctl-stick-plot" style={stickStyle(rightStick)} aria-hidden="true">
+              <span class="ctl-stick-ring"></span>
+              <span class="ctl-stick-dot"></span>
+            </div>
+            <div class="ctl-rows">
+              <div class="ctl-row"><span>Off-center now</span><span class="ctl-mut">{percent(rightStick.magnitude)}</span></div>
+              <div class="ctl-row"><span>Suggested deadzone</span><span class="ctl-mut">{suggestedDeadzone(rightStick)}</span></div>
+            </div>
+            <div class="ctl-deadzone-row">
+              <span>Deadzone</span>
+              <input
+                type="range"
+                min="0"
+                max="40"
+                value={rightStickDeadzone}
+                disabled={!controller || !currentControllerConfig}
+                aria-label="Right stick deadzone"
+                oninput={(event) => void onSetStickDeadzone('right', event.currentTarget.valueAsNumber)}
+              />
+              <span class="ctl-mono">{rightStickDeadzone}%</span>
+            </div>
+          </article>
+        </div>
+
+        <div class="ctl-button-grid" aria-label="Live button states">
+          {#each visibleButtons as button (button.id)}
+            <div class:pressed={button.pressed} class="ctl-button-state">
+              <span>{button.label}</span>
+              <span class="ctl-mono">{button.id === 'l2' || button.id === 'r2' ? percent(button.value) : button.pressed ? 'ON' : 'OFF'}</span>
+            </div>
+          {/each}
+        </div>
       </div>
 
-      <div class="dm-button-grid" aria-label="Live button states">
-        {#each visibleButtons as button (button.id)}
-          <div class:pressed={button.pressed} class="dm-button-state">
-            <span>{button.label}</span>
-            <code>{button.id === 'l2' || button.id === 'r2' ? percent(button.value) : button.pressed ? 'ON' : 'OFF'}</code>
-          </div>
-        {/each}
-      </div>
-    </section>
+      <div class="ctl-group">
+        <div class="lbl">Connection</div>
+        <div class="ctl-rows">
+          <div class="ctl-row"><span>Controller</span><span class="ctl-mut">{controllerModelText(controller)}</span></div>
+          <div class="ctl-row"><span>State</span><span class="ctl-mut">{statusTone(controller)}</span></div>
+          <div class="ctl-row"><span>Transport</span><span class="ctl-mut">{controllerTransportDetail(controller)}</span></div>
+          <div class="ctl-row"><span>Battery</span><span class="ctl-mut">{controllerBatteryDetail(controller)}</span></div>
+          <div class="ctl-row"><span>Permission</span><span class="ctl-mut">{controllerPermissionDetail(controller)}</span></div>
+          <div class="ctl-row"><span>Diagnostics</span><span class="ctl-mut">{controllerDiagnosticDetail(controller)}</span></div>
+          <div class="ctl-row"><span>Sanitized ID</span><span class="ctl-mut ctl-mono">{controller.id}</span></div>
+        </div>
 
-    <section class="dm-calibration-readout" aria-label="Calibration measurements">
-      <div class="dm-live-panel-head">
-        <div>
-          <span>Calibration</span>
-          <strong>Session Readings</strong>
+        <div class="lbl ctl-sublabel">Input path</div>
+        <div class="ctl-rows">
+          <div class="ctl-row"><span>Path</span><span class="ctl-mut">{inputPathTitle()}</span></div>
+          <div class="ctl-row"><span>Active app</span><span class="ctl-mut">{activeGameName ?? 'No active app'}</span></div>
+          <div class="ctl-row"><span>Provider</span><span class="ctl-mut">{inputPathDetail()}</span></div>
+          <div class="ctl-row"><span>Duplicate input</span><span class="ctl-mut">{duplicateInputDetail()}</span></div>
+          <div class="ctl-row"><span>Bridge session</span><span class="ctl-mut">{bridgeSessionState()}</span></div>
+        </div>
+        <div class="ctl-actions" aria-label="Input path controls">
+          <button
+            type="button"
+            class="ctl-button"
+            class:active={currentControllerConfig?.inputMode === 'native_dualsense'}
+            disabled={!controller || !currentControllerConfig || Boolean(inputBridgeBusy)}
+            aria-pressed={currentControllerConfig?.inputMode === 'native_dualsense'}
+            onclick={() => void onSetInputMode('native_dualsense')}
+          >Native</button>
+          <button
+            type="button"
+            class="ctl-button"
+            class:active={currentControllerConfig?.inputMode === 'steam_input_companion'}
+            disabled={!controller || !currentControllerConfig || Boolean(inputBridgeBusy)}
+            aria-pressed={currentControllerConfig?.inputMode === 'steam_input_companion'}
+            onclick={() => void onSetInputMode('steam_input_companion')}
+          >Steam</button>
+          <button
+            type="button"
+            class="ctl-button"
+            class:active={controllerBridgeConfigured}
+            disabled={!controller || !currentControllerConfig || Boolean(inputBridgeBusy)}
+            aria-pressed={controllerBridgeConfigured}
+            onclick={() => void onSetInputMode('dscc_input_bridge')}
+          >Bridge</button>
+          <button
+            type="button"
+            class="ctl-button primary"
+            disabled={!controller || !controllerBridgeConfigured || !appRequiresBridge || bridgeSessionActive || !inputBridge?.available || Boolean(inputBridgeBusy)}
+            onclick={() => void onStartInputBridge()}
+          >{inputBridgeBusy === 'start' ? 'Starting' : 'Start'}</button>
+          <button
+            type="button"
+            class="ctl-button"
+            disabled={!controller || !bridgeSession || !bridgeSessionActive || Boolean(inputBridgeBusy)}
+            onclick={() => void onStopInputBridge()}
+          >{inputBridgeBusy === 'stop' ? 'Stopping' : 'Stop'}</button>
+        </div>
+        {#if controllerBridgeConfigured && !appRequiresBridge}
+          <p class="ctl-note">Bridge sessions start only while the selected local app is active.</p>
+        {/if}
+        {#if inputBridge?.warnings.length && inputPathTitle() === 'DSCC Input Bridge'}
+          <p class="ctl-note">{inputBridge.warnings[0]}</p>
+        {/if}
+      </div>
+
+      <div class="ctl-group">
+        <div class="lbl">Power</div>
+        <div class="ctl-rows">
+          <div class="ctl-row"><span>Write rate</span><span class="ctl-mut">{formatHz(powerDiagnostics?.outputWriteRateHz)}</span></div>
+          <div class="ctl-row"><span>Cadence</span><span class="ctl-mut">{formatMs(powerDiagnostics?.outputCadenceMs)}</span></div>
+          <div class="ctl-row"><span>Suppressed writes</span><span class="ctl-mut">{formatCount(powerDiagnostics?.suppressedRedundantReports)}</span></div>
+          <div class="ctl-row"><span>Keepalive</span><span class="ctl-mut">{formatMs(powerDiagnostics?.keepaliveIntervalMs)}</span></div>
+          <div class="ctl-row"><span>Last write</span><span class="ctl-mut">{formatMs(powerDiagnostics?.lastWriteAgeMs)}</span></div>
+          <div class="ctl-row"><span>Rumble path</span><span class="ctl-mut">{formatFlag(powerDiagnostics?.nativeRumblePassthrough, 'native passthrough', 'DSCC shaped')}</span></div>
+          <div class="ctl-row"><span>Trigger policy</span><span class="ctl-mut">{formatFlag(powerDiagnostics?.adaptiveTriggersRetained, 'adaptive triggers retained', 'adaptive triggers not retained')}</span></div>
+        </div>
+        <div class="ctl-suggestions" aria-label="Battery-friendly haptic guidance">
+          {#each powerSuggestions as suggestion}
+            <p class="ctl-note">{suggestion}</p>
+          {/each}
         </div>
       </div>
-      <dl class="dm-calibration-grid">
-        <div>
-          <dt>Left Range</dt>
-          <dd>{stickRange(observed.leftStick)}</dd>
+
+      <div class="ctl-group">
+        <div class="lbl">Session readings</div>
+        <div class="ctl-rows">
+          <div class="ctl-row"><span>Left range</span><span class="ctl-mut ctl-mono">{stickRange(observed.leftStick)}</span></div>
+          <div class="ctl-row"><span>Right range</span><span class="ctl-mut ctl-mono">{stickRange(observed.rightStick)}</span></div>
+          <div class="ctl-row"><span>L2 range</span><span class="ctl-mut ctl-mono">{rangePair(observed.l2Min, observed.l2Max)}</span></div>
+          <div class="ctl-row"><span>R2 range</span><span class="ctl-mut ctl-mono">{rangePair(observed.r2Min, observed.r2Max)}</span></div>
         </div>
-        <div>
-          <dt>Right Range</dt>
-          <dd>{stickRange(observed.rightStick)}</dd>
-        </div>
-        <div>
-          <dt>L2 Range</dt>
-          <dd>{rangePair(observed.l2Min, observed.l2Max)}</dd>
-        </div>
-        <div>
-          <dt>R2 Range</dt>
-          <dd>{rangePair(observed.r2Min, observed.r2Max)}</dd>
-        </div>
-      </dl>
-    </section>
+        <p class="ctl-note">Ranges are observed while this page is open; move the sticks and pull the triggers to fill them in.</p>
+      </div>
     {/if}
+
+    <div class="ctl-group narrow">
+      <div class="lbl">Support</div>
+      <div class="ctl-support">
+        <span>Having trouble?</span>
+        <p class="ctl-note">Download a Support Bundle &mdash; sanitized diagnostics, no private data.</p>
+        <button
+          type="button"
+          class="ctl-button"
+          disabled={Boolean(supportBundleBusy)}
+          onclick={() => void onDownloadSupportBundle()}
+        >{supportBundleBusy === 'download' ? 'Preparing bundle' : 'Download bundle'}</button>
+      </div>
+    </div>
   </div>
 </section>

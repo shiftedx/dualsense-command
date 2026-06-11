@@ -29,8 +29,8 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: var(--actuation);
-  font-family: "JetBrains Mono", monospace;
+  color: var(--accent-text);
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.18em;
@@ -38,7 +38,7 @@
 }
 
 .dm-mapping-eyebrow em {
-  color: var(--tungsten);
+  color: var(--ink-muted);
   font-style: normal;
   font-weight: 700;
   letter-spacing: 0;
@@ -60,7 +60,7 @@
   flex-wrap: wrap;
   gap: 8px;
   margin: 0;
-  color: var(--tungsten);
+  color: var(--ink-muted);
   font-size: 12px;
   line-height: 1.3;
   text-align: right;
@@ -68,19 +68,19 @@
 }
 
 .dm-mapping-context strong {
-  color: var(--haptic);
+  color: var(--ink);
   font-weight: 700;
 }
 
 .dm-mapping-context em {
-  color: var(--tungsten);
+  color: var(--ink-muted);
   font-style: normal;
   font-weight: 500;
 }
 
 .dm-mapping-context-count {
-  color: var(--actuation);
-  font-family: "JetBrains Mono", monospace;
+  color: var(--accent-text);
+  font-family: var(--font-mono);
   font-weight: 700;
 }
 
@@ -125,7 +125,7 @@
 
 .dm-paddle-preset-title svg {
   flex: 0 0 auto;
-  color: var(--haptic);
+  color: var(--ink);
 }
 
 .dm-paddle-key-field {
@@ -136,7 +136,7 @@
 
 .dm-paddle-preset-title span,
 .dm-paddle-key-field span {
-  color: var(--tungsten);
+  color: var(--ink-muted);
   font-size: 9px;
   font-weight: 800;
   text-transform: uppercase;
@@ -152,7 +152,7 @@
 
 .dm-paddle-preset-title em {
   overflow: hidden;
-  color: var(--tungsten);
+  color: var(--ink-muted);
   font-size: 10px;
   font-style: normal;
   line-height: 1.15;
@@ -166,7 +166,10 @@
   border: 1px solid rgba(255, 255, 255, 0.11);
   background: rgba(2, 5, 9, 0.86);
   color: #FFFFFF;
-  font: 800 12px/1 "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: 12px;
+  line-height: 1;
   text-align: center;
   text-transform: uppercase;
 }
@@ -203,5 +206,11 @@
   cursor: not-allowed;
   border-color: rgba(255, 255, 255, 0.09);
   background: rgba(255, 255, 255, 0.04);
-  color: var(--tungsten);
+  color: var(--ink-muted);
+}
+
+/* Hides the button-mapping workspace while it stays mounted for fast
+   re-entry. Moved from the retired workspace.css. */
+.dm-view-hidden {
+  display: none !important;
 }

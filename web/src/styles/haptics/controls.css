@@ -7,30 +7,27 @@
   padding-top: 4px;
 }
 
-.dm-parameter-strip label,
-.dm-profile-line label {
+.dm-parameter-strip label {
   display: grid;
   gap: 7px;
   min-width: 0;
 }
 
-.dm-parameter-strip select,
-.dm-profile-line select {
+.dm-parameter-strip select {
   width: 100%;
   min-width: 0;
   height: 34px;
   border: 0;
   border-radius: 5px;
-  color: var(--haptic);
+  color: var(--ink);
   background: rgba(10, 10, 12, 0.78);
   box-shadow: inset 0 0 0 1px rgba(113, 113, 122, 0.2);
   font-size: 12px;
   outline: none;
 }
 
-.dm-parameter-strip select:focus,
-.dm-profile-line select:focus {
-  box-shadow: inset 0 0 0 1px var(--actuation), 0 0 0 2px rgba(0, 112, 204, 0.16);
+.dm-parameter-strip select:focus {
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 2px rgba(0, 112, 204, 0.16);
 }
 
 .dm-led-controls {
@@ -57,7 +54,7 @@
 
 .dm-led-row code {
   width: 32px;
-  color: var(--haptic);
+  color: var(--ink);
   font-size: 10px;
   text-align: right;
 }
@@ -84,9 +81,9 @@
   position: absolute;
   inset: 4px;
   border-radius: 999px;
-  background: var(--lb-color, var(--actuation));
+  background: var(--lb-color, var(--accent));
   opacity: var(--lb-alpha, 1);
-  box-shadow: 0 0 16px color-mix(in srgb, var(--lb-color, var(--actuation)) 70%, transparent);
+  box-shadow: 0 0 16px color-mix(in srgb, var(--lb-color, var(--accent)) 70%, transparent);
 }
 
 .dm-mini-range {
@@ -115,7 +112,7 @@
   width: 10px;
   height: 10px;
   border-radius: 999px;
-  background: var(--tungsten);
+  background: var(--ink-muted);
   transition:
     transform 150ms ease-out,
     background 150ms ease-out;
@@ -139,7 +136,7 @@
 }
 
 .dm-effects-count code {
-  color: var(--actuation);
+  color: var(--accent);
   font-size: 12px;
   font-weight: 700;
 }
@@ -175,7 +172,7 @@
 }
 
 .dm-body-mode-title span {
-  color: var(--tungsten);
+  color: var(--ink-muted);
   font-size: 10px;
   font-weight: 800;
   line-height: 1;
@@ -185,7 +182,7 @@
 .dm-body-mode-title code {
   overflow: hidden;
   max-width: 52%;
-  color: var(--actuation);
+  color: var(--accent);
   font-size: 11px;
   font-weight: 800;
   text-align: right;
@@ -226,7 +223,7 @@
 }
 
 .dm-body-mode-option span {
-  color: var(--tungsten);
+  color: var(--ink-muted);
   font-size: 10px;
   font-weight: 800;
   line-height: 1;
@@ -238,7 +235,7 @@
 .dm-body-mode-option.active {
   border-color: rgba(0, 112, 204, 0.92);
   background: rgba(0, 112, 204, 0.13);
-  box-shadow: inset 3px 0 0 var(--actuation);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .dm-channel-list {
@@ -329,7 +326,7 @@
 
 .dm-effect-advanced-grid label > span,
 .dm-channel-signal-strip strong {
-  color: var(--tungsten);
+  color: var(--ink-muted);
   font-size: 9px;
   font-weight: 800;
   line-height: 1;
@@ -343,7 +340,7 @@
 .dm-advanced-note {
   grid-column: 1 / -1;
   margin: 0;
-  color: var(--ash);
+  color: var(--ink-muted);
   font-size: 11px;
   font-weight: 650;
   line-height: 1.35;
@@ -415,7 +412,7 @@
 }
 
 .dm-fader-value:focus {
-  border-color: var(--actuation);
+  border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(0, 112, 204, 0.14);
 }
 
@@ -433,7 +430,7 @@
 }
 
 .dm-route-select-wrap span {
-  color: var(--tungsten);
+  color: var(--ink-muted);
   font-size: 9px;
   font-weight: 800;
   line-height: 1;
@@ -446,7 +443,7 @@
   height: 30px;
   border: 1px solid rgba(113, 113, 122, 0.42);
   border-radius: 6px;
-  color: var(--haptic);
+  color: var(--ink);
   background:
     linear-gradient(180deg, rgba(226, 232, 240, 0.05), rgba(226, 232, 240, 0.015)),
     rgba(10, 10, 12, 0.92);
@@ -457,6 +454,42 @@
 }
 
 .dm-route-select:focus {
-  border-color: var(--actuation);
+  border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(0, 112, 204, 0.14);
+}
+
+/* RGB output console container (LightbarControls). Moved from the retired
+   haptics/profile-console.css; the canvas-grid context in tuning.css strips
+   the padding and divider and hides the title. */
+.dm-rgb-console {
+  display: grid;
+  gap: 9px;
+  padding-top: 12px;
+  box-shadow: inset 0 1px 0 var(--hairline-strong);
+}
+
+.dm-console-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.dm-console-title span {
+  color: var(--ink-muted);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.dm-console-title strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

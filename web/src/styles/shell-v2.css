@@ -1,0 +1,277 @@
+/* Shell v2 — slim sidebar + document-flow main column (calm console, flat fills). */
+
+/* The document itself scrolls; the sidebar stays sticky beside it. base.css
+   and responsive.css defer to these rules for the scroll model. */
+html,
+body,
+#app {
+  height: auto;
+  min-height: 100%;
+}
+
+body {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+html {
+  /* Reserve the vertical scrollbar's track so its appearance never reflows
+     content (keeps the visual smoke overflow check stable on classic
+     scrollbar platforms). */
+  scrollbar-gutter: stable;
+}
+
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+.sidebar {
+  width: 168px;
+  flex: 0 0 auto;
+  background: var(--bg-rail);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 10px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  z-index: var(--z-sticky);
+}
+
+.sidebar-brand {
+  font-weight: 600;
+  padding: 6px 10px;
+}
+
+/* The brand mark is the DualSense controller glyph (a currentColor mask over
+   /dualsense-controller.svg, shared with the controller cards). The artwork
+   sits in a central band of the square SVG canvas, so the mask is zoomed
+   past the box to render the controller itself at ~24px tall. */
+.dm-controller-glyph.sidebar-brand-glyph {
+  display: block;
+  width: 36px;
+  height: 24px;
+  mask-size: 40px 40px;
+  -webkit-mask-size: 40px 40px;
+}
+
+.sidebar-item,
+.sidebar-group {
+  text-align: left;
+  font: inherit;
+  color: var(--ink-muted);
+  background: none;
+  border: 0;
+  padding: 7px 10px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  transition: background var(--speed) var(--ease), color var(--speed) var(--ease);
+}
+
+.sidebar-item:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--surface-raised) 60%, transparent);
+}
+
+.sidebar-item.active {
+  color: var(--ink);
+  background: var(--surface-raised);
+}
+
+.sidebar-item:focus-visible,
+.sidebar-group:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 1px;
+}
+
+.sidebar-group {
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  margin-top: 12px;
+}
+
+.sidebar-sub {
+  padding-left: 20px;
+  font-size: 0.92em;
+}
+
+.sidebar-spacer {
+  flex: 1;
+}
+
+.sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-footer .sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.app-main {
+  flex: 1;
+  min-width: 0;
+  /* Clip latent horizontal overflow from wide instrument panels so a stray
+     wide row never scrolls the whole document sideways. */
+  overflow-x: hidden;
+  padding: 18px clamp(18px, 2.2vw, 34px) 22px;
+}
+
+/* Utility row above the views — cross-view context (target controller, web UI
+   bind address, glyph override, system readout). */
+.app-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 16px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-m);
+}
+
+/* Each field is exactly two rows — label, then control — so every toolbar
+   item shares one label line and one control line. The optional caption
+   (e.g. the bind address) sits inline beside the control instead of below
+   it, keeping the row's baseline tidy. */
+.app-toolbar-field {
+  display: grid;
+  grid-template-columns: auto minmax(0, auto);
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 3px;
+  min-width: 0;
+}
+
+.app-toolbar-field > span {
+  grid-column: 1 / -1;
+}
+
+.app-toolbar-field > span {
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.app-toolbar-field select {
+  max-width: 220px;
+  padding: 5px 8px;
+  color: var(--ink);
+  background: var(--surface-raised);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-s);
+}
+
+.app-toolbar-field small,
+.app-toolbar-readout small {
+  color: var(--ink-muted);
+  font-size: 0.72rem;
+}
+
+.app-toolbar-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+/* Value + detail share one line, height-matched to the toolbar selects so the
+   readout label sits on the same line as the field labels. */
+.app-toolbar-readout > p {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 30px;
+  margin: 0;
+}
+
+.app-toolbar-readout > span {
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.app-toolbar-toggle {
+  padding: 6px 10px;
+  color: var(--ink-muted);
+  background: var(--surface-raised);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-s);
+  transition: color var(--speed) var(--ease), border-color var(--speed) var(--ease);
+}
+
+.app-toolbar-toggle.active {
+  color: var(--accent-text);
+  border-color: var(--accent-outline);
+  background: var(--accent-tint);
+}
+
+.app-toolbar-spacer {
+  flex: 1;
+}
+
+.dm-battery-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--ink-muted);
+}
+
+.dm-battery {
+  width: 28px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--ink-muted);
+}
+
+.dm-battery rect:first-child,
+.dm-battery path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+
+.dm-battery-fill {
+  fill: var(--ink);
+}
+
+/* Prevent scroll bleed behind fixed overlays; the main document scrolls under
+   v2 shell, so fixed panels must contain their scroll momentum. */
+.dm-onboarding {
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    height: auto;
+    position: sticky;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .sidebar-spacer {
+    display: none;
+  }
+
+  .sidebar-footer {
+    flex-direction: row;
+  }
+}
