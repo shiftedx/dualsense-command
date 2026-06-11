@@ -114,9 +114,16 @@
   background: var(--surface-raised);
 }
 
-.status-controller-glyph {
+/* Two-class selector to out-specify .dm-controller-glyph's `mask` shorthand
+   (which would otherwise reset mask-size back to `contain`, same as the
+   sidebar brand glyph does in shell-v2.css). */
+.dm-controller-glyph.status-controller-glyph {
   width: 30px;
   height: 22px;
+  /* Square SVG canvas with the artwork in a central band — zoom the mask
+     past the box so the controller renders at ~22px tall (see shell-v2.css). */
+  mask-size: 36px 36px;
+  -webkit-mask-size: 36px 36px;
 }
 
 .status-controller-main {

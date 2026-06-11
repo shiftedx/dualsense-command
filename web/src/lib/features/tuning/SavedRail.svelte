@@ -59,14 +59,10 @@
   const changeSummary = $derived(
     outsideOnly ? 'Unsaved changes' : `${dirtyCount} unsaved change${dirtyCount === 1 ? '' : 's'}`
   );
-
-  // Lightbar/redline rows carry raw hex strings; pair them with a swatch.
-  const swatchColor = (value: string): string | null =>
-    /^#[0-9a-f]{6}$/i.test(value.trim()) ? value.trim() : null;
 </script>
 
-{#snippet rowValue(value: string)}
-  {#if swatchColor(value)}<span class="saved-swatch" style:background={swatchColor(value)}></span>{/if}{value}
+{#snippet rowValue(value: string, isColor: boolean)}
+  {#if isColor && value.startsWith('#')}<span class="saved-swatch" style:background={value}></span>{/if}{value}
 {/snippet}
 
 {#snippet diffRows()}
@@ -75,13 +71,13 @@
       <span class="saved-row-label">{item.label}</span>
       <span class="saved-row-value">
         {#if item.dirty && item.savedValue !== item.currentValue}
-          <s class="saved-row-was">{@render rowValue(item.savedValue)}</s>
-          <span class="saved-row-now">→ {@render rowValue(item.currentValue)}</span>
+          <s class="saved-row-was">{@render rowValue(item.savedValue, item.kind === 'color')}</s>
+          <span class="saved-row-now">→ {@render rowValue(item.currentValue, item.kind === 'color')}</span>
         {:else if item.dirty}
           <!-- Group summaries ("2 of 5 edited") have no single saved value to strike. -->
-          <span class="saved-row-now">{@render rowValue(item.currentValue)}</span>
+          <span class="saved-row-now">{@render rowValue(item.currentValue, item.kind === 'color')}</span>
         {:else}
-          <span class="saved-row-saved">{@render rowValue(item.savedValue)}</span>
+          <span class="saved-row-saved">{@render rowValue(item.savedValue, item.kind === 'color')}</span>
         {/if}
       </span>
     </div>
