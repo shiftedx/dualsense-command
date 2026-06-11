@@ -2,12 +2,19 @@
 
 Release date: 2026-06-11
 
-0.4.1 refreshes the default Forza brake feel and shortens the setup handoff
-after telemetry starts.
+0.4.1 ships a major UI refresh with telemetry onboarding, refreshes the default
+Forza brake feel, and shortens the setup handoff after telemetry starts.
+
+## UI Refresh
+
+- The app has a refreshed tuning flow with telemetry onboarding for new users.
+- Existing users may see the onboarding screen once for a supported game. After
+  DSCC detects that game's telemetry packets, the screen is marked complete and
+  will not appear again unless you open it manually.
 
 ## Forza Tuning
 
-- Default Forza profiles now use the brake feel from `New Brakes FH6`: lighter
+- Default Forza profiles now use the brake feel from `iPrevailed`: lighter
   brake resistance, lighter ABS pulse, linear L2 travel from 0-100%, and a
   later brake wall.
 - Forza brake and ABS defaults are aligned across backend presets, saved-profile
