@@ -3,8 +3,8 @@
   import { onMount } from 'svelte';
   import AppSidebar from './components/AppSidebar.svelte';
   import AddGameDialog from './lib/features/games/AddGameDialog.svelte';
-  import GamesView from './lib/features/games/GamesView.svelte';
   import StatusView from './lib/features/status/StatusView.svelte';
+  import TuningHeader from './lib/features/tuning/TuningHeader.svelte';
   import OnboardingTutorial from './components/OnboardingTutorial.svelte';
   import SupportPanel from './components/SupportPanel.svelte';
   import ToastStack from './components/ToastStack.svelte';
@@ -162,13 +162,6 @@
     forzaTuningFromConfig,
     type ForzaTuningValues
   } from './app/forzaEffectState';
-  import {
-    gameAccentColor,
-    gameArtwork,
-    gameMediaDetails,
-    gameTileStatus,
-    profileScopeCount as countProfilesForGame
-  } from './lib/features/games/gamePresentation';
   import {
     defaultProfileIdForGame,
     usesForzaRuntimeProfile
@@ -498,13 +491,13 @@
   $: activeProfileHeaderName = profileWorkspace.activeProfileHeaderName;
   $: activeProfileHeaderMeta = profileWorkspace.activeProfileHeaderMeta;
   $: buttonMappingActive = activeView === 'advancedButtonMapping';
-  // Temporary view composition (Tasks 5-9 replace the rest): 'status' renders the
-  // new StatusView; 'tuning' renders GamesView plus the haptics workspace;
+  // Temporary view composition (Tasks 6-9 replace the rest): 'status' renders the
+  // new StatusView; 'tuning' renders the TuningHeader plus the haptics workspace;
   // 'advancedEdgeSlots' renders ControllersView because the Edge onboard slots UI
   // currently lives inside it. Views the guard rejects land on 'status'.
   $: showAdvancedControllerView = activeView === 'advancedController' || activeView === 'advancedEdgeSlots';
   $: showStatusView = activeView === 'status';
-  $: showGamesView = activeView === 'tuning';
+  $: showTuningView = activeView === 'tuning';
   $: showWorkspaceViews =
     showAdvancedControllerView || (tuningReady && (activeView === 'tuning' || activeView === 'advancedButtonMapping'));
   $: steamInputStatus = snapshot?.steamInput;
@@ -763,8 +756,6 @@
     configLoadedFor = '';
     stopTriggerInputPolling();
   };
-
-  const profileScopeCount = (game: SupportedGame) => countProfilesForGame(game, profiles);
 
   const openAddGameDialog = async () => {
     addGameOpen = true;
@@ -2032,8 +2023,8 @@
       <button class="solid-action compact" type="button" onclick={refresh}>Retry</button>
     </section>
   {:else if snapshot}
-    <!-- TEMPORARY toolbar: the controller/scope/profile context the old ribbon
-         carried. Task 4 re-houses it on Status; Task 5 in the Tuning header. -->
+    <!-- TEMPORARY toolbar: leftover ribbon context. Scope + profile pickers now
+         live in the Tuning header; the rest moves in Tasks 9-10. -->
     <section class="app-toolbar" aria-label="Controller, scope, and profile context">
       <label class="app-toolbar-field">
         <span>Target Controller</span>
@@ -2052,43 +2043,6 @@
           {/if}
           {#each connectedControllers as item (item.id)}
             <option value={item.id}>{item.name || controllerModelText(item)}</option>
-          {/each}
-        </select>
-      </label>
-      <label class="app-toolbar-field">
-        <span>Scope</span>
-        <select
-          aria-label="Tuning scope"
-          value={selectedTuningScope === 'game' ? selectedTuningGameId : '__global__'}
-          onchange={(event) => {
-            const picked = event.currentTarget.value;
-            if (picked === '__global__') {
-              if (selectedTuningScope !== 'global') void selectGlobalTuning();
-            } else {
-              const game = discoveredGames.find((item) => item.gameId === picked);
-              if (game) void selectTuningGame(game);
-            }
-          }}
-        >
-          <option value="__global__">Global Profile</option>
-          {#each discoveredGames as game (game.gameId)}
-            <option value={game.gameId}>{game.name}</option>
-          {/each}
-        </select>
-      </label>
-      <label class="app-toolbar-field">
-        <span>Live Profile</span>
-        <select
-          aria-label="Live profile"
-          disabled={!profileContextProfiles.length}
-          value={selectedOverrideProfileId || activeProfileId}
-          onchange={(event) => {
-            const picked = event.currentTarget.value;
-            if (picked && picked !== (selectedOverrideProfileId || activeProfileId)) void selectProfileForScope(picked);
-          }}
-        >
-          {#each profileContextProfiles as profile (profile.id)}
-            <option value={profile.id}>{profile.name}</option>
           {/each}
         </select>
       </label>
@@ -2182,27 +2136,46 @@
         onRenameKeydown={handleControllerRenameKeydown}
       />
     {/if}
-    {#if showGamesView}
-      <GamesView
-        {controller}
-        {connectedControllers}
-        {selectedTuningScope}
-        {selectedTuningGameId}
-        {globalProfilePreview}
-        {profileTargetsAllConnected}
-        {profileTargetControllerIds}
+    {#if showTuningView}
+      <TuningHeader
+        scope={selectedTuningScope}
+        selectedGame={selectedTuningGame}
         {discoveredGames}
-        {detectionSignalText}
-        {gameArtwork}
-        {gameMediaDetails}
-        {profileScopeCount}
-        {gameAccentColor}
-        {gameTileStatus}
+        adapterRunning={adapter?.state === 'running'}
+        packetRateHz={telemetryPacketRate}
+        {controller}
+        profiles={profileContextProfiles}
+        {activeProfileId}
+        {selectedOverrideProfileId}
+        {selectedActionProfile}
+        {canRenameSelectedProfile}
+        {canDeleteSelectedProfile}
+        {profileConfigDirty}
+        {profileSaveBusy}
+        {profileFileBusy}
+        {profileSaveAsBusy}
+        {profileRenameBusy}
+        saveAsOpen={saveAsProfileOpen}
+        bind:saveAsName={saveAsProfileName}
+        {renameProfileId}
+        bind:renameName={renameProfileName}
         onSelectGlobal={selectGlobalTuning}
         onSelectGame={selectTuningGame}
         onOpenAddGame={openAddGameDialog}
-        onPickAllControllers={pickAllControllers}
-        onPickControllerTarget={pickControllerTarget}
+        onSelectProfile={selectProfileForScope}
+        onSaveProfile={saveActiveProfile}
+        onBeginSaveAs={beginSaveAsProfile}
+        onCancelSaveAs={cancelSaveAsProfile}
+        onSubmitSaveAs={submitSaveAsProfile}
+        onSaveAsKeydown={handleSaveAsProfileKeydown}
+        onBeginRename={beginRenameSelectedProfile}
+        onCancelRename={cancelRenameProfile}
+        onSubmitRename={submitRenameProfile}
+        onRenameKeydown={handleRenameProfileKeydown}
+        onDeleteProfile={(profile) => void deleteProfileById(profile.id, profile.name)}
+        onRestoreDefaults={restoreDefaults}
+        onImportFile={handleProfileImport}
+        onExportProfile={exportSelectedProfile}
       />
     {/if}
     {#if showWorkspaceViews}
@@ -2351,36 +2324,6 @@
         {setLightbarEnabled}
         {previewLightbar}
         {previewRpmColor}
-        {profileContextProfiles}
-        {activeProfileId}
-        {selectedOverrideProfileId}
-        {selectedActionProfile}
-        selectedGameName={steamContextGame?.name ?? 'game'}
-        {canRenameSelectedProfile}
-        {canDeleteSelectedProfile}
-        {profileConfigDirty}
-        {profileSaveBusy}
-        {profileFileBusy}
-        {profileSaveAsBusy}
-        {profileRenameBusy}
-        {saveAsProfileOpen}
-        bind:saveAsProfileName
-        {renameProfileId}
-        bind:renameProfileName
-        onSelectProfile={selectProfileForScope}
-        onImportFile={handleProfileImport}
-        onExportProfile={exportSelectedProfile}
-        onBeginSaveAs={beginSaveAsProfile}
-        onCancelSaveAs={cancelSaveAsProfile}
-        onSubmitSaveAs={submitSaveAsProfile}
-        onSaveAsKeydown={handleSaveAsProfileKeydown}
-        onBeginRename={beginRenameSelectedProfile}
-        onCancelRename={cancelRenameProfile}
-        onSubmitRename={submitRenameProfile}
-        onRenameKeydown={handleRenameProfileKeydown}
-        onDeleteProfile={(profile) => void deleteProfileById(profile.id, profile.name)}
-        onRestoreDefaults={restoreDefaults}
-        onSaveProfile={saveActiveProfile}
       />
       </HapticsView>
       {/if}
