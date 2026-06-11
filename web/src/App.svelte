@@ -632,11 +632,14 @@
   };
   $: telemetryRateText = `${telemetryPacketRate >= 100 ? telemetryPacketRate.toFixed(0) : telemetryPacketRate.toFixed(1)} Hz`;
   $: telemetryRateDetail = telemetryRateStatusText(adapter);
-  $: systemReadoutTitle = selectedTuningScope === 'global' ? 'Profile Scope' : 'Telemetry Rate';
-  $: systemReadoutValue = selectedTuningScope === 'global' ? 'Global' : telemetryRateText;
+  // "Tuning Scope", not "Profile Scope": this readout tracks what the tuning
+  // view edits, while Status's sentence tracks profile resolution — the two can
+  // legitimately differ, so the label must not claim to be the same thing.
+  $: systemReadoutTitle = selectedTuningScope === 'global' ? 'Tuning Scope' : 'Telemetry Rate';
+  $: systemReadoutValue = selectedTuningScope === 'global' ? 'Everyday' : telemetryRateText;
   $: systemReadoutDetail =
     selectedTuningScope === 'global'
-      ? 'Controller-only tuning'
+      ? 'Global Profile · controller-only tuning'
       : telemetryRateDetail;
   $: overrideScope = profileWorkspace.overrideScope;
   // Sync the override dropdown when the ACTIVE profile changes (server-side
