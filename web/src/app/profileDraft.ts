@@ -9,7 +9,8 @@ import {
   normalizeStickDeadzone,
   normalizeTriggerCurve,
   normalizeTriggerCurvePoints,
-  normalizeTriggerPercent
+  normalizeTriggerPercent,
+  triggerCurvePointsFromCurve
 } from '../lib/features/haptics/hapticsModel';
 import type {
   ControllerConfiguration,
@@ -273,13 +274,13 @@ export const normalizeInputBridgeConfig = (config: InputBridgeConfig | undefined
 export function baseForzaTriggerDefaults(): EditableControllerConfig['trigger'] {
   return {
     sameRange: false,
-    l2From: 6,
+    l2From: 0,
     l2To: 100,
     r2From: 4,
     r2To: 100,
-    l2Curve: defaultTriggerCurve('l2'),
+    l2Curve: 1,
     r2Curve: defaultTriggerCurve('r2'),
-    l2CurvePoints: defaultTriggerCurvePoints('l2'),
+    l2CurvePoints: triggerCurvePointsFromCurve(1),
     r2CurvePoints: defaultTriggerCurvePoints('r2'),
     effect: 'Adaptive resistance',
     intensity: 'Strong (Standard)',
@@ -295,7 +296,7 @@ export function buildDefaultControllerConfig(options: DraftConfigOptions): Edita
     inputMode: 'native_dualsense',
     trigger: {
       sameRange: false,
-      l2From: 6,
+      l2From: 0,
       l2To: 100,
       r2From: 0,
       r2To: 100,

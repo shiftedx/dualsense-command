@@ -32,7 +32,7 @@ A few words you will see a lot:
 
 Most people need one file.
 
-1. Open the [latest release](https://github.com/shiftedx/dualsense-command/releases/latest) and download **DSCC Standard**, the Windows x86_64 `.msi`. The current release is `0.4.0`.
+1. Open the [latest release](https://github.com/shiftedx/dualsense-command/releases/latest) and download **DSCC Standard**, the Windows x86_64 `.msi`. The current release is `0.4.1`.
 2. Run the installer. Windows may show a blue SmartScreen warning, because we have not signed the installer yet. If you got the file from the official release page above, click **More info**, then **Run anyway**.
 3. The installer asks whether to start DSCC with Windows, add a desktop shortcut, and open it after setup. The defaults work for most people.
 

@@ -43,7 +43,7 @@ export function defaultForzaAbsTuning(): ForzaAbsTuningConfiguration {
     mode: 'strong_pulse',
     slipSource: 'auto_front_first',
     slipThreshold: 0.68,
-    brakeThresholdRatio: 0.38,
+    brakeThresholdRatio: 0.8,
     minSpeedKmh: 12,
     minStrength: 48 / 63,
     maxStrength: 1,
@@ -84,9 +84,9 @@ export function defaultForzaBrakeTuning(): ForzaBrakeTuningConfiguration {
     normalForce: 1,
     endstopForce: 1,
     endstopBoost: 1.25,
-    wallPosition: 0.48,
+    wallPosition: 0.98,
     guardMinEnd: 0.48,
-    fullForceAt: 0.8,
+    fullForceAt: 0.95,
     rampCurve: 0.8
   };
 }
@@ -259,9 +259,9 @@ export const forzaPresetEffects = (preset: 'base' | 'immersive'): ForzaEffectCon
   const entries: Array<[string, boolean, number, ForzaEffectRoute]> =
     preset === 'immersive'
       ? [
-          ['brake_resistance', true, 100, 'l2'],
+          ['brake_resistance', true, 77, 'l2'],
           ['throttle_resistance', true, 100, 'r2'],
-          ['abs_slip_pulse', true, 100, 'l2'],
+          ['abs_slip_pulse', true, 26, 'l2'],
           ['handbrake_wall', true, 100, 'l2'],
           ['rev_limiter_buzz', true, 62, 'r2'],
           ['gear_shift_thump', true, FORZA_SHIFT_THUMP_DEFAULT_INTENSITY, 'r2_and_body'],
@@ -273,9 +273,9 @@ export const forzaPresetEffects = (preset: 'base' | 'immersive'): ForzaEffectCon
           ['rpm_leds', true, 100, 'light_led']
         ]
       : [
-          ['brake_resistance', true, 100, 'l2'],
+          ['brake_resistance', true, 77, 'l2'],
           ['throttle_resistance', true, 100, 'r2'],
-          ['abs_slip_pulse', true, 100, 'l2'],
+          ['abs_slip_pulse', true, 26, 'l2'],
           ['handbrake_wall', true, 100, 'l2'],
           ['rev_limiter_buzz', true, 55, 'r2'],
           ['gear_shift_thump', true, FORZA_SHIFT_THUMP_DEFAULT_INTENSITY, 'r2_and_body'],

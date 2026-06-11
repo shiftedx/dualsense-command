@@ -35,7 +35,7 @@
   // Passive verification: the first fresh packets complete setup on their
   // own. A short green beat on the LISTENING box, then the parent swaps the
   // tuning canvas in. Manual re-entry (already verified) never auto-closes.
-  const VERIFY_SWAP_DELAY_MS = 900;
+  const VERIFY_SWAP_DELAY_MS = 250;
   $effect(() => {
     if (!telemetryFresh || verified || game.supportLevel !== 'telemetry') return;
     const timer = window.setTimeout(() => onVerified(), VERIFY_SWAP_DELAY_MS);

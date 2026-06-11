@@ -313,36 +313,7 @@ pub(crate) fn default_r2_trigger_curve() -> TriggerCurve {
 }
 
 pub(crate) fn default_l2_trigger_curve_points() -> Vec<TriggerCurvePoint> {
-    vec![
-        TriggerCurvePoint {
-            input: 0,
-            output: 0,
-        },
-        TriggerCurvePoint {
-            input: 12,
-            output: 18,
-        },
-        TriggerCurvePoint {
-            input: 25,
-            output: 44,
-        },
-        TriggerCurvePoint {
-            input: 40,
-            output: 68,
-        },
-        TriggerCurvePoint {
-            input: 58,
-            output: 86,
-        },
-        TriggerCurvePoint {
-            input: 78,
-            output: 96,
-        },
-        TriggerCurvePoint {
-            input: 100,
-            output: 100,
-        },
-    ]
+    trigger_curve_points_from_curve(TriggerCurve::default_l2())
 }
 
 pub(crate) fn previous_soft_l2_trigger_curve_points() -> Vec<TriggerCurvePoint> {

@@ -1,3 +1,23 @@
+# DualSense Command Center 0.4.1
+
+Release date: 2026-06-11
+
+0.4.1 refreshes the default Forza brake feel and shortens the setup handoff
+after telemetry starts.
+
+## Forza Tuning
+
+- Default Forza profiles now use the brake feel from `New Brakes FH6`: lighter
+  brake resistance, lighter ABS pulse, linear L2 travel from 0-100%, and a
+  later brake wall.
+- Forza brake and ABS defaults are aligned across backend presets, saved-profile
+  defaults, frontend drafts, mocks, and regression tests.
+
+## Setup
+
+- The setup guide now opens the tuning canvas shortly after telemetry packets
+  are detected instead of waiting through the longer success pause.
+
 # DualSense Command Center 0.4.0
 
 Release date: 2026-06-03
