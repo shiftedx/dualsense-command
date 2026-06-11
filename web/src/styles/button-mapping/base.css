@@ -48,7 +48,6 @@
 .dm-mapping-titleblock h2 {
   margin: 0;
   color: #FFFFFF;
-  font-family: "Space Grotesk", "Inter Tight", Inter, sans-serif;
   font-size: clamp(22px, 2.4vw, 30px);
   font-weight: 700;
   letter-spacing: -0.01em;

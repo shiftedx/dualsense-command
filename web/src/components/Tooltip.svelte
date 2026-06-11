@@ -98,7 +98,6 @@
     color: #E2E8F0;
     background: rgba(18, 18, 20, 0.98);
     box-shadow: 0 18px 48px rgba(0, 0, 0, 0.48);
-    font-family: Inter, ui-sans-serif, system-ui, sans-serif;
     font-size: 0.72rem;
     font-weight: 650;
     line-height: 1.35;
