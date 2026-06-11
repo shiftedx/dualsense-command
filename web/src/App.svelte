@@ -2025,7 +2025,7 @@
   {:else if snapshot}
     <!-- TEMPORARY toolbar: leftover ribbon context. Scope + profile pickers now
          live in the Tuning header; the rest moves in Tasks 9-10. -->
-    <section class="app-toolbar" aria-label="Controller, scope, and profile context">
+    <section class="app-toolbar" aria-label="Controller and display options">
       <label class="app-toolbar-field">
         <span>Target Controller</span>
         <select
