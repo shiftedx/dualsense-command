@@ -46,6 +46,18 @@ html {
   padding: 6px 10px;
 }
 
+/* The brand mark is the DualSense controller glyph (a currentColor mask over
+   /dualsense-controller.svg, shared with the controller cards). The artwork
+   sits in a central band of the square SVG canvas, so the mask is zoomed
+   past the box to render the controller itself at ~24px tall. */
+.dm-controller-glyph.sidebar-brand-glyph {
+  display: block;
+  width: 36px;
+  height: 24px;
+  mask-size: 40px 40px;
+  -webkit-mask-size: 40px 40px;
+}
+
 .sidebar-item,
 .sidebar-group {
   text-align: left;
@@ -126,11 +138,21 @@ html {
   border-radius: var(--radius-m);
 }
 
+/* Each field is exactly two rows — label, then control — so every toolbar
+   item shares one label line and one control line. The optional caption
+   (e.g. the bind address) sits inline beside the control instead of below
+   it, keeping the row's baseline tidy. */
 .app-toolbar-field {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+  display: grid;
+  grid-template-columns: auto minmax(0, auto);
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 3px;
   min-width: 0;
+}
+
+.app-toolbar-field > span {
+  grid-column: 1 / -1;
 }
 
 .app-toolbar-field > span {
@@ -158,8 +180,19 @@ html {
 .app-toolbar-readout {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
+}
+
+/* Value + detail share one line, height-matched to the toolbar selects so the
+   readout label sits on the same line as the field labels. */
+.app-toolbar-readout > p {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 30px;
+  margin: 0;
 }
 
 .app-toolbar-readout > span {

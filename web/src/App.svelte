@@ -2250,6 +2250,7 @@
         <select
           aria-label="Web UI location"
           disabled={appSettingsBusy}
+          title={lanRestartRequired ? `restart -> ${appSettings?.desiredBindAddress}` : status?.bindAddress}
           value={listenOnAllInterfaces ? 'lan' : 'local'}
           onchange={(event) => void updateLanAccess(event.currentTarget.value === 'lan')}
         >
@@ -2275,8 +2276,7 @@
         title={selectedTuningScope === 'global' ? systemReadoutDetail : adapter?.setupHint ?? telemetryRateDetail}
       >
         <span>{systemReadoutTitle}</span>
-        <strong>{systemReadoutValue}</strong>
-        <small>{systemReadoutDetail}</small>
+        <p><strong>{systemReadoutValue}</strong><small>{systemReadoutDetail}</small></p>
       </div>
     </section>
 
