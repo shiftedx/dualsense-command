@@ -10,6 +10,8 @@ export type AppViewDefinition = {
 export type ViewReadiness = {
   tuningReady: boolean;
   buttonMappingReady: boolean;
+  /** True when the Target Controller is a DualSense Edge. */
+  edgeSlotsReady: boolean;
 };
 
 export const appViews: AppViewDefinition[] = [
@@ -53,6 +55,9 @@ export function hashForView(view: AppView): string {
 export function guardView(view: AppView, readiness: ViewReadiness): AppView {
   if (view === 'tuning' && !readiness.tuningReady) return 'status';
   if (view === 'advancedButtonMapping' && !readiness.buttonMappingReady) return 'status';
+  // Edge onboard slots only exist on a DualSense Edge; direct hash navigation
+  // lands on Controller details, which explains the selected controller.
+  if (view === 'advancedEdgeSlots' && !readiness.edgeSlotsReady) return 'advancedController';
   return view;
 }
 

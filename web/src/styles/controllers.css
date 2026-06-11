@@ -1,351 +1,376 @@
-.dm-controllers-page {
-  display: grid;
-  grid-template-columns: minmax(260px, 330px) minmax(0, 1160px);
-  justify-content: center;
-  gap: clamp(16px, 2vw, 26px);
-  flex: 1 1 0;
-  width: min(1500px, 100%);
-  min-height: 0;
-  margin: 0 auto;
+/* Advanced — Controller details + Edge onboard slots.
+   Layout truth: status-advanced-v2-psblue mockup. Calm, flat, hairlines;
+   live meters use --accent-bright. Live readouts are for checking, not for
+   everyday tuning. */
+
+.ctl-view {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink);
 }
 
-.dm-controllers-workbench {
+.ctl-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.ctl-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ctl-sub {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+/* Groups row — intrinsic widths, wraps naturally (same rhythm as Status). */
+.ctl-groups {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px 22px;
+  margin-top: 14px;
+}
+
+.ctl-group {
+  flex: 1 1 280px;
+  min-width: 260px;
+  max-width: 420px;
   display: grid;
-  gap: 12px;
-  min-width: 0;
+  gap: 6px;
   align-content: start;
 }
 
-.dm-controller-overview,
-.dm-input-path-panel,
-.dm-power-diagnostics-panel,
-.dm-live-input-panel,
-.dm-calibration-readout,
-.dm-controller-empty-state {
-  display: grid;
-  gap: 14px;
-  min-width: 0;
-  padding: 14px;
-  border: 1px solid rgba(113, 113, 122, 0.24);
-  border-radius: 6px;
-  background:
-    linear-gradient(180deg, rgba(226, 232, 240, 0.034), rgba(226, 232, 240, 0.012)),
-    rgba(14, 15, 18, 0.82);
-  box-shadow: inset 0 1px 0 rgba(226, 232, 240, 0.052);
+.ctl-group.narrow {
+  flex: 1 1 240px;
+  min-width: 230px;
+  max-width: 360px;
 }
 
-.dm-controller-empty-state {
-  align-content: center;
-  min-height: 360px;
-  justify-items: center;
-  text-align: center;
+.ctl-group-controllers {
+  flex: 1 1 100%;
+  max-width: none;
 }
 
-.dm-controller-empty-state strong {
-  color: #FFFFFF;
-  font-family: "Space Grotesk", "Inter Tight", Inter, sans-serif;
-  font-size: 22px;
-  font-weight: 760;
-}
-
-.dm-controller-empty-state span {
-  width: min(440px, 100%);
-  color: var(--tungsten);
-  font-size: 13px;
-  font-weight: 650;
-  line-height: 1.45;
-}
-
-.dm-controller-overview {
-  grid-template-columns: minmax(210px, 0.8fr) minmax(0, 1.6fr);
-  align-items: start;
-}
-
-.dm-controller-overview-copy,
-.dm-live-panel-head > div,
-.dm-stick-head,
-.dm-trigger-meter > div:first-child {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.dm-controller-overview-copy span,
-.dm-live-panel-head span,
-.dm-stick-head span,
-.dm-trigger-meter span,
-.dm-calibration-grid dt,
-.dm-controller-metric-grid dt,
-.dm-stick-module dt {
-  color: var(--tungsten);
-  font-size: 10px;
-  font-weight: 800;
-  line-height: 1.15;
-  text-transform: uppercase;
-}
-
-.dm-controller-overview-copy strong,
-.dm-live-panel-head strong,
-.dm-trigger-meter strong {
-  color: #FFFFFF;
-  font-family: "Space Grotesk", "Inter Tight", Inter, sans-serif;
-  font-size: 19px;
-  font-weight: 760;
-  line-height: 1.05;
-}
-
-.dm-controller-overview-copy small {
-  color: var(--tungsten);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.dm-controller-metric-grid,
-.dm-calibration-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 14px;
-  margin: 0;
-  min-width: 0;
-}
-
-.dm-controller-metric-grid > div,
-.dm-calibration-grid > div {
-  min-width: 0;
-}
-
-.dm-controller-metric-grid > div.wide {
-  grid-column: 1 / -1;
-}
-
-.dm-controller-metric-grid dd,
-.dm-calibration-grid dd,
-.dm-stick-module dd {
-  margin: 0;
-  color: #FFFFFF;
-  font-size: 12px;
-  font-weight: 650;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-}
-
-.dm-controller-metric-grid dd.mono {
-  color: var(--haptic);
-  font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 11px;
-  font-weight: 550;
-}
-
-.dm-live-panel-head {
+.ctl-group-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  min-width: 0;
+  gap: 10px;
 }
 
-.dm-live-panel-head code,
-.dm-stick-head code,
-.dm-button-state code {
-  color: var(--haptic);
+.ctl-sublabel {
+  margin-top: 10px;
+}
+
+.ctl-controller-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* Bounded fields only where content needs one. */
+.ctl-surf {
+  padding: 12px 14px;
+  background: var(--surface);
+  border-radius: var(--radius-m);
+}
+
+.ctl-empty {
+  display: grid;
+  gap: 4px;
+}
+
+.ctl-empty strong {
+  font-weight: 600;
+}
+
+.ctl-empty span {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.ctl-mut {
+  color: var(--ink-muted);
+}
+
+.ctl-mono {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 11px;
-  font-weight: 750;
+  overflow-wrap: anywhere;
 }
 
-.dm-input-path-actions {
+/* Hairline rows (srow pattern from the mockup). */
+.ctl-rows {
   display: grid;
-  grid-template-columns: repeat(3, minmax(70px, 1fr)) minmax(8px, 0.4fr) repeat(2, minmax(76px, 0.9fr));
+}
+
+.ctl-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 11px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.ctl-row:last-child {
+  border-bottom: 0;
+}
+
+.ctl-row > span:last-child {
+  text-align: right;
+}
+
+/* Live meters — label/value row plus a 4px accent-bright bar. */
+.ctl-meter-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 11px;
+}
+
+.ctl-meter-row + .ctl-meter,
+.ctl-meter + .ctl-meter-row,
+.ctl-meter-row + .ctl-meter-row {
+  margin-top: 3px;
+}
+
+.ctl-meter + .ctl-meter-row {
+  margin-top: 8px;
+}
+
+.ctl-meter {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+
+.ctl-meter span {
+  display: block;
+  width: var(--trigger-fill, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent-bright);
+}
+
+/* Stick plots — flat field, hairline crosshair, accent-bright dot. */
+.ctl-stick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.ctl-stick {
+  display: grid;
   gap: 8px;
-  align-items: center;
   min-width: 0;
+  padding: 12px 14px;
+  background: var(--surface);
+  border-radius: var(--radius-m);
 }
 
-.dm-input-path-actions button {
-  min-height: 32px;
-  padding: 0 10px;
-  border: 1px solid rgba(113, 113, 122, 0.34);
-  border-radius: 5px;
-  color: rgba(226, 232, 240, 0.82);
-  background: rgba(10, 10, 12, 0.42);
-  font-size: 12px;
-  font-weight: 760;
+.ctl-stick-plot {
+  position: relative;
+  width: min(150px, 100%);
+  aspect-ratio: 1;
+  margin: 0 auto;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 50%;
+  background:
+    linear-gradient(var(--hairline), var(--hairline)) 50% 0 / 1px 100% no-repeat,
+    linear-gradient(90deg, var(--hairline), var(--hairline)) 0 50% / 100% 1px no-repeat;
 }
 
-.dm-input-path-actions button.active,
-.dm-input-path-actions button.primary {
-  border-color: rgba(0, 112, 204, 0.82);
-  color: #FFFFFF;
-  background: rgba(0, 112, 204, 0.2);
+.ctl-stick-ring {
+  position: absolute;
+  inset: calc(50% - var(--stick-mag, 8%) / 2);
+  border: 1px solid var(--accent-outline);
+  border-radius: 50%;
 }
 
-.dm-input-path-actions button:disabled {
+.ctl-stick-dot {
+  position: absolute;
+  left: var(--stick-x, 50%);
+  top: var(--stick-y, 50%);
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--accent-bright);
+  transform: translate(-50%, -50%);
+}
+
+.ctl-deadzone-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.ctl-deadzone-row input[type='range'] {
+  width: 100%;
+  min-width: 0;
+  accent-color: var(--accent-bright);
+}
+
+.ctl-deadzone-row .ctl-mono {
+  color: var(--ink);
+}
+
+/* Live button states — flat chips; pressed lights the accent. */
+.ctl-button-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.ctl-button-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 11px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+}
+
+.ctl-button-state.pressed {
+  border-color: var(--accent-outline);
+  background: var(--accent-tint);
+}
+
+.ctl-button-state span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ctl-button-state .ctl-mono {
+  color: var(--ink-muted);
+}
+
+.ctl-button-state.pressed .ctl-mono {
+  color: var(--accent-text);
+}
+
+/* Buttons — quiet by default, accent for the primary action. */
+.ctl-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ctl-button {
+  min-height: 28px;
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--surface-raised);
+  border: 0;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  transition: background var(--speed) var(--ease);
+}
+
+.ctl-button.active {
+  color: var(--accent-text);
+  background: var(--accent-tint);
+  outline: 1px solid var(--accent-outline);
+}
+
+.ctl-button.primary {
+  color: #ffffff;
+  background: var(--accent);
+}
+
+.ctl-button:disabled {
   cursor: not-allowed;
   opacity: 0.48;
 }
 
-.dm-power-suggestion-list {
-  display: grid;
-  gap: 8px;
+.ctl-button:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 1px;
+}
+
+.ctl-note {
   margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink-muted);
 }
 
-.dm-power-suggestion-list p {
-  margin: 0;
-  padding: 8px 10px;
-  border: 1px solid rgba(113, 113, 122, 0.2);
-  border-radius: 5px;
-  color: rgba(226, 232, 240, 0.82);
-  background: rgba(10, 10, 12, 0.28);
-  font-size: 12px;
-  font-weight: 650;
-  line-height: 1.35;
+.ctl-note.error {
+  color: var(--danger);
 }
 
-.dm-live-stick-grid {
+.ctl-suggestions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  min-width: 0;
+  gap: 6px;
+  margin-top: 8px;
 }
 
-.dm-stick-module {
+/* Support group */
+.ctl-support {
   display: grid;
-  gap: 10px;
-  min-width: 0;
-  padding: 12px;
-  border: 1px solid rgba(113, 113, 122, 0.22);
-  border-radius: 6px;
-  background: rgba(10, 10, 12, 0.32);
+  gap: 6px;
+  justify-items: start;
+  font-size: 11px;
 }
 
-.dm-stick-head,
-.dm-trigger-meter > div:first-child {
-  grid-template-columns: 1fr auto;
-  align-items: center;
-}
-
-.dm-stick-plot {
-  position: relative;
-  width: min(240px, 100%);
-  aspect-ratio: 1;
-  margin: 0 auto;
-  border: 1px solid rgba(113, 113, 122, 0.3);
-  border-radius: 50%;
-  background:
-    linear-gradient(rgba(113, 113, 122, 0.22), rgba(113, 113, 122, 0.22)) 50% 0 / 1px 100% no-repeat,
-    linear-gradient(90deg, rgba(113, 113, 122, 0.22), rgba(113, 113, 122, 0.22)) 0 50% / 100% 1px no-repeat,
-    radial-gradient(circle at center, rgba(0, 112, 204, 0.16), transparent 58%),
-    rgba(5, 5, 7, 0.48);
-}
-
-.dm-stick-ring {
-  position: absolute;
-  inset: calc(50% - var(--stick-mag) / 2);
-  border: 1px solid rgba(27, 177, 124, 0.46);
-  border-radius: 50%;
-  opacity: 0.66;
-}
-
-.dm-stick-dot {
-  position: absolute;
-  left: var(--stick-x);
-  top: var(--stick-y);
-  width: 13px;
-  height: 13px;
-  border: 2px solid #FFFFFF;
-  border-radius: 50%;
-  background: var(--actuation);
-  box-shadow: 0 0 16px rgba(0, 112, 204, 0.42);
-  transform: translate(-50%, -50%);
-}
-
-.dm-stick-module dl {
+/* Edge onboard slots */
+.edge-slot-list {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin: 0;
 }
 
-.dm-stick-tuning-row {
-  display: grid;
-  grid-template-columns: minmax(68px, auto) minmax(120px, 1fr) 44px;
-  align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-  color: var(--muted);
-  font-size: 0.78rem;
-}
-
-.dm-stick-tuning-row code {
-  color: var(--text);
-  text-align: right;
-}
-
-.dm-trigger-meter-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.dm-trigger-meter {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-  padding: 12px;
-  border: 1px solid rgba(113, 113, 122, 0.22);
-  border-radius: 6px;
-  background: rgba(10, 10, 12, 0.32);
-}
-
-.dm-trigger-bar {
-  position: relative;
-  height: 12px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: rgba(113, 113, 122, 0.22);
-}
-
-.dm-trigger-bar span {
-  display: block;
-  width: var(--trigger-fill);
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, var(--actuation), #1BB17C);
-}
-
-.dm-button-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
-  gap: 8px;
-  min-width: 0;
-}
-
-.dm-button-state {
+.edge-slot-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-  min-height: 34px;
-  padding: 8px 9px;
-  border: 1px solid rgba(113, 113, 122, 0.22);
-  border-radius: 5px;
-  background: rgba(10, 10, 12, 0.34);
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--hairline);
 }
 
-.dm-button-state.pressed {
-  border-color: rgba(27, 177, 124, 0.64);
-  background: rgba(27, 177, 124, 0.14);
+.edge-slot-row:last-child {
+  border-bottom: 0;
 }
 
-.dm-button-state span {
+.edge-slot-row.disabled {
+  opacity: 0.6;
+}
+
+.edge-slot-copy {
+  display: grid;
+  gap: 2px;
   min-width: 0;
-  overflow: hidden;
-  color: #FFFFFF;
+}
+
+.edge-slot-copy strong {
   font-size: 12px;
-  font-weight: 760;
-  line-height: 1.15;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.edge-slot-copy small {
+  font-size: 11px;
+  color: var(--ink-muted);
 }
