@@ -73,7 +73,7 @@ const rules = [
   },
   {
     name: 'legacy production surface',
-    pattern: /\blegacy\b/i,
+    pattern: /legacy/i,
     allow: [selfAuditScript]
   }
 ];

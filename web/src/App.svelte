@@ -1178,7 +1178,7 @@
     });
   };
   $: {
-    // Touched (not used) so the legacy compiler re-runs this block when they change.
+    // Touched (not used) so the reactive compiler re-runs this block when they change.
     void profileDraftSnapshot;
     void profileSaveBaselineConfig;
     void selectedTuningScope;

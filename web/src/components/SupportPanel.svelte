@@ -17,7 +17,7 @@
   <div class="dm-support-copy">
     <span>Support Diagnostics</span>
     <strong>Sanitized support bundle</strong>
-    <p>No raw HID paths, raw hardware IDs, serial numbers, or Bluetooth addresses are included.</p>
+    <p>No controller hardware identifiers, serial numbers, or Bluetooth addresses are included.</p>
   </div>
   <div class="dm-support-actions">
     <a class="dm-mini-button" href={PROJECT_REPOSITORY_URL} target="_blank" rel="noreferrer">
