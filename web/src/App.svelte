@@ -86,6 +86,13 @@
   import TriggerCurvesPanel from './lib/features/haptics/TriggerCurvesPanel.svelte';
   import TuningCanvas from './lib/features/tuning/TuningCanvas.svelte';
   import SavedRail from './lib/features/tuning/SavedRail.svelte';
+  import SetupGuide from './lib/features/tuning/SetupGuide.svelte';
+  import { telemetryPortFromAdapter } from './lib/features/tuning/setupRequirements';
+  import {
+    loadVerifiedSetupGameIds,
+    markSetupVerified,
+    type VerifiedSetupGameIds
+  } from './app/setupVerification';
   import { savedDiffRows, unsavedChangeCount } from './lib/features/tuning/savedDiff';
   import {
     clampUnit,
@@ -283,6 +290,13 @@
   let updateDismissalLoaded = false;
   let onboardingOpen = false;
   let onboardingLoaded = false;
+  // Per-game setup state (Task 8). `verifiedSetupGameIds` mirrors the
+  // persisted "packets seen at least once" flags; `setupGuideManual` tracks a
+  // deliberate re-entry (chip, dropdown, Status deep-link) and resets when the
+  // selected game changes. Unverified games pin the guide open on their own.
+  let verifiedSetupGameIds: VerifiedSetupGameIds = loadVerifiedSetupGameIds();
+  let setupGuideManual = false;
+  let setupGuideGameTracker = '';
   let renameProfileId = '';
   let renameProfileName = '';
   let profileRenameBusy = false;
@@ -521,6 +535,70 @@
   $: steamInputStatus = snapshot?.steamInput;
   $: inputBridgeStatus = snapshot?.inputBridge;
   $: telemetryPacketRate = adapter?.packetRateHz ?? 0;
+  // --- per-game setup guide state (Task 8) --------------------------------
+  $: telemetryPort = telemetryPortFromAdapter(adapter);
+  $: selectedGameSetupVerified =
+    selectedTuningScope !== 'game' || !selectedTuningGame
+      ? true
+      : Boolean(verifiedSetupGameIds[selectedTuningGame.gameId]);
+  // Fresh Telemetry attributed to the selected game: it must be the game the
+  // agent actually detected, with its Telemetry Adapter running and packets
+  // arriving. Telemetry loss never yanks the canvas — it only flips the chip
+  // to Quiet and surfaces a Status finding.
+  $: selectedGameTelemetryFresh = Boolean(
+    selectedTuningScope === 'game' &&
+      selectedTuningGame?.running &&
+      selectedTuningGame.supportLevel === 'telemetry' &&
+      snapshot?.gameDetection.activeGameId === selectedTuningGame.gameId &&
+      adapter?.state === 'running' &&
+      telemetryPacketRate > 0
+  );
+  $: if (selectedTuningGameId !== setupGuideGameTracker) {
+    setupGuideGameTracker = selectedTuningGameId;
+    setupGuideManual = false;
+  }
+  $: showSetupGuide =
+    showTuningView &&
+    tuningReady &&
+    selectedTuningScope === 'game' &&
+    Boolean(selectedTuningGame) &&
+    (setupGuideManual || !selectedGameSetupVerified);
+
+  const markSelectedGameSetupVerified = () => {
+    const gameId = selectedTuningScope === 'game' ? (selectedTuningGame?.gameId ?? '') : '';
+    if (!gameId) return;
+    verifiedSetupGameIds = markSetupVerified(verifiedSetupGameIds, gameId);
+  };
+
+  // Passive completion: SetupGuide calls this when the first packets arrive
+  // (or via "Start tuning" on the zero-setup variant). The canvas swaps in
+  // because the unverified pin disappears — no click required.
+  const completeSetupGuide = () => {
+    markSelectedGameSetupVerified();
+    setupGuideManual = false;
+  };
+
+  const toggleSetupGuide = () => {
+    if (!selectedGameSetupVerified) return; // pinned open until verified
+    setupGuideManual = !setupGuideManual;
+  };
+
+  const openSetupGuide = () => {
+    if (selectedTuningScope !== 'game') return;
+    setupGuideManual = true;
+  };
+
+  // Status → Needs attention deep-link: land on #/tuning with the guide open
+  // for the detected game.
+  const openSetupGuideFromStatus = async () => {
+    const game = selectedGame ?? selectedTuningGame ?? null;
+    if (!game) {
+      navigateToView('tuning');
+      return;
+    }
+    await selectTuningGame(game);
+    setupGuideManual = true;
+  };
   $: telemetryRateText = `${telemetryPacketRate >= 100 ? telemetryPacketRate.toFixed(0) : telemetryPacketRate.toFixed(1)} Hz`;
   $: telemetryRateDetail = telemetryRateStatusText(adapter);
   $: systemReadoutTitle = selectedTuningScope === 'global' ? 'Profile Scope' : 'Telemetry Rate';
@@ -2244,6 +2322,7 @@
         onSubmitRename={submitControllerRename}
         onCancelRename={cancelControllerRename}
         onRenameKeydown={handleControllerRenameKeydown}
+        onOpenSetupGuide={openSetupGuideFromStatus}
       />
     {/if}
     {#if showTuningView}
@@ -2253,6 +2332,10 @@
         {discoveredGames}
         adapterRunning={adapter?.state === 'running'}
         packetRateHz={telemetryPacketRate}
+        setupVerified={selectedGameSetupVerified}
+        setupGuideOpen={showSetupGuide}
+        onToggleSetupGuide={toggleSetupGuide}
+        onOpenSetupGuide={openSetupGuide}
         {controller}
         profiles={profileContextProfiles}
         {activeProfileId}
@@ -2400,6 +2483,22 @@
           {forzaIntensityFromPercent}
         />
       {/snippet}
+      {#if showSetupGuide && selectedTuningGame}
+        <!-- Setup is a canvas state: the walkthrough replaces the tuning grid
+             (rail included) until the game's requirements verify or the
+             manually re-opened guide is toggled away. -->
+        <SetupGuide
+          game={selectedTuningGame}
+          telemetryFresh={selectedGameTelemetryFresh}
+          verified={selectedGameSetupVerified}
+          port={telemetryPort}
+          packetRateHz={telemetryPacketRate}
+          adapterName={adapter?.name ?? ''}
+          adapterHint={adapter?.setupHint ?? ''}
+          onVerified={completeSetupGuide}
+          onStartTuning={completeSetupGuide}
+        />
+      {:else}
       <TuningCanvas>
         <svelte:fragment slot="brake">
           {@render triggerCurveEditor('L2')}
@@ -2515,6 +2614,7 @@
           {/if}
         </svelte:fragment>
       </TuningCanvas>
+      {/if}
       {/if}
     <ButtonMappingView session={buttonMappingSession} />
     {/if}

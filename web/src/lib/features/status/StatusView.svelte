@@ -22,7 +22,8 @@
     onBeginRename = () => {},
     onSubmitRename = () => {},
     onCancelRename = () => {},
-    onRenameKeydown = () => {}
+    onRenameKeydown = () => {},
+    onOpenSetupGuide = () => {}
   }: {
     controllers?: ControllerStatus[];
     controller?: ControllerStatus | undefined;
@@ -40,6 +41,7 @@
     onSubmitRename?: () => void | Promise<void>;
     onCancelRename?: () => void;
     onRenameKeydown?: (event: KeyboardEvent) => void;
+    onOpenSetupGuide?: () => void | Promise<void>;
   } = $props();
 
   type Finding = { id: string; text: string; detail?: string };
@@ -247,6 +249,13 @@
               <span class="status-warn" aria-hidden="true">&#9679;</span> {finding.text}
               {#if finding.detail}
                 <div class="status-finding-detail">{finding.detail}</div>
+              {/if}
+              {#if finding.id === 'telemetry-quiet'}
+                <button
+                  class="status-link"
+                  type="button"
+                  onclick={() => void onOpenSetupGuide()}
+                >Open the setup guide</button>
               {/if}
             </div>
           {/each}

@@ -18,6 +18,8 @@
     discoveredGames = [],
     adapterRunning = false,
     packetRateHz = 0,
+    setupVerified = true,
+    setupGuideOpen = false,
     controller = undefined,
     profiles = [],
     activeProfileId = '',
@@ -38,6 +40,8 @@
     onSelectGlobal = () => {},
     onSelectGame = () => {},
     onOpenAddGame = () => {},
+    onToggleSetupGuide = () => {},
+    onOpenSetupGuide = () => {},
     onSelectProfile = () => {},
     onSaveProfile = () => {},
     onBeginSaveAs = () => {},
@@ -58,6 +62,8 @@
     discoveredGames?: SupportedGame[];
     adapterRunning?: boolean;
     packetRateHz?: number;
+    setupVerified?: boolean;
+    setupGuideOpen?: boolean;
     controller?: ControllerStatus | undefined;
     profiles?: ProfileSummary[];
     activeProfileId?: string;
@@ -78,6 +84,8 @@
     onSelectGlobal?: () => void | Promise<void>;
     onSelectGame?: (game: SupportedGame) => void | Promise<void>;
     onOpenAddGame?: () => void | Promise<void>;
+    onToggleSetupGuide?: () => void;
+    onOpenSetupGuide?: () => void;
     onSelectProfile?: (profileId: string) => void | Promise<void>;
     onSaveProfile?: () => void | Promise<void>;
     onBeginSaveAs?: () => void;
@@ -99,14 +107,43 @@
       games: discoveredGames,
       scope,
       selectedGameId: selectedGame?.gameId ?? '',
-      setupGuideGame:
-        scope === 'game' && selectedGame?.supportLevel === 'telemetry' ? selectedGame : null,
-      setupGuideEnabled: false
+      setupGuideGame: scope === 'game' ? selectedGame : null,
+      setupGuideEnabled: true
     })
   );
   const chipState = $derived(
-    telemetryChipState({ scope, selectedGame, adapterRunning, packetRateHz })
+    telemetryChipState({ scope, selectedGame, adapterRunning, packetRateHz, setupVerified })
   );
+  const chipPresentation = $derived.by(() => {
+    switch (chipState) {
+      case 'fresh':
+        return {
+          label: 'Telemetry Fresh',
+          suffix: '· setup ↗',
+          title: 'Game data is arriving — the driving feel is live. Open the setup guide to check the port or re-copy values.'
+        };
+      case 'quiet':
+        return {
+          label: 'Telemetry Quiet',
+          suffix: '· fix ↗',
+          title: 'The game is running but its data feed is silent. Open the guide to fix it.'
+        };
+      case 'setup':
+        return {
+          label: 'One-Time Setup Needed',
+          suffix: '',
+          title: "About 2 minutes, once. Then it's automatic forever."
+        };
+      case 'none':
+        return {
+          label: 'No Setup Needed',
+          suffix: '· setup ↗',
+          title: 'This game needs no telemetry feed. Open the guide for details.'
+        };
+      default:
+        return null;
+    }
+  });
 
   const heroArt = $derived(scope === 'game' ? gameArtwork(selectedGame, 'hero') : null);
   const thumbArt = $derived(scope === 'game' ? gameArtwork(selectedGame, 'banner') : null);
@@ -217,10 +254,10 @@
   });
 
   const pickGameEntry = (entry: GameSelectEntry) => {
-    if (entry.kind === 'setup-guide') return;
     closeGameMenu();
     if (entry.kind === 'everyday') void onSelectGlobal();
     else if (entry.kind === 'game') void onSelectGame(entry.game);
+    else if (entry.kind === 'setup-guide') onOpenSetupGuide();
     else if (entry.kind === 'add-game') void onOpenAddGame();
   };
 </script>
@@ -259,17 +296,22 @@
             <strong>{gameModel.title}</strong>
             <span class="tuning-caret" aria-hidden="true">▾</span>
           </button>
-          {#if chipState}
-            <span
-              class="tuning-telemetry-chip"
+          {#if chipState && chipPresentation}
+            <button
+              class="tuning-telemetry-chip clickable"
               class:fresh={chipState === 'fresh'}
               class:quiet={chipState === 'quiet'}
-              title={chipState === 'fresh'
-                ? 'Game data is arriving — the driving feel is live.'
-                : 'The game is running but its data feed is silent. The setup guide can help.'}
+              class:setup={chipState === 'setup'}
+              class:none={chipState === 'none'}
+              type="button"
+              title={chipPresentation.title}
+              aria-pressed={setupGuideOpen}
+              onclick={onToggleSetupGuide}
             >
-              ● {chipState === 'fresh' ? 'Telemetry Fresh' : 'Telemetry Quiet'}
-            </span>
+              ● {chipPresentation.label}{#if chipPresentation.suffix}
+                <span class="tuning-chip-suffix">{chipPresentation.suffix}</span>
+              {/if}
+            </button>
           {/if}
         </div>
         <div class="tuning-header-profile-row">
@@ -384,7 +426,7 @@
             type="button"
             role="menuitem"
             disabled={!entry.enabled}
-            title="The setup walkthrough opens here in an upcoming update."
+            onclick={() => pickGameEntry(entry)}
           >
             <span class="tuning-menu-item-text">{entry.label}</span>
           </button>

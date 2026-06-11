@@ -120,6 +120,36 @@
   color: var(--warn);
 }
 
+.tuning-telemetry-chip.setup {
+  background: var(--accent-tint);
+  color: var(--accent-text);
+}
+
+.tuning-telemetry-chip.none {
+  background: var(--surface-raised);
+  color: var(--ink-muted);
+}
+
+/* The chip is the door back into the setup guide (Task 8). */
+.tuning-telemetry-chip.clickable {
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+  transition: filter var(--speed) var(--ease);
+}
+
+.tuning-telemetry-chip.clickable:hover,
+.tuning-telemetry-chip.clickable:focus-visible {
+  filter: brightness(1.3);
+}
+
+.tuning-chip-suffix {
+  color: var(--ink-muted);
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 .tuning-header-profile-row {
   margin-top: 2px;
   display: flex;
@@ -691,6 +721,300 @@
   background: var(--surface);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-m);
+}
+
+/* --- per-game setup guide (Task 8; layout truth game-setup.html) ------------
+
+   A canvas state, not a pop-up: replaces the tuning grid (rail included)
+   until the game's requirements verify. Numbered steps because setup IS a
+   sequence; the LISTENING box flips green passively when packets arrive. */
+
+.setup-guide {
+  padding: 16px;
+  max-width: 980px;
+}
+
+.setup-guide-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.setup-guide-sub {
+  margin: 3px 0 0;
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.setup-guide-grid {
+  display: flex;
+  gap: 26px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.setup-steps {
+  flex: 1 1 380px;
+  min-width: 280px;
+  max-width: 560px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.setup-step {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.setup-stepnum {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface-raised);
+  color: var(--ink-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.setup-stepnum.done {
+  background: var(--ok-tint);
+  color: var(--ok);
+}
+
+.setup-stepnum.now {
+  background: var(--accent);
+  color: #fff;
+}
+
+.setup-step-body {
+  flex: 1;
+  min-width: 0;
+  padding-bottom: 14px;
+  border-left: 1px solid var(--hairline);
+  margin-left: -15px;
+  padding-left: 24px;
+}
+
+.setup-step:last-child .setup-step-body {
+  border-left-color: transparent;
+  padding-bottom: 0;
+}
+
+.setup-step-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.setup-step-title.settled {
+  color: var(--ink-muted);
+}
+
+.setup-step-detail {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.setup-step-detail b {
+  color: var(--ink);
+}
+
+.setup-copy-card {
+  margin-top: 8px;
+  padding: 9px 12px;
+  display: inline-block;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-m);
+}
+
+.setup-copy-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--ink);
+}
+
+.setup-copy-row + .setup-copy-row {
+  margin-top: 5px;
+}
+
+.setup-copy-label {
+  min-width: 72px;
+  color: var(--ink-muted);
+}
+
+.setup-kbd {
+  background: var(--surface-raised);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: ui-monospace, 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink);
+  user-select: all;
+}
+
+.setup-copy-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: inherit;
+  font-size: 10px;
+  color: var(--accent-text);
+  cursor: pointer;
+}
+
+.setup-copy-button:hover,
+.setup-copy-button:focus-visible {
+  text-decoration: underline;
+}
+
+.setup-copy-fallback {
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--warn);
+}
+
+/* LISTENING box: bound to live telemetry; flips to --ok on its own. */
+.setup-listening {
+  flex: 0 1 280px;
+  min-width: 250px;
+  align-self: flex-start;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-m);
+  transition: border-color var(--speed) var(--ease);
+}
+
+.setup-listening.ok {
+  border-color: var(--ok);
+}
+
+.setup-lbl {
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.setup-listening-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--ink);
+}
+
+.setup-listening-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-bright);
+  flex: 0 0 auto;
+}
+
+.setup-listening.ok .setup-listening-dot {
+  background: var(--ok);
+}
+
+.setup-listening-note {
+  margin: 6px 0 0;
+  font-size: 10px;
+  color: var(--ink-muted);
+}
+
+.setup-listening.ok .setup-listening-note {
+  color: var(--ok);
+}
+
+.setup-stuck {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline);
+}
+
+.setup-stuck summary {
+  font-size: 10px;
+  color: var(--accent-text);
+  cursor: pointer;
+}
+
+.setup-stuck ul {
+  margin: 8px 0 0;
+  padding-left: 16px;
+  font-size: 10px;
+  color: var(--ink-muted);
+  display: grid;
+  gap: 4px;
+}
+
+.setup-adapter-hint {
+  margin: 8px 0 0;
+  font-size: 10px;
+  color: var(--ink-muted);
+}
+
+/* Zero-setup variant: reassurance + pre-tune offer. */
+.setup-zero-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 8px;
+  border-radius: 999px;
+  padding: 3px 10px;
+  background: var(--ok-tint);
+  color: var(--ok);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.setup-pretune {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-m);
+}
+
+.setup-pretune p {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.setup-pretune-button {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: var(--radius-s);
+  padding: 6px 14px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.setup-pretune-button:hover,
+.setup-pretune-button:focus-visible {
+  filter: brightness(1.15);
 }
 
 @media (max-width: 480px) {
