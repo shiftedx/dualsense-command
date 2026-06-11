@@ -29,16 +29,16 @@
     {
       eyebrow: 'Start here',
       title: 'Pick the controller and scope',
-      body: 'Use Controllers for hardware state and live inputs, then use Profiles to choose Global or a supported game scope.',
-      actionLabel: 'Open Controllers',
-      targetView: 'advancedController',
+      body: 'Status shows your controller, game detection, and telemetry at a glance. In Tuning, choose Global or a supported game from the header.',
+      actionLabel: 'Open Status',
+      targetView: 'status',
       icon: Gamepad2
     },
     {
       eyebrow: 'Safety first',
       title: 'Game effects wait for telemetry',
       body: 'DSCC keeps triggers neutral until a supported game is detected and fresh telemetry is flowing. Manual test buttons attach only for the short test window.',
-      actionLabel: 'Open haptics',
+      actionLabel: 'Open Tuning',
       targetView: 'tuning',
       icon: RadioTower
     },
@@ -46,7 +46,7 @@
       eyebrow: 'Tune feel',
       title: 'Shape L2 and R2 with curve points',
       body: 'Drag the trigger dots for custom brake and throttle response, then use Test Actuation to feel the current profile without starting a game.',
-      actionLabel: 'Open haptics',
+      actionLabel: 'Open Tuning',
       targetView: 'tuning',
       icon: SlidersHorizontal
     },

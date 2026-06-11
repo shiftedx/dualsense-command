@@ -16,7 +16,7 @@ const routeChecks = [
   { hash: '#/tuning', pattern: /Tuning|Profile/i },
   { hash: '#/advanced/controller', pattern: /Controller details|Live input/i },
   // Button mapping needs a game scope first; main() selects one via the
-  // toolbar before this route runs.
+  // toolbar on the previously loaded page, so this check must stay LAST.
   { hash: '#/advanced/button-mapping', pattern: /Button Mapping|Default mirror/i }
 ];
 // Old routes keep working forever; each lands on the new home for its content.

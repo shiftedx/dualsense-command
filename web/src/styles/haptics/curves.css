@@ -26,7 +26,7 @@
 }
 
 .dm-module-title span {
-  color: var(--actuation);
+  color: var(--accent);
   font-family: "JetBrains Mono", monospace;
   font-size: 12px;
   font-weight: 700;
@@ -41,7 +41,7 @@
 }
 
 .dm-module-title code {
-  color: var(--haptic);
+  color: var(--ink);
   font-size: 18px;
   font-weight: 700;
 }
@@ -55,7 +55,7 @@
   touch-action: none;
   background:
     radial-gradient(circle at 50% 25%, rgba(0, 112, 204, 0.09), transparent 48%),
-    var(--carbon);
+    var(--bg-rail);
 }
 
 .dm-curve-frame:active {
@@ -113,7 +113,7 @@
 
 .dm-trigger-curve .curve-force {
   filter: url(#dm-blue-glow);
-  stroke: var(--actuation);
+  stroke: var(--accent);
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 2.2;
@@ -127,7 +127,7 @@
 }
 
 .dm-trigger-curve .curve-live-dot {
-  fill: var(--actuation);
+  fill: var(--accent);
   stroke: rgba(226, 232, 240, 0.86);
   stroke-width: 0.85;
   vector-effect: non-scaling-stroke;
@@ -185,7 +185,7 @@
 
 .dm-curve-control-handle.active {
   background:
-    radial-gradient(circle at 36% 30%, #ffffff 0 16%, #b8edff 40%, var(--actuation) 100%);
+    radial-gradient(circle at 36% 30%, #ffffff 0 16%, #b8edff 40%, var(--accent) 100%);
   cursor: grabbing;
   transform: translate(-50%, -50%) scale(1.16);
 }
@@ -237,7 +237,7 @@
 }
 
 .dm-slider-row span {
-  color: var(--tungsten);
+  color: var(--ink-muted);
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -246,7 +246,7 @@
 .dm-slider-row code,
 .dm-fader-value {
   width: 48px;
-  color: var(--haptic);
+  color: var(--ink);
   font-size: 12px;
   text-align: right;
 }
@@ -260,7 +260,7 @@
 }
 
 .dm-curve-point-row > span {
-  color: var(--tungsten);
+  color: var(--ink-muted);
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -276,7 +276,7 @@
 }
 
 .dm-curve-point-actions code {
-  color: var(--haptic);
+  color: var(--ink);
   font-size: 12px;
   text-align: center;
 }
@@ -285,9 +285,9 @@
   align-items: center;
   aspect-ratio: 1;
   background: rgba(15, 23, 42, 0.72);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--hairline-strong);
   border-radius: 4px;
-  color: var(--text);
+  color: var(--ink);
   cursor: pointer;
   display: inline-grid;
   height: 26px;
@@ -313,7 +313,7 @@
   height: 22px;
   margin: 0;
   padding: 0;
-  accent-color: var(--actuation);
+  accent-color: var(--accent);
   background: transparent;
   cursor: pointer;
 }
@@ -323,7 +323,7 @@
   height: 4px;
   border-radius: 999px;
   background:
-    linear-gradient(90deg, var(--actuation) 0 var(--value, 0%), rgba(78, 83, 95, 0.82) var(--value, 0%) 100%);
+    linear-gradient(90deg, var(--accent) 0 var(--value, 0%), rgba(78, 83, 95, 0.82) var(--value, 0%) 100%);
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.06),
     0 1px 0 rgba(255, 255, 255, 0.04);
@@ -343,7 +343,7 @@
 .dm-mini-range::-moz-range-progress {
   height: 4px;
   border-radius: 999px;
-  background: var(--actuation);
+  background: var(--accent);
 }
 
 .dm-range::-webkit-slider-thumb,

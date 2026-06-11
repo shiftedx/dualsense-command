@@ -1,10 +1,7 @@
 /* Shell v2 — slim sidebar + document-flow main column (calm console, flat fills). */
 
-/* The document scrolls again under the v2 shell; base.css pinned it for the old
-   HUD shell, which scrolled inside .ops-shell. Delete the base.css rules in the
-   cleanup task and fold these in. ALSO: responsive.css (@max-width: 1180px) sets
-   body { overflow: auto } and .ops-shell rules that override document scroll —
-   fold those into the responsive section here. */
+/* The document itself scrolls; the sidebar stays sticky beside it. base.css
+   and responsive.css defer to these rules for the scroll model. */
 html,
 body,
 #app {
@@ -109,14 +106,14 @@ html {
 .app-main {
   flex: 1;
   min-width: 0;
-  /* Clip latent horizontal overflow from legacy feature views (the old
-     .ops-shell did the same); remove once the views are rebuilt. */
+  /* Clip latent horizontal overflow from wide instrument panels so a stray
+     wide row never scrolls the whole document sideways. */
   overflow-x: hidden;
   padding: 18px clamp(18px, 2.2vw, 34px) 22px;
 }
 
-/* TEMPORARY toolbar — controller/scope/profile context the old ribbon carried.
-   Tasks 4-5 re-house this in Status and the Tuning header; delete it then. */
+/* Utility row above the views — cross-view context (target controller, web UI
+   bind address, glyph override, system readout). */
 .app-toolbar {
   display: flex;
   flex-wrap: wrap;

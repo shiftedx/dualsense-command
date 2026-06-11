@@ -208,3 +208,9 @@
   background: rgba(255, 255, 255, 0.04);
   color: var(--ink-muted);
 }
+
+/* Hides the button-mapping workspace while it stays mounted for fast
+   re-entry. Moved from the retired workspace.css. */
+.dm-view-hidden {
+  display: none !important;
+}

@@ -374,3 +374,254 @@
   font-size: 11px;
   color: var(--ink-muted);
 }
+
+/* Controller card (rendered in the Controller details chooser).
+   Moved from the retired games.css; HUD-era alias tokens translated to the
+   calm-console tokens. */
+.dm-controller-card {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  min-height: 0;
+  padding: 12px 12px 14px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-m);
+  color: var(--ink);
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color var(--speed) var(--ease),
+    background-color var(--speed) var(--ease),
+    box-shadow var(--speed) var(--ease);
+}
+
+.dm-controller-card:hover,
+.dm-controller-card.active {
+  border-color: var(--accent-outline);
+  background-color: var(--accent-tint);
+}
+
+.dm-controller-card:focus-visible,
+.dm-controller-select-zone:focus-visible,
+.dm-controller-rename-button:focus-visible,
+.dm-controller-expand-button:focus-visible,
+.dm-controller-rename-actions button:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 2px;
+}
+
+.dm-controller-card.disconnected {
+  opacity: 0.62;
+}
+
+.dm-controller-select-zone {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: center;
+}
+
+.dm-controller-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-width: 0;
+}
+
+.dm-controller-card-top code {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.dm-battery-pill.compact {
+  font-size: 11px;
+}
+
+.dm-controller-glyph {
+  flex: 0 0 auto;
+  color: var(--ink);
+  background: currentColor;
+  mask: url("/dualsense-controller.svg") center / contain no-repeat;
+  -webkit-mask: url("/dualsense-controller.svg") center / contain no-repeat;
+}
+
+.dm-controller-glyph.controller-card {
+  width: min(140px, 78%);
+  height: 80px;
+  margin: 2px 0 0;
+  opacity: 0.95;
+}
+
+.dm-controller-copy {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  min-width: 0;
+  text-align: center;
+}
+
+.dm-controller-copy strong {
+  overflow-wrap: break-word;
+  line-height: 1.18;
+  font-size: 15px;
+}
+
+.dm-controller-copy small {
+  overflow-wrap: break-word;
+  line-height: 1.3;
+  color: var(--ink-muted);
+}
+
+.dm-controller-copy .dm-controller-id {
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  opacity: 0.78;
+}
+
+.dm-controller-capabilities {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.dm-controller-capabilities em {
+  padding: 3px 6px;
+  border-radius: 4px;
+  color: var(--ink);
+  background: var(--surface-raised);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.dm-controller-capabilities.expanded {
+  justify-content: flex-start;
+  margin-top: 4px;
+}
+
+.dm-controller-rename-button,
+.dm-controller-expand-button,
+.dm-controller-rename-actions button {
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-s);
+  color: var(--ink);
+  background: var(--surface-raised);
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.dm-controller-rename-button:hover,
+.dm-controller-expand-button:hover,
+.dm-controller-rename-actions button:hover {
+  border-color: var(--accent-outline);
+  background: var(--accent-tint);
+}
+
+.dm-controller-card-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
+.dm-controller-details {
+  width: 100%;
+  margin-top: 6px;
+  padding: 12px;
+  border-top: 1px solid var(--hairline);
+  background: var(--bg-rail);
+  border-radius: 0 0 var(--radius-s) var(--radius-s);
+  text-align: left;
+}
+
+.dm-controller-details-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+  margin: 0;
+}
+
+.dm-controller-details-grid > div {
+  min-width: 0;
+}
+
+.dm-controller-details-grid > div.wide {
+  grid-column: 1 / -1;
+}
+
+.dm-controller-details-grid dt {
+  margin: 0 0 2px;
+  color: var(--ink-muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.dm-controller-details-grid dd {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: break-word;
+}
+
+.dm-controller-details-grid dd.mono {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+}
+
+.dm-controller-rename-input {
+  width: min(240px, 100%);
+  height: 34px;
+  border: 1px solid var(--accent-outline);
+  border-radius: var(--radius-s);
+  color: var(--ink);
+  background: var(--surface-raised);
+  font-size: 13px;
+  font-weight: 800;
+  outline: none;
+  padding: 0 10px;
+  text-align: center;
+}
+
+.dm-controller-rename-wrap {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  width: 100%;
+}
+
+.dm-controller-rename-actions {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+
+@media (max-width: 720px) {
+  .dm-controller-card {
+    min-height: 220px;
+  }
+}
