@@ -1119,10 +1119,27 @@
     leftStickDeadzone,
     rightStickDeadzone
   };
-  $: savedRailRows = savedDiffRows(profileSaveBaselineConfig, profileDraftSnapshot, {
-    includeForza: selectedTuningScope === 'game',
-    intensityPercent: forzaIntensityPercent
-  });
+  // The rail diff is display-only (the dirty flag has its own signature path),
+  // so it recomputes on a 100ms trailing debounce instead of per input event.
+  let savedRailRows: ReturnType<typeof savedDiffRows> = [];
+  let savedRailDiffTimer = 0;
+  const refreshSavedRailRows = () => {
+    savedRailRows = savedDiffRows(profileSaveBaselineConfig, profileDraftSnapshot, {
+      includeForza: selectedTuningScope === 'game',
+      intensityPercent: forzaIntensityPercent
+    });
+  };
+  $: {
+    void profileDraftSnapshot;
+    void profileSaveBaselineConfig;
+    void selectedTuningScope;
+    if (typeof window === 'undefined') {
+      refreshSavedRailRows();
+    } else {
+      window.clearTimeout(savedRailDiffTimer);
+      savedRailDiffTimer = window.setTimeout(refreshSavedRailRows, 100);
+    }
+  }
   $: unsavedCount = unsavedChangeCount(savedRailRows);
   $: savedRailProfileName =
     profiles.find((profile) => profile.id === (selectedOverrideProfileId || activeProfileId))?.name ??
