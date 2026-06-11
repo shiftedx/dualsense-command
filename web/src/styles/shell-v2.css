@@ -76,6 +76,14 @@ html {
   background: color-mix(in srgb, var(--surface-raised) 60%, transparent);
 }
 
+.sidebar-item.disabled,
+.sidebar-item.disabled:hover {
+  color: var(--ink-muted);
+  background: none;
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
 .sidebar-item.active {
   color: var(--ink);
   background: var(--surface-raised);
@@ -125,7 +133,7 @@ html {
 }
 
 /* Utility row above the views — cross-view context (target controller, web UI
-   bind address, glyph override, system readout). */
+   bind address, system readout). */
 .app-toolbar {
   display: flex;
   flex-direction: column;

@@ -323,9 +323,10 @@
             aria-haspopup="menu"
             aria-expanded={profileMenuOpen}
             disabled={!profiles.length}
+            title="Choose the saved profile to edit in this tuning scope."
             onclick={toggleProfileMenu}
           >
-            <span class="tuning-profile-label">Profile:</span>
+            <span class="tuning-profile-label">Saved profile:</span>
             <strong>{profileName}</strong>
             <span class="tuning-caret" aria-hidden="true">▾</span>
           </button>
