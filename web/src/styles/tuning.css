@@ -553,6 +553,19 @@
   font-weight: 600;
 }
 
+/* Hex color values get a swatch so the color is readable at a glance.
+   (Atomic inline boxes don't inherit the strikethrough line, so the saved
+   swatch stays clean inside <s>.) */
+.saved-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 5px;
+  border-radius: 3px;
+  border: 1px solid var(--hairline-strong);
+  vertical-align: -1px;
+}
+
 .saved-rail-foot {
   margin-top: 12px;
   padding-top: 10px;
