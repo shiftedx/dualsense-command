@@ -80,6 +80,7 @@
     type TuningScope
   } from './app/profileWorkspace';
   import ControllersView from './lib/features/controllers/ControllersView.svelte';
+  import EdgeSlotsView from './lib/features/controllers/EdgeSlotsView.svelte';
   import GlobalFeelPanel from './lib/features/haptics/GlobalFeelPanel.svelte';
   import LightbarControls from './lib/features/haptics/LightbarControls.svelte';
   import TelemetryRoutingPanel from './lib/features/haptics/TelemetryRoutingPanel.svelte';
@@ -499,8 +500,9 @@
   $: selectedTuningGame = profileWorkspace.selectedTuningGame;
   $: tuningReady = profileWorkspace.tuningReady;
   $: buttonMappingReady = profileWorkspace.buttonMappingReady;
+  $: edgeSlotsReady = isEdgeTargetController(controller);
   $: {
-    const guardedView = guardView(activeView, { tuningReady, buttonMappingReady });
+    const guardedView = guardView(activeView, { tuningReady, buttonMappingReady, edgeSlotsReady });
     if (guardedView !== activeView) {
       activeView = guardedView;
       setViewHash(guardedView);
@@ -523,15 +525,16 @@
   $: activeProfileHeaderName = profileWorkspace.activeProfileHeaderName;
   $: activeProfileHeaderMeta = profileWorkspace.activeProfileHeaderMeta;
   $: buttonMappingActive = activeView === 'advancedButtonMapping';
-  // Temporary view composition (Tasks 6-9 replace the rest): 'status' renders the
-  // new StatusView; 'tuning' renders the TuningHeader plus the haptics workspace;
-  // 'advancedEdgeSlots' renders ControllersView because the Edge onboard slots UI
-  // currently lives inside it. Views the guard rejects land on 'status'.
-  $: showAdvancedControllerView = activeView === 'advancedController' || activeView === 'advancedEdgeSlots';
+  // View composition: each route renders its own view; views the guard rejects
+  // land on 'status' (Edge onboard slots land on Controller details instead).
+  $: showAdvancedControllerView = activeView === 'advancedController';
+  $: showEdgeSlotsView = activeView === 'advancedEdgeSlots';
   $: showStatusView = activeView === 'status';
   $: showTuningView = activeView === 'tuning';
   $: showWorkspaceViews =
-    showAdvancedControllerView || (tuningReady && (activeView === 'tuning' || activeView === 'advancedButtonMapping'));
+    showAdvancedControllerView ||
+    showEdgeSlotsView ||
+    (tuningReady && (activeView === 'tuning' || activeView === 'advancedButtonMapping'));
   $: steamInputStatus = snapshot?.steamInput;
   $: inputBridgeStatus = snapshot?.inputBridge;
   $: telemetryPacketRate = adapter?.packetRateHz ?? 0;
@@ -731,7 +734,7 @@
 
   const appViewFromHash = (): AppView => {
     if (typeof window === 'undefined') return 'status';
-    return viewFromHash(window.location.hash, { tuningReady, buttonMappingReady });
+    return viewFromHash(window.location.hash, { tuningReady, buttonMappingReady, edgeSlotsReady });
   };
 
   const setViewHash = (view: AppView) => {
@@ -747,7 +750,7 @@
   };
 
   const navigateToView = (view: AppView) => {
-    view = guardView(view, { tuningReady, buttonMappingReady });
+    view = guardView(view, { tuningReady, buttonMappingReady, edgeSlotsReady });
     activeView = view;
     setViewHash(view);
   };
@@ -2166,7 +2169,7 @@
 <div class="app-shell">
   <AppSidebar
     view={activeView}
-    readiness={{ tuningReady, buttonMappingReady }}
+    readiness={{ tuningReady, buttonMappingReady, edgeSlotsReady }}
     onNavigate={navigateToView}
   >
     {#snippet footer()}
@@ -2389,12 +2392,6 @@
           inputBridge={snapshot?.inputBridge ?? null}
           activeGameName={selectedGame?.name ?? null}
           activeInputProvider={selectedGame?.inputProvider ?? currentControllerConfig?.inputMode ?? 'native_dualsense'}
-          {edgeProfiles}
-          {edgeProfilesLoading}
-          {edgeProfilesBusySlot}
-          {edgeProfilesError}
-          {edgeSlotsReadTooltip}
-          edgeSlotWriteLabel={edgeSlotWriteLabel()}
           onSelect={selectTargetController}
           onBeginRename={beginControllerRename}
           onSubmitRename={submitControllerRename}
@@ -2405,6 +2402,21 @@
           onSetStickDeadzone={setStickDeadzone}
           onStartInputBridge={startControllerInputBridge}
           onStopInputBridge={stopControllerInputBridge}
+          {supportBundleBusy}
+          onDownloadSupportBundle={exportSupportBundle}
+        />
+      {/if}
+
+      {#if showEdgeSlotsView}
+        <EdgeSlotsView
+          {controller}
+          {currentControllerConfig}
+          {edgeProfiles}
+          {edgeProfilesLoading}
+          {edgeProfilesBusySlot}
+          {edgeProfilesError}
+          {edgeSlotsReadTooltip}
+          edgeSlotWriteLabel={edgeSlotWriteLabel()}
           onRefreshEdgeProfiles={() => controller && void loadEdgeProfiles(controller.id, true)}
           onWriteEdgeSlot={writeCurrentConfigToEdgeSlot}
           {edgeSlotName}

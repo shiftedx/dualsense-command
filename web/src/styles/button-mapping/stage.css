@@ -116,7 +116,7 @@
   gap: 8px;
   padding: 0;
   border: 0;
-  color: var(--haptic);
+  color: var(--ink);
   background: transparent;
   z-index: 3;
   transition: transform 180ms ease-out, filter 180ms ease-out;
@@ -299,7 +299,7 @@
 }
 
 .dm-mapping-chip.active .dm-mapping-chip-binding {
-  color: var(--actuation);
+  color: var(--accent-text);
 }
 
 .dm-mapping-chip.edge .dm-mapping-chip-icon {
