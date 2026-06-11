@@ -13,6 +13,7 @@
   export let edgeProfilesLoading = false;
   export let edgeProfilesBusySlot = '';
   export let edgeProfilesError = '';
+  export let edgeProfilesAgentRequired = false;
   export let edgeSlotsReadTooltip = '';
   export let edgeSlotWriteLabel = 'Write';
   export let onRefreshEdgeProfiles: () => void | Promise<void> = () => {};
@@ -25,7 +26,7 @@
   $: alias = controller?.name || controller?.family || 'No controller';
 </script>
 
-<section class="ctl-view" aria-label="Edge onboard slots">
+<section class="ctl-view edge-slots-view" aria-label="Edge onboard slots">
   <div class="ctl-head">
     <h1 class="ctl-title">Edge onboard slots</h1>
     <span class="ctl-sub">{alias} &middot; profiles stored on the controller itself, for checking, not for everyday tuning</span>
@@ -49,7 +50,17 @@
       </div>
 
       {#if edgeProfilesError}
-        <p class="ctl-note error">{edgeProfilesError}</p>
+        {#if edgeProfilesAgentRequired}
+          <p class="ctl-note status info">
+            <span class="ctl-note-label">Info</span>
+            <span>{edgeProfilesError} Start DSCC to read onboard slots.</span>
+          </p>
+        {:else}
+          <p class="ctl-note status error" role="alert">
+            <span class="ctl-note-label">Error</span>
+            <span>{edgeProfilesError}</span>
+          </p>
+        {/if}
       {:else if edgeProfiles?.warning}
         <p class="ctl-note">{edgeProfiles.warning}</p>
       {/if}
