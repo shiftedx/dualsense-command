@@ -465,11 +465,10 @@
   $: telemetry = snapshot?.telemetry ?? [];
   $: telemetryByName = new Map(telemetry.map((item) => [item.name, item]));
   $: effectState = snapshot?.effectState;
-  // Stale telemetry must read as "no press", not as the last frozen value:
-  // telemetryUnitValue keeps returning the last packet's value, so without the
-  // freshness gate the readout freezes non-zero when packets stop.
-  $: l2LivePress = controllerInputFresh ? l2ControllerPress : selectedTuningScope === 'global' || !selectedGameTelemetryFresh ? 0 : telemetryUnitValue('input.brake');
-  $: r2LivePress = controllerInputFresh ? r2ControllerPress : selectedTuningScope === 'global' || !selectedGameTelemetryFresh ? 0 : telemetryUnitValue('input.throttle');
+  // Stale telemetry must read as "no press", not as the last frozen value.
+  $: gameTelemetryUsable = selectedTuningScope !== 'global' && selectedGameTelemetryFresh;
+  $: l2LivePress = controllerInputFresh ? l2ControllerPress : gameTelemetryUsable ? telemetryUnitValue('input.brake') : 0;
+  $: r2LivePress = controllerInputFresh ? r2ControllerPress : gameTelemetryUsable ? telemetryUnitValue('input.throttle') : 0;
   $: triggerCurveDisplayMode = selectedTuningScope === 'game' && usesForzaRuntimeProfile(selectedTuningGame) ? 'forza' : 'base';
   $: appSettings = snapshot?.appSettings;
   $: forzaGlyphs = appSettings?.settings.forzaPlaystationGlyphs;
@@ -1502,9 +1501,7 @@
       edgeProfiles = await getEdgeProfiles(controllerId);
     } catch (caught) {
       edgeProfiles = null;
-      edgeProfilesError = friendlyEdgeSlotsError(
-        caught instanceof Error ? caught.message : 'Unable to read Edge onboard slots.'
-      );
+      edgeProfilesError = friendlyEdgeSlotsError(caught, 'Unable to read Edge onboard slots.');
     } finally {
       edgeProfilesLoading = false;
     }
@@ -1543,9 +1540,7 @@
       showToast(response.message, response.accepted ? 'success' : 'error');
       await loadEdgeProfiles(controller.id, true);
     } catch (caught) {
-      edgeProfilesError = friendlyEdgeSlotsError(
-        caught instanceof Error ? caught.message : 'Unable to write Edge onboard slot.'
-      );
+      edgeProfilesError = friendlyEdgeSlotsError(caught, 'Unable to write Edge onboard slot.');
       showToast(edgeProfilesError, 'error');
     } finally {
       edgeProfilesBusySlot = '';

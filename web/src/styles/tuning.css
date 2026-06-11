@@ -720,8 +720,9 @@
   }
 
   /* The fixed bar floats over the document; reserve room beneath the canvas
-     only while it's shown so the last row stays reachable. */
-  body:has(.saved-mobile-bar) .canvas-grid {
+     only while it's shown so the last row stays reachable. Anchored at the
+     tuning wrapper to keep :has() invalidation local. */
+  .work-and-rail:has(.saved-mobile-bar) .canvas-grid {
     padding-bottom: 84px;
   }
 }
