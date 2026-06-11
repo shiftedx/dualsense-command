@@ -30,7 +30,7 @@
   align-items: center;
   gap: 6px;
   color: var(--accent-text);
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.18em;
@@ -80,7 +80,7 @@
 
 .dm-mapping-context-count {
   color: var(--accent-text);
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   font-weight: 700;
 }
 
@@ -166,7 +166,10 @@
   border: 1px solid rgba(255, 255, 255, 0.11);
   background: rgba(2, 5, 9, 0.86);
   color: #FFFFFF;
-  font: 800 12px/1 "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: 12px;
+  line-height: 1;
   text-align: center;
   text-transform: uppercase;
 }
