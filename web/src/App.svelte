@@ -482,7 +482,19 @@
       ? { ...effect, state: 'active' }
       : effect;
   });
-  $: effectStatusById = new Map(displayedParityEffects.map((effect) => [normalizeEffectId(effect.id), effect]));
+  // Rebuild the Map (a prop of all TelemetryRoutingPanel instances) only when
+  // an effect's state actually changes, not on every snapshot tick.
+  let effectStatusById = new Map<string, (typeof displayedParityEffects)[number]>();
+  let effectStatusSignature = '__unset__';
+  $: {
+    const signature = displayedParityEffects
+      .map((effect) => `${normalizeEffectId(effect.id)}:${effect.state}`)
+      .join('|');
+    if (signature !== effectStatusSignature) {
+      effectStatusSignature = signature;
+      effectStatusById = new Map(displayedParityEffects.map((effect) => [normalizeEffectId(effect.id), effect]));
+    }
+  }
   $: activeProfileName = profileWorkspace.activeProfileName;
   $: activeProfile = profileWorkspace.activeProfile;
   $: selectedOverrideProfile = profileWorkspace.selectedOverrideProfile;
@@ -651,17 +663,23 @@
   const trackEffectActivity = (effect: CurrentEffectState) => {
     const now = Date.now();
     const nextActivity = { ...effectActivityUntil };
+    let changed = false;
     for (const item of effect.parityEffects) {
       const id = normalizeEffectId(item.id);
       if (item.state === 'disabled') {
-        delete nextActivity[id];
+        if (id in nextActivity) {
+          delete nextActivity[id];
+          changed = true;
+        }
       } else if (item.state === 'active') {
         nextActivity[id] = now + 550;
-      } else if ((nextActivity[id] ?? 0) <= now) {
+        changed = true;
+      } else if ((nextActivity[id] ?? 0) <= now && id in nextActivity) {
         delete nextActivity[id];
+        changed = true;
       }
     }
-    effectActivityUntil = nextActivity;
+    if (changed) effectActivityUntil = nextActivity;
   };
 
   const applySnapshot = (next: AppSnapshot) => {
@@ -800,22 +818,24 @@
 
   const inputBridgeBindingProfileId = () => inputBridgeBindingProfileIdForWorkspace(profileWorkspace);
 
-  $: buttonMappingSession = createButtonMappingSession({
-    state: buttonMappingSessionState,
-    store: buttonMappingSessionStore,
-    active: buttonMappingActive,
-    controller,
-    controllerHeaderName,
-    selectedTuningScope,
-    steamContextGame,
-    steamInputStatus,
-    inputBridgeStatus,
-    activeProfileName,
-    profileContextGameName: profileContextGame?.name ?? null,
-    bridgeProfileId: inputBridgeBindingProfileId(),
-    refresh,
-    notify: showToast
-  });
+  $: buttonMappingSession = buttonMappingActive
+    ? createButtonMappingSession({
+        state: buttonMappingSessionState,
+        store: buttonMappingSessionStore,
+        active: buttonMappingActive,
+        controller,
+        controllerHeaderName,
+        selectedTuningScope,
+        steamContextGame,
+        steamInputStatus,
+        inputBridgeStatus,
+        activeProfileName,
+        profileContextGameName: profileContextGame?.name ?? null,
+        bridgeProfileId: inputBridgeBindingProfileId(),
+        refresh,
+        notify: showToast
+      })
+    : EMPTY_BUTTON_MAPPING_VIEW_SESSION;
 
   const setTriggerRangeValue = (side: TriggerSide, edge: TriggerRangeEdge, rawValue: number | string) => {
     if (side === 'l2') {
