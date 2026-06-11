@@ -3,6 +3,8 @@
   export let side: 'top' | 'right' | 'bottom' | 'left' = 'top';
   export let align: 'start' | 'center' | 'end' = 'center';
   export let block = false;
+  let extraClass = '';
+  export { extraClass as class };
 
   const id = `dscc-tooltip-${Math.random().toString(36).slice(2)}`;
   let hostEl: HTMLSpanElement | undefined;
@@ -47,7 +49,7 @@
 
 <span
   bind:this={hostEl}
-  class="dscc-tooltip"
+  class="dscc-tooltip {extraClass}"
   class:block
   data-side={side}
   data-align={align}

@@ -89,7 +89,7 @@
 }
 
 .dm-steam-binding-row em {
-  color: var(--haptic);
+  color: var(--ink);
   font-size: 12px;
   font-style: normal;
   font-weight: 700;
@@ -134,7 +134,7 @@
 
 .dm-map-editor-summary span,
 .dm-map-field span {
-  color: var(--tungsten);
+  color: var(--ink-muted);
   font-size: 10px;
   font-weight: 800;
   line-height: 1;
@@ -159,7 +159,7 @@
   border-radius: 6px;
   color: #FFFFFF;
   background: rgba(18, 18, 20, 0.92);
-  font: 800 12px/1 var(--mono);
+  font: 800 12px/1 "JetBrains Mono", ui-monospace, monospace;
   outline: none;
 }
 
@@ -190,8 +190,8 @@
 
 .dm-map-editor-message {
   margin: 0;
-  color: var(--tungsten);
-  font-family: var(--mono);
+  color: var(--ink-muted);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 11px;
   line-height: 1.45;
   overflow-wrap: anywhere;

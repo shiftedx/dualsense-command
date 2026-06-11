@@ -1,15 +1,14 @@
 <script lang="ts">
   import { Cable, CircleHelp, ExternalLink, LifeBuoy, RefreshCw } from '@lucide/svelte';
   import { onMount } from 'svelte';
-  import Tooltip from './components/Tooltip.svelte';
-  import ContextRibbon from './components/ContextRibbon.svelte';
+  import AppSidebar from './components/AppSidebar.svelte';
   import AddGameDialog from './lib/features/games/AddGameDialog.svelte';
-  import GamesView from './lib/features/games/GamesView.svelte';
+  import StatusView from './lib/features/status/StatusView.svelte';
+  import TuningHeader from './lib/features/tuning/TuningHeader.svelte';
   import OnboardingTutorial from './components/OnboardingTutorial.svelte';
-  import ViewNav from './components/ViewNav.svelte';
   import SupportPanel from './components/SupportPanel.svelte';
   import ToastStack from './components/ToastStack.svelte';
-  import { appViews, guardView, hashForView, viewFromHash, viewTooltips } from './app/navigation';
+  import { guardView, hashForView, isViewHash, viewFromHash } from './app/navigation';
   import { createAppRuntime } from './app/runtime';
   import {
     createButtonMappingSession,
@@ -81,11 +80,27 @@
     type TuningScope
   } from './app/profileWorkspace';
   import ControllersView from './lib/features/controllers/ControllersView.svelte';
-  import HapticsAside from './lib/features/haptics/HapticsAside.svelte';
-  import HapticsView from './lib/features/haptics/HapticsView.svelte';
+  import EdgeSlotsView from './lib/features/controllers/EdgeSlotsView.svelte';
+  import GlobalFeelPanel from './lib/features/haptics/GlobalFeelPanel.svelte';
+  import LightbarControls from './lib/features/haptics/LightbarControls.svelte';
+  import TelemetryRoutingPanel from './lib/features/haptics/TelemetryRoutingPanel.svelte';
   import TriggerCurvesPanel from './lib/features/haptics/TriggerCurvesPanel.svelte';
+  import TuningCanvas from './lib/features/tuning/TuningCanvas.svelte';
+  import SavedRail from './lib/features/tuning/SavedRail.svelte';
+  import SetupGuide from './lib/features/tuning/SetupGuide.svelte';
+  import { telemetryPortFromAdapter } from './lib/features/tuning/setupRequirements';
+  import {
+    loadVerifiedSetupGameIds,
+    markSetupVerified,
+    type VerifiedSetupGameIds
+  } from './app/setupVerification';
+  import { savedDiffRows, unsavedChangeCount } from './lib/features/tuning/savedDiff';
   import {
     clampUnit,
+    DEFAULT_BODY_FEEL,
+    DEFAULT_LIGHTBAR_BRIGHTNESS,
+    DEFAULT_LIGHTBAR_COLOR,
+    DEFAULT_REDLINE_COLOR,
     defaultTriggerCurve,
     defaultTriggerCurvePoints,
     type ForzaEffectMeta,
@@ -131,6 +146,7 @@
     bodyRumbleModeOptions,
     forzaEffectMetas,
     forzaRoutes,
+    tuningColumnForEffect,
     triggerEffectHelp,
     triggerEffectOptions,
     triggerStrengthHelp,
@@ -163,13 +179,6 @@
     forzaTuningFromConfig,
     type ForzaTuningValues
   } from './app/forzaEffectState';
-  import {
-    gameAccentColor,
-    gameArtwork,
-    gameMediaDetails,
-    gameTileStatus,
-    profileScopeCount as countProfilesForGame
-  } from './lib/features/games/gamePresentation';
   import {
     defaultProfileIdForGame,
     usesForzaRuntimeProfile
@@ -269,6 +278,9 @@
   let edgeProfilesError = '';
   let inputBridgeBusy: 'mode' | 'start' | 'stop' | '' = '';
   let profileSaveBaselineSignature = '';
+  // The saved baseline retained as a config object so the saved rail can diff
+  // the working draft against what the profile actually has on disk.
+  let profileSaveBaselineConfig: EditableControllerConfig | null = null;
   let profileConfigDirty = false;
   let effectActivityUntil: Record<string, number> = {};
   let partialErrorsDismissed = false;
@@ -279,6 +291,13 @@
   let updateDismissalLoaded = false;
   let onboardingOpen = false;
   let onboardingLoaded = false;
+  // Per-game setup state (Task 8). `verifiedSetupGameIds` mirrors the
+  // persisted "packets seen at least once" flags; `setupGuideManual` tracks a
+  // deliberate re-entry (chip, dropdown, Status deep-link) and resets when the
+  // selected game changes. Unverified games pin the guide open on their own.
+  let verifiedSetupGameIds: VerifiedSetupGameIds = loadVerifiedSetupGameIds();
+  let setupGuideManual = false;
+  let setupGuideGameTracker = '';
   let renameProfileId = '';
   let renameProfileName = '';
   let profileRenameBusy = false;
@@ -317,11 +336,11 @@
   let curveDragSide: TriggerSide | null = null;
   let curveDragPoint: CurveDragPoint | null = null;
   let triggerCurveDisplayMode: TriggerCurveDisplayMode = 'base';
-  let activeView: AppView = 'games';
+  let activeView: AppView = 'status';
   let triggerEffect = 'Adaptive resistance';
   let triggerIntensity = 'Strong (Standard)';
   let vibrationIntensity = 'Medium';
-  let vibrationMode = 'Balanced';
+  let vibrationMode: string = DEFAULT_BODY_FEEL;
   let forzaTuning: ForzaTuningValues = defaultForzaTuningValues();
   $: forzaBodyRumbleMode = forzaTuning.bodyRumbleMode;
   $: forzaEffects = forzaTuning.effects;
@@ -331,9 +350,9 @@
   $: forzaShiftTuning = forzaTuning.shift;
   $: forzaRevLimiterTuning = forzaTuning.revLimiter;
   let lightbarEnabled = true;
-  let lightbarColor = '#4cc9f0';
-  let rpmColor = '#ff3a2e';
-  let lightbarBrightness = 72;
+  let lightbarColor: string = DEFAULT_LIGHTBAR_COLOR;
+  let rpmColor: string = DEFAULT_REDLINE_COLOR;
+  let lightbarBrightness: number = DEFAULT_LIGHTBAR_BRIGHTNESS;
   let leftStickDeadzone = 0;
   let rightStickDeadzone = 0;
 
@@ -343,6 +362,12 @@
   // when forzaEffects is reassigned (Svelte can't statically trace the
   // dependency through a plain function call to forzaEffect()).
   $: forzaEffectsById = new Map(forzaEffects.map((effect) => [effect.id, effect]));
+  // Semantic tuning columns: effects grouped by what is being tuned (never by
+  // control type); anything unmapped lands in Road feel.
+  const brakeEffectMetas = forzaEffectMetas.filter((meta) => tuningColumnForEffect(meta) === 'brake');
+  const throttleEffectMetas = forzaEffectMetas.filter((meta) => tuningColumnForEffect(meta) === 'throttle');
+  const roadEffectMetas = forzaEffectMetas.filter((meta) => tuningColumnForEffect(meta) === 'road');
+  const lightEffectMetas = forzaEffectMetas.filter((meta) => tuningColumnForEffect(meta) === 'lights');
 
   $: {
     const nextSelection = reconcileTargetControllerWorkspaceSelection({
@@ -475,8 +500,9 @@
   $: selectedTuningGame = profileWorkspace.selectedTuningGame;
   $: tuningReady = profileWorkspace.tuningReady;
   $: buttonMappingReady = profileWorkspace.buttonMappingReady;
+  $: edgeSlotsReady = isEdgeTargetController(controller);
   $: {
-    const guardedView = guardView(activeView, { tuningReady, buttonMappingReady });
+    const guardedView = guardView(activeView, { tuningReady, buttonMappingReady, edgeSlotsReady });
     if (guardedView !== activeView) {
       activeView = guardedView;
       setViewHash(guardedView);
@@ -498,10 +524,85 @@
   $: activeProfileHeader = profileWorkspace.activeProfileHeader;
   $: activeProfileHeaderName = profileWorkspace.activeProfileHeaderName;
   $: activeProfileHeaderMeta = profileWorkspace.activeProfileHeaderMeta;
-  $: buttonMappingActive = activeView === 'buttonMapping';
+  $: buttonMappingActive = activeView === 'advancedButtonMapping';
+  // View composition: each route renders its own view; views the guard rejects
+  // land on 'status' (Edge onboard slots land on Controller details instead).
+  $: showAdvancedControllerView = activeView === 'advancedController';
+  $: showEdgeSlotsView = activeView === 'advancedEdgeSlots';
+  $: showStatusView = activeView === 'status';
+  $: showTuningView = activeView === 'tuning';
+  $: showWorkspaceViews =
+    showAdvancedControllerView ||
+    showEdgeSlotsView ||
+    (tuningReady && (activeView === 'tuning' || activeView === 'advancedButtonMapping'));
   $: steamInputStatus = snapshot?.steamInput;
   $: inputBridgeStatus = snapshot?.inputBridge;
   $: telemetryPacketRate = adapter?.packetRateHz ?? 0;
+  // --- per-game setup guide state (Task 8) --------------------------------
+  $: telemetryPort = telemetryPortFromAdapter(adapter);
+  $: selectedGameSetupVerified =
+    selectedTuningScope !== 'game' || !selectedTuningGame
+      ? true
+      : Boolean(verifiedSetupGameIds[selectedTuningGame.gameId]);
+  // Fresh Telemetry attributed to the selected game: it must be the game the
+  // agent actually detected, with its Telemetry Adapter running and packets
+  // arriving. Telemetry loss never yanks the canvas — it only flips the chip
+  // to Quiet and surfaces a Status finding.
+  $: selectedGameTelemetryFresh = Boolean(
+    selectedTuningScope === 'game' &&
+      selectedTuningGame?.running &&
+      selectedTuningGame.supportLevel === 'telemetry' &&
+      snapshot?.gameDetection.activeGameId === selectedTuningGame.gameId &&
+      adapter?.state === 'running' &&
+      telemetryPacketRate > 0
+  );
+  $: if (selectedTuningGameId !== setupGuideGameTracker) {
+    setupGuideGameTracker = selectedTuningGameId;
+    setupGuideManual = false;
+  }
+  $: showSetupGuide =
+    showTuningView &&
+    tuningReady &&
+    selectedTuningScope === 'game' &&
+    Boolean(selectedTuningGame) &&
+    (setupGuideManual || !selectedGameSetupVerified);
+
+  const markSelectedGameSetupVerified = () => {
+    const gameId = selectedTuningScope === 'game' ? (selectedTuningGame?.gameId ?? '') : '';
+    if (!gameId) return;
+    verifiedSetupGameIds = markSetupVerified(verifiedSetupGameIds, gameId);
+  };
+
+  // Passive completion: SetupGuide calls this when the first packets arrive
+  // (or via "Start tuning" on the zero-setup variant). The canvas swaps in
+  // because the unverified pin disappears — no click required.
+  const completeSetupGuide = () => {
+    markSelectedGameSetupVerified();
+    setupGuideManual = false;
+  };
+
+  const toggleSetupGuide = () => {
+    if (!selectedGameSetupVerified) return; // pinned open until verified
+    setupGuideManual = !setupGuideManual;
+  };
+
+  const openSetupGuide = () => {
+    if (selectedTuningScope !== 'game') return;
+    setupGuideManual = true;
+  };
+
+  // Status → Needs attention deep-link: land on #/tuning with the guide open
+  // for the detected game.
+  const openSetupGuideFromStatus = async () => {
+    const game = selectedGame ?? selectedTuningGame ?? null;
+    if (!game) {
+      navigateToView('tuning');
+      return;
+    }
+    await selectTuningGame(game);
+    setupGuideGameTracker = game.gameId;
+    setupGuideManual = true;
+  };
   $: telemetryRateText = `${telemetryPacketRate >= 100 ? telemetryPacketRate.toFixed(0) : telemetryPacketRate.toFixed(1)} Hz`;
   $: telemetryRateDetail = telemetryRateStatusText(adapter);
   $: systemReadoutTitle = selectedTuningScope === 'global' ? 'Profile Scope' : 'Telemetry Rate';
@@ -632,8 +733,8 @@
   };
 
   const appViewFromHash = (): AppView => {
-    if (typeof window === 'undefined') return 'games';
-    return viewFromHash(window.location.hash, { tuningReady, buttonMappingReady });
+    if (typeof window === 'undefined') return 'status';
+    return viewFromHash(window.location.hash, { tuningReady, buttonMappingReady, edgeSlotsReady });
   };
 
   const setViewHash = (view: AppView) => {
@@ -649,7 +750,7 @@
   };
 
   const navigateToView = (view: AppView) => {
-    view = guardView(view, { tuningReady, buttonMappingReady });
+    view = guardView(view, { tuningReady, buttonMappingReady, edgeSlotsReady });
     activeView = view;
     setViewHash(view);
   };
@@ -755,8 +856,6 @@
     configLoadedFor = '';
     stopTriggerInputPolling();
   };
-
-  const profileScopeCount = (game: SupportedGame) => countProfilesForGame(game, profiles);
 
   const openAddGameDialog = async () => {
     addGameOpen = true;
@@ -916,8 +1015,8 @@
     selectedTuningGameId = '';
     const profileId = globalTuningProfileSelection(profiles, activeProfileId);
     selectedOverrideProfileId = profileId;
-    activeView = 'haptics';
-    setViewHash('haptics');
+    activeView = 'tuning';
+    setViewHash('tuning');
     if (profileId) await selectProfileForScope(profileId, null, 'Global Profile');
   };
 
@@ -931,8 +1030,8 @@
       currentControllerConfig
     });
     if (preferredProfileId) selectedOverrideProfileId = preferredProfileId;
-    activeView = 'haptics';
-    setViewHash('haptics');
+    activeView = 'tuning';
+    setViewHash('tuning');
     if (preferredProfileId) await selectProfileForScope(preferredProfileId, game.gameId, game.name);
   };
 
@@ -987,6 +1086,88 @@
   $: profileConfigDirty =
     Boolean(currentControllerConfig && profileSaveBaselineSignature) &&
     profileConfigSignature(buildControllerConfig()) !== profileSaveBaselineSignature;
+
+
+  // Saved rail diff (Task 7). The object literal mirrors
+  // currentProfileDraftValues() but names every draft variable directly so
+  // Svelte re-derives the snapshot the moment any tunable value moves (a
+  // plain function call would hide the dependencies from the compiler).
+  $: profileDraftSnapshot = {
+    l2From,
+    l2To,
+    r2From,
+    r2To,
+    l2Curve,
+    r2Curve,
+    l2CurvePoints,
+    r2CurvePoints,
+    triggerEffect,
+    triggerIntensity,
+    vibrationIntensity,
+    vibrationMode,
+    lightbarEnabled,
+    lightbarColor,
+    rpmColor,
+    lightbarBrightness,
+    forzaBodyRumbleMode: forzaTuning.bodyRumbleMode,
+    forzaEffects: forzaTuning.effects,
+    forzaBrakeTuning: forzaTuning.brake,
+    forzaAbsTuning: forzaTuning.abs,
+    forzaThrottleTuning: forzaTuning.throttle,
+    forzaShiftTuning: forzaTuning.shift,
+    forzaRevLimiterTuning: forzaTuning.revLimiter,
+    leftStickDeadzone,
+    rightStickDeadzone
+  };
+  $: savedRailRows = savedDiffRows(profileSaveBaselineConfig, profileDraftSnapshot, {
+    includeForza: selectedTuningScope === 'game',
+    intensityPercent: forzaIntensityPercent
+  });
+  $: unsavedCount = unsavedChangeCount(savedRailRows);
+  $: savedRailProfileName =
+    profiles.find((profile) => profile.id === (selectedOverrideProfileId || activeProfileId))?.name ??
+    'this profile';
+
+  // Discard: put the draft back to the saved baseline. The live controller
+  // sync then pushes the restored values to hardware; the baseline itself is
+  // untouched, so the dirty flag and rail diff clear together.
+  const discardDraftChanges = () => {
+    if (!profileSaveBaselineConfig) return;
+    applyEditableConfig(profileSaveBaselineConfig);
+    scheduleBaseFeelTestRefresh();
+    scheduleLiveControllerConfigSync();
+    setApplyMessage('Unsaved changes discarded', 'info');
+  };
+
+  // Saved-curve ghosts: dashed echo of the saved curve in each editor while
+  // the draft's shape differs from the saved one.
+  const savedCurveShapePath = (
+    side: TriggerSide,
+    saved: EditableControllerConfig | null,
+    displayMode: TriggerCurveDisplayMode
+  ): string | null => {
+    if (!saved) return null;
+    return curveShapeViewFor(
+      triggerCurveEditorContext({
+        side,
+        from: side === 'l2' ? saved.trigger.l2From : saved.trigger.r2From,
+        to: side === 'l2' ? saved.trigger.l2To : saved.trigger.r2To,
+        curve: side === 'l2' ? saved.trigger.l2Curve : saved.trigger.r2Curve,
+        points: side === 'l2' ? saved.trigger.l2CurvePoints : saved.trigger.r2CurvePoints,
+        triggerEffect: saved.trigger.effect,
+        triggerIntensity: saved.trigger.intensity,
+        displayMode,
+        forzaEffects: saved.forza?.effects ?? [],
+        forzaBrakeTuning: normalizeForzaBrakeTuning(saved.forza?.brake),
+        forzaThrottleTuning: normalizeForzaThrottleTuning(saved.forza?.throttle)
+      })
+    ).path;
+  };
+
+  $: l2SavedShapePath = savedCurveShapePath('l2', profileSaveBaselineConfig, triggerCurveDisplayMode);
+  $: r2SavedShapePath = savedCurveShapePath('r2', profileSaveBaselineConfig, triggerCurveDisplayMode);
+  $: l2SavedCurvePath = l2SavedShapePath && l2SavedShapePath !== l2CurveShape.path ? l2SavedShapePath : null;
+  $: r2SavedCurvePath = r2SavedShapePath && r2SavedShapePath !== r2CurveShape.path ? r2SavedShapePath : null;
 
   const forzaEffectState = createForzaEffectState({
     store: {
@@ -1173,19 +1354,27 @@
     triggerEffect = config.trigger.effect;
     triggerIntensity = config.trigger.intensity;
     vibrationIntensity = config.trigger.vibration;
-    vibrationMode = config.trigger.vibrationMode ?? 'Balanced';
+    vibrationMode = config.trigger.vibrationMode ?? DEFAULT_BODY_FEEL;
     lightbarEnabled = config.lightbar?.enabled ?? true;
-    lightbarColor = config.lightbar?.color ?? '#4cc9f0';
-    rpmColor = config.lightbar?.rpmColor ?? '#ff3a2e';
-    lightbarBrightness = config.lightbar?.brightness ?? 72;
+    lightbarColor = config.lightbar?.color ?? DEFAULT_LIGHTBAR_COLOR;
+    rpmColor = config.lightbar?.rpmColor ?? DEFAULT_REDLINE_COLOR;
+    lightbarBrightness = config.lightbar?.brightness ?? DEFAULT_LIGHTBAR_BRIGHTNESS;
     leftStickDeadzone = normalizeStickDeadzone(config.sticks?.leftDeadzone ?? 0);
     rightStickDeadzone = normalizeStickDeadzone(config.sticks?.rightDeadzone ?? 0);
     forzaTuning = forzaTuningFromConfig(config.forza);
   };
+  // Capture the saved baseline as both a signature (cheap dirty check) and a
+  // config object (saved rail diff + discard target).
+  const captureProfileSaveBaseline = () => {
+    const config = buildControllerConfig();
+    profileSaveBaselineSignature = profileConfigSignature(config);
+    profileSaveBaselineConfig = config;
+  };
+
   const applyControllerConfig = (config: ControllerConfiguration, updateProfileBaseline = true) => {
     currentControllerConfig = config;
     applyEditableConfig(config);
-    if (updateProfileBaseline) profileSaveBaselineSignature = profileConfigSignature(buildControllerConfig());
+    if (updateProfileBaseline) captureProfileSaveBaseline();
   };
 
   const loadControllerConfig = async (controllerId: string) => {
@@ -1193,6 +1382,7 @@
     configLoadError = '';
     currentControllerConfig = null;
     profileSaveBaselineSignature = '';
+    profileSaveBaselineConfig = null;
     try {
       const config = await getControllerConfig(controllerId);
       if (config.controllerId !== controllerId || selectedControllerId !== controllerId) return;
@@ -1305,7 +1495,7 @@
     }
 
     applyEditableConfig(config);
-    profileSaveBaselineSignature = profileConfigSignature(buildControllerConfig());
+    captureProfileSaveBaseline();
   };
 
   const applyTriggerConfig = (trigger: EditableControllerConfig['trigger']) => {
@@ -1320,7 +1510,7 @@
     triggerEffect = trigger.effect;
     triggerIntensity = trigger.intensity;
     vibrationIntensity = trigger.vibration;
-    vibrationMode = trigger.vibrationMode ?? 'Balanced';
+    vibrationMode = trigger.vibrationMode ?? DEFAULT_BODY_FEEL;
   };
 
   const resetTriggerCurvesToProfileDefaults = () => {
@@ -1348,13 +1538,18 @@
     lightbarColor,
     rpmColor,
     lightbarBrightness,
-    forzaBodyRumbleMode,
-    forzaEffects,
-    forzaBrakeTuning,
-    forzaAbsTuning,
-    forzaThrottleTuning,
-    forzaShiftTuning,
-    forzaRevLimiterTuning,
+    // Read forzaTuning directly, not the `$:` aliases (forzaEffects et al.):
+    // captureProfileSaveBaseline() runs synchronously right after
+    // applyEditableConfig() reassigns forzaTuning, before Svelte re-runs the
+    // reactive aliases — reading the aliases here baselines stale values and
+    // marks a freshly loaded profile dirty.
+    forzaBodyRumbleMode: forzaTuning.bodyRumbleMode,
+    forzaEffects: forzaTuning.effects,
+    forzaBrakeTuning: forzaTuning.brake,
+    forzaAbsTuning: forzaTuning.abs,
+    forzaThrottleTuning: forzaTuning.throttle,
+    forzaShiftTuning: forzaTuning.shift,
+    forzaRevLimiterTuning: forzaTuning.revLimiter,
     leftStickDeadzone,
     rightStickDeadzone
   });
@@ -1678,6 +1873,8 @@
     profileConfigSignature: (config) => profileConfigSignature(config),
     setProfileSaveBaseline: (signature) => {
       profileSaveBaselineSignature = signature;
+      // Saving makes the current draft the new saved truth for the rail diff.
+      profileSaveBaselineConfig = buildControllerConfig();
     },
     saveControllerConfigForProfileTargets,
     setProfileOverrideForTargets: (profileId, gameId) => setProfileOverrideForTargets(profileId, gameId),
@@ -1727,7 +1924,7 @@
   function shouldPollTriggerInput() {
     return Boolean(
       controller?.id &&
-        activeView === 'haptics' &&
+        activeView === 'tuning' &&
         typeof window !== 'undefined' &&
         typeof document !== 'undefined' &&
         !document.hidden
@@ -1738,12 +1935,7 @@
     triggerInputPoller.sync();
   }
 
-  $: if (
-    typeof window !== 'undefined' &&
-    (window.location.hash === '#/controllers' ||
-      window.location.hash === '#/adaptive-triggers-haptics' ||
-      window.location.hash === '#/button-mapping')
-  ) {
+  $: if (typeof window !== 'undefined' && isViewHash(window.location.hash)) {
     const routeView = appViewFromHash();
     if (routeView !== activeView) {
       activeView = routeView;
@@ -1957,7 +2149,7 @@
   // Live trigger polling feeds the haptics curve cursor and the base-feel test.
   // It is intentionally limited to the visible Haptics view so inactive routes
   // do not spend the 25Hz input budget or trigger extra DOM work.
-  $: if (controller?.id && activeView === 'haptics') {
+  $: if (controller?.id && activeView === 'tuning') {
     startTriggerInputPolling();
   } else {
     stopTriggerInputPolling();
@@ -1980,7 +2172,41 @@
   }
 </script>
 
-<main class="ops-shell">
+<div class="app-shell">
+  <AppSidebar
+    view={activeView}
+    readiness={{ tuningReady, buttonMappingReady, edgeSlotsReady }}
+    onNavigate={navigateToView}
+  >
+    {#snippet footer()}
+      <div class="sidebar-footer">
+        <button
+          class="sidebar-item"
+          type="button"
+          title="Open the quick start guide again. It explains Profiles, trigger tests, telemetry safety, and support bundles."
+          aria-label="Open quick start guide"
+          onclick={openOnboarding}
+        >
+          <CircleHelp size={14} /> Guide
+        </button>
+        <button
+          class:active={supportPanelOpen}
+          class="sidebar-item"
+          type="button"
+          title="Copy or export a sanitized support bundle for GitHub issues or Discord help. Raw hardware ids are excluded."
+          aria-expanded={supportPanelOpen}
+          aria-controls="support-bundle-panel"
+          onclick={() => {
+            supportPanelOpen = !supportPanelOpen;
+          }}
+        >
+          <LifeBuoy size={14} /> Support
+        </button>
+      </div>
+    {/snippet}
+  </AppSidebar>
+
+  <main class="app-main">
   {#if loading}
     <section class="ops-state">
       <RefreshCw class="spin" size={24} />
@@ -1995,56 +2221,64 @@
       <button class="solid-action compact" type="button" onclick={refresh}>Retry</button>
     </section>
   {:else if snapshot}
-    <header class="dm-hud" aria-label="Global command state">
-      <div class="dm-hardware-state">
-        <span class="dm-controller-glyph" aria-hidden="true"></span>
-        <div>
-          <h1>DualSense Command Center</h1>
-          <p><span class="dm-app-tagline">Adaptive triggers, haptics, and live telemetry &mdash; tuned locally.</span></p>
-        </div>
+    <!-- Utility row: cross-view context that has no single page home — the
+         target controller for writes, the web UI bind address, the Forza glyph
+         override, and a compact system readout. -->
+    <section class="app-toolbar" aria-label="Controller and display options">
+      <label class="app-toolbar-field">
+        <span>Target Controller</span>
+        <select
+          aria-label="Target controller"
+          disabled={!connectedControllerIds.length}
+          value={profileTargetsAllConnected ? '__all__' : profileTargetControllerIds[0] ?? controller?.id ?? ''}
+          onchange={(event) => {
+            const picked = event.currentTarget.value;
+            if (picked === '__all__') pickAllControllers();
+            else if (picked) pickControllerTarget(picked);
+          }}
+        >
+          {#if connectedControllerIds.length > 1}
+            <option value="__all__">All Connected</option>
+          {/if}
+          {#each connectedControllers as item (item.id)}
+            <option value={item.id}>{item.name || controllerModelText(item)}</option>
+          {/each}
+        </select>
+      </label>
+      <label class="app-toolbar-field">
+        <span>Web UI Location</span>
+        <select
+          aria-label="Web UI location"
+          disabled={appSettingsBusy}
+          title={lanRestartRequired ? `restart -> ${appSettings?.desiredBindAddress}` : status?.bindAddress}
+          value={listenOnAllInterfaces ? 'lan' : 'local'}
+          onchange={(event) => void updateLanAccess(event.currentTarget.value === 'lan')}
+        >
+          <option value="local">Local Only</option>
+          <option value="lan">LAN Access</option>
+        </select>
+        <small>{lanRestartRequired ? `restart -> ${appSettings?.desiredBindAddress}` : status?.bindAddress}</small>
+      </label>
+      <button
+        class="app-toolbar-toggle"
+        class:active={glyphOverrideEnabled}
+        type="button"
+        disabled={appSettingsBusy}
+        aria-pressed={glyphOverrideEnabled}
+        title={forzaGlyphs?.lastStatus ?? glyphInstallPath}
+        onclick={() => void updateForzaGlyphOverride()}
+      >
+        Controller Glyphs: {glyphOverrideEnabled ? 'PlayStation Icons' : 'Game Default'}
+      </button>
+      <div class="app-toolbar-spacer"></div>
+      <div
+        class="app-toolbar-readout"
+        title={selectedTuningScope === 'global' ? systemReadoutDetail : adapter?.setupHint ?? telemetryRateDetail}
+      >
+        <span>{systemReadoutTitle}</span>
+        <p><strong>{systemReadoutValue}</strong><small>{systemReadoutDetail}</small></p>
       </div>
-
-      <ViewNav
-        views={appViews}
-        {activeView}
-        tooltips={viewTooltips}
-        {tuningReady}
-        {buttonMappingReady}
-        onNavigate={navigateToView}
-      />
-
-      <div class="dm-system-cluster">
-        <div class="dm-system-readout" title={selectedTuningScope === 'global' ? systemReadoutDetail : adapter?.setupHint ?? telemetryRateDetail}>
-          <span>{systemReadoutTitle}</span>
-          <strong>{systemReadoutValue}</strong>
-          <small>{systemReadoutDetail}</small>
-        </div>
-        <Tooltip text="Open the quick start guide again. It explains Profiles, trigger tests, telemetry safety, and support bundles." side="bottom" align="end">
-          <button
-            class="dm-support-trigger"
-            type="button"
-            aria-label="Open quick start guide"
-            onclick={openOnboarding}
-          >
-            <CircleHelp size={14} /> Guide
-          </button>
-        </Tooltip>
-        <Tooltip text="Copy or export a sanitized support bundle for GitHub issues or Discord help. Raw hardware ids are excluded." side="bottom" align="end">
-          <button
-            class:active={supportPanelOpen}
-            class="dm-support-trigger"
-            type="button"
-            aria-expanded={supportPanelOpen}
-            aria-controls="support-bundle-panel"
-            onclick={() => {
-              supportPanelOpen = !supportPanelOpen;
-            }}
-          >
-            <LifeBuoy size={14} /> Support
-          </button>
-        </Tooltip>
-      </div>
-    </header>
+    </section>
 
     {#if showPartialErrorBanner}
       <aside class="ops-warning dm-warning" role="status" aria-live="polite">
@@ -2081,67 +2315,78 @@
       onNavigate={navigateToView}
     />
 
-    {#if activeView === 'games' || (!tuningReady && activeView !== 'controllers')}
-      <GamesView
+    {#if showStatusView}
+      <StatusView
+        {controllers}
         {controller}
-        {connectedControllers}
-        {selectedTuningScope}
-        {selectedTuningGameId}
-        {globalProfilePreview}
-        {profileTargetsAllConnected}
-        {profileTargetControllerIds}
+        detectedGame={selectedGame}
+        detectedGameName={snapshot.gameDetection.activeGameName ?? null}
+        {activeProfile}
+        {activeProfileName}
+        {overrideActive}
+        {adapter}
+        adapters={snapshot.adapters ?? []}
+        renameActiveId={controllerRenameId}
+        bind:renameName={controllerRenameName}
+        renameBusy={controllerRenameBusy}
+        onBeginRename={beginControllerRename}
+        onSubmitRename={submitControllerRename}
+        onCancelRename={cancelControllerRename}
+        onRenameKeydown={handleControllerRenameKeydown}
+        onOpenSetupGuide={openSetupGuideFromStatus}
+      />
+    {/if}
+    {#if showTuningView}
+      <TuningHeader
+        scope={selectedTuningScope}
+        selectedGame={selectedTuningGame}
         {discoveredGames}
-        {detectionSignalText}
-        {gameArtwork}
-        {gameMediaDetails}
-        {profileScopeCount}
-        {gameAccentColor}
-        {gameTileStatus}
+        adapterRunning={adapter?.state === 'running'}
+        packetRateHz={telemetryPacketRate}
+        setupVerified={selectedGameSetupVerified}
+        setupGuideOpen={showSetupGuide}
+        onToggleSetupGuide={toggleSetupGuide}
+        onOpenSetupGuide={openSetupGuide}
+        {controller}
+        profiles={profileContextProfiles}
+        {activeProfileId}
+        {selectedOverrideProfileId}
+        {selectedActionProfile}
+        {canRenameSelectedProfile}
+        {canDeleteSelectedProfile}
+        {profileConfigDirty}
+        unsavedChangeCount={unsavedCount}
+        {profileSaveBusy}
+        {profileFileBusy}
+        {profileSaveAsBusy}
+        {profileRenameBusy}
+        saveAsOpen={saveAsProfileOpen}
+        bind:saveAsName={saveAsProfileName}
+        {renameProfileId}
+        bind:renameName={renameProfileName}
         onSelectGlobal={selectGlobalTuning}
         onSelectGame={selectTuningGame}
         onOpenAddGame={openAddGameDialog}
-        onPickAllControllers={pickAllControllers}
-        onPickControllerTarget={pickControllerTarget}
+        onSelectProfile={selectProfileForScope}
+        onSaveProfile={saveActiveProfile}
+        onBeginSaveAs={beginSaveAsProfile}
+        onCancelSaveAs={cancelSaveAsProfile}
+        onSubmitSaveAs={submitSaveAsProfile}
+        onSaveAsKeydown={handleSaveAsProfileKeydown}
+        onBeginRename={beginRenameSelectedProfile}
+        onCancelRename={cancelRenameProfile}
+        onSubmitRename={submitRenameProfile}
+        onRenameKeydown={handleRenameProfileKeydown}
+        onDeleteProfile={(profile) => void deleteProfileById(profile.id, profile.name)}
+        onRestoreDefaults={restoreDefaults}
+        onImportFile={handleProfileImport}
+        onExportProfile={exportSelectedProfile}
       />
-    {:else}
-      <ContextRibbon
-        {controller}
-        {connectedControllers}
-        {connectedControllerIds}
-        {profileTargetsAllConnected}
-        {profileTargetControllerIds}
-        {selectedTuningScope}
-        {selectedTuningGameId}
-        {steamContextGame}
-        {steamContextArt}
-        {steamContextBackdropArt}
-        {steamContextMeta}
-        {discoveredGames}
-        {profileContextProfiles}
-        {selectedOverrideProfileId}
-        {activeProfileId}
-        {activeProfileHeaderName}
-        {activeProfileHeaderMeta}
-        {listenOnAllInterfaces}
-        {appSettingsBusy}
-        {lanRestartRequired}
-        desiredBindAddress={appSettings?.desiredBindAddress}
-        currentBindAddress={status?.bindAddress}
-        {glyphOverrideEnabled}
-        glyphStatus={forzaGlyphs?.lastStatus ?? glyphInstallPath}
-        {gameAccentColor}
-        onPickGlobal={selectGlobalTuning}
-        onPickGame={selectTuningGame}
-        onPickProfile={selectProfileForScope}
-        onPickAllControllers={pickAllControllers}
-        onPickController={pickControllerTarget}
-        onUpdateLanAccess={updateLanAccess}
-        onUpdateGlyphOverride={updateForzaGlyphOverride}
-      />
-
-      {#if activeView === 'controllers'}
+    {/if}
+    {#if showWorkspaceViews}
+      {#if showAdvancedControllerView}
         <ControllersView
-          active={activeView === 'controllers'}
+          active={showAdvancedControllerView}
           {controllers}
           {controller}
           {selectedControllerId}
@@ -2154,12 +2399,6 @@
           inputBridge={snapshot?.inputBridge ?? null}
           activeGameName={selectedGame?.name ?? null}
           activeInputProvider={selectedGame?.inputProvider ?? currentControllerConfig?.inputMode ?? 'native_dualsense'}
-          {edgeProfiles}
-          {edgeProfilesLoading}
-          {edgeProfilesBusySlot}
-          {edgeProfilesError}
-          {edgeSlotsReadTooltip}
-          edgeSlotWriteLabel={edgeSlotWriteLabel()}
           onSelect={selectTargetController}
           onBeginRename={beginControllerRename}
           onSubmitRename={submitControllerRename}
@@ -2170,6 +2409,21 @@
           onSetStickDeadzone={setStickDeadzone}
           onStartInputBridge={startControllerInputBridge}
           onStopInputBridge={stopControllerInputBridge}
+          {supportBundleBusy}
+          onDownloadSupportBundle={exportSupportBundle}
+        />
+      {/if}
+
+      {#if showEdgeSlotsView}
+        <EdgeSlotsView
+          {controller}
+          {currentControllerConfig}
+          {edgeProfiles}
+          {edgeProfilesLoading}
+          {edgeProfilesBusySlot}
+          {edgeProfilesError}
+          {edgeSlotsReadTooltip}
+          edgeSlotWriteLabel={edgeSlotWriteLabel()}
           onRefreshEdgeProfiles={() => controller && void loadEdgeProfiles(controller.id, true)}
           onWriteEdgeSlot={writeCurrentConfigToEdgeSlot}
           {edgeSlotName}
@@ -2179,143 +2433,208 @@
         />
       {/if}
 
-      {#if activeView === 'haptics'}
-      <HapticsView active>
-      <TriggerCurvesPanel
-        {selectedTuningScope}
-        {snapshot}
-        {baseFeelTestActive}
-        {baseFeelTestBusy}
-        {resetTriggerCurvesToProfileDefaults}
-        {toggleBaseFeelTest}
-        {l2CurveShape}
-        {r2CurveShape}
-        {l2CurveLive}
-        {r2CurveLive}
-        {curveHover}
-        {curveDragPoint}
-        {l2LivePress}
-        {r2LivePress}
-        {l2From}
-        {l2To}
-        {r2From}
-        {r2To}
-        {l2Curve}
-        {r2Curve}
-        {l2CurvePoints}
-        {r2CurvePoints}
-        {triggerEffect}
-        {triggerIntensity}
-        {vibrationIntensity}
-        {vibrationMode}
-        {triggerEffectOptions}
-        {vibrationModeOptions}
-        {triggerEffectHelp}
-        {triggerStrengthHelp}
-        {vibrationHelp}
-        {vibrationModeHelp}
-        {triggerPressLabel}
-        triggerRangeTooltip={triggerRangeTooltipForCurrentTuning}
-        {triggerCurveTooltip}
-        {showTriggerPress}
-        {handleCurvePointer}
-        {updateCurveHover}
-        {clearCurveHover}
-        {handleCurvePointPointer}
-        {setTriggerRangeValue}
-        {setTriggerCurveValue}
-        {removeCurvePoint}
-        {addCurvePoint}
-        {setTriggerEffect}
-        {setTriggerIntensity}
-        {setVibrationIntensity}
-        {setVibrationMode}
-      />
-      <HapticsAside
-        {selectedTuningScope}
-        {snapshot}
-        {baseFeelTestActive}
-        {baseFeelTestBusy}
-        {triggerEffect}
-        {triggerIntensity}
-        {vibrationIntensity}
-        {vibrationMode}
-        {triggerEffectOptions}
-        {vibrationModeOptions}
-        {triggerEffectHelp}
-        {vibrationModeHelp}
-        {setTriggerEffect}
-        {setVibrationIntensity}
-        {setVibrationMode}
-        {toggleBaseFeelTest}
-        {previewBodyHaptics}
-        {enabledForzaEffectCount}
-        {allForzaEffectsEnabled}
-        {forzaEffectMetas}
-        {forzaEffectsById}
-        {effectStatusById}
-        {forzaBodyRumbleMode}
-        {forzaBrakeTuning}
-        {forzaAbsTuning}
-        {forzaThrottleTuning}
-        {forzaShiftTuning}
-        {forzaRevLimiterTuning}
-        {bodyRumbleModeOptions}
-        {forzaRoutes}
-        {forzaEffect}
-        {toggleAllForzaEffects}
-        {setForzaBodyRumbleMode}
-        {updateForzaBrakeTuning}
-        {updateForzaAbsTuning}
-        {updateForzaThrottleTuning}
-        {updateForzaShiftTuning}
-        {updateForzaRevLimiterTuning}
-        {updateForzaEffect}
-        {intensityTooltip}
-        {routeTooltip}
-        {forzaIntensityPercent}
-        {forzaIntensityFromPercent}
-        {lightbarEnabled}
-        bind:lightbarColor
-        bind:rpmColor
-        {lightbarBrightness}
-        onColorChange={handleLightbarColorChange}
-        {setLightbarBrightness}
-        {setLightbarEnabled}
-        {previewLightbar}
-        {previewRpmColor}
-        {profileContextProfiles}
-        {activeProfileId}
-        {selectedOverrideProfileId}
-        {selectedActionProfile}
-        selectedGameName={steamContextGame?.name ?? 'game'}
-        {canRenameSelectedProfile}
-        {canDeleteSelectedProfile}
-        {profileConfigDirty}
-        {profileSaveBusy}
-        {profileFileBusy}
-        {profileSaveAsBusy}
-        {profileRenameBusy}
-        {saveAsProfileOpen}
-        bind:saveAsProfileName
-        {renameProfileId}
-        bind:renameProfileName
-        onSelectProfile={selectProfileForScope}
-        onImportFile={handleProfileImport}
-        onExportProfile={exportSelectedProfile}
-        onBeginSaveAs={beginSaveAsProfile}
-        onCancelSaveAs={cancelSaveAsProfile}
-        onSubmitSaveAs={submitSaveAsProfile}
-        onSaveAsKeydown={handleSaveAsProfileKeydown}
-        onBeginRename={beginRenameSelectedProfile}
-        onCancelRename={cancelRenameProfile}
-        onSubmitRename={submitRenameProfile}
-        onRenameKeydown={handleRenameProfileKeydown}
-        onDeleteProfile={(profile) => void deleteProfileById(profile.id, profile.name)}
-        onRestoreDefaults={restoreDefaults}
-        onSaveProfile={saveActiveProfile}
-      />
-      </HapticsView>
+      {#if activeView === 'tuning' && tuningReady}
+      <!-- Each trigger column owns its own curve editor instrument. -->
+      {#snippet triggerCurveEditor(trigger: 'L2' | 'R2')}
+        <TriggerCurvesPanel
+          {trigger}
+          showControls={false}
+          {selectedTuningScope}
+          {snapshot}
+          {baseFeelTestActive}
+          {baseFeelTestBusy}
+          {resetTriggerCurvesToProfileDefaults}
+          {toggleBaseFeelTest}
+          {l2CurveShape}
+          {r2CurveShape}
+          {l2CurveLive}
+          {r2CurveLive}
+          {curveHover}
+          {curveDragPoint}
+          {l2SavedCurvePath}
+          {r2SavedCurvePath}
+          {l2LivePress}
+          {r2LivePress}
+          {l2From}
+          {l2To}
+          {r2From}
+          {r2To}
+          {l2Curve}
+          {r2Curve}
+          {l2CurvePoints}
+          {r2CurvePoints}
+          {triggerPressLabel}
+          triggerRangeTooltip={triggerRangeTooltipForCurrentTuning}
+          {triggerCurveTooltip}
+          {showTriggerPress}
+          {handleCurvePointer}
+          {updateCurveHover}
+          {clearCurveHover}
+          {handleCurvePointPointer}
+          {setTriggerRangeValue}
+          {setTriggerCurveValue}
+          {removeCurvePoint}
+          {addCurvePoint}
+        />
+      {/snippet}
+      <!-- One embedded effect list per semantic column (game scope only). -->
+      {#snippet forzaEffectGroup(metas: ForzaEffectMeta[])}
+        <TelemetryRoutingPanel
+          showChrome={false}
+          forzaEffectMetas={metas}
+          {forzaEffectsById}
+          {effectStatusById}
+          {forzaBrakeTuning}
+          {forzaAbsTuning}
+          {forzaThrottleTuning}
+          {forzaShiftTuning}
+          {forzaRevLimiterTuning}
+          {forzaRoutes}
+          {forzaEffect}
+          {updateForzaBrakeTuning}
+          {updateForzaAbsTuning}
+          {updateForzaThrottleTuning}
+          {updateForzaShiftTuning}
+          {updateForzaRevLimiterTuning}
+          {updateForzaEffect}
+          {intensityTooltip}
+          {routeTooltip}
+          {forzaIntensityPercent}
+          {forzaIntensityFromPercent}
+        />
+      {/snippet}
+      {#if showSetupGuide && selectedTuningGame}
+        <!-- Setup is a canvas state: the walkthrough replaces the tuning grid
+             (rail included) until the game's requirements verify or the
+             manually re-opened guide is toggled away. -->
+        <SetupGuide
+          game={selectedTuningGame}
+          telemetryFresh={selectedGameTelemetryFresh}
+          verified={selectedGameSetupVerified}
+          port={telemetryPort}
+          packetRateHz={telemetryPacketRate}
+          adapterName={adapter?.name ?? ''}
+          adapterHint={adapter?.setupHint ?? ''}
+          onVerified={completeSetupGuide}
+          onStartTuning={completeSetupGuide}
+        />
+      {:else}
+      <TuningCanvas>
+        <svelte:fragment slot="brake">
+          {@render triggerCurveEditor('L2')}
+          {#if selectedTuningScope === 'game'}
+            {@render forzaEffectGroup(brakeEffectMetas)}
+          {/if}
+        </svelte:fragment>
+        <svelte:fragment slot="throttle">
+          {@render triggerCurveEditor('R2')}
+          {#if selectedTuningScope === 'game'}
+            {@render forzaEffectGroup(throttleEffectMetas)}
+          {/if}
+        </svelte:fragment>
+        <svelte:fragment slot="road">
+          {#if selectedTuningScope === 'game'}
+            {@render forzaEffectGroup(roadEffectMetas)}
+          {/if}
+        </svelte:fragment>
+        <svelte:fragment slot="lights">
+          <LightbarControls
+            {selectedTuningScope}
+            {lightbarEnabled}
+            bind:lightbarColor
+            bind:rpmColor
+            {lightbarBrightness}
+            onColorChange={handleLightbarColorChange}
+            {setLightbarBrightness}
+            {setLightbarEnabled}
+            {previewLightbar}
+            {previewRpmColor}
+          />
+          {#if selectedTuningScope === 'game'}
+            {@render forzaEffectGroup(lightEffectMetas)}
+          {/if}
+        </svelte:fragment>
+        <svelte:fragment slot="rail">
+          <SavedRail
+            profileName={savedRailProfileName}
+            rows={savedRailRows}
+            dirty={profileConfigDirty}
+            previewActive={baseFeelTestActive}
+            previewBusy={baseFeelTestBusy}
+            previewDisabled={!snapshot}
+            saveBusy={profileSaveBusy}
+            canSave={Boolean(selectedActionProfile) && profileConfigDirty}
+            onPreviewFeel={toggleBaseFeelTest}
+            onSave={saveActiveProfile}
+            onDiscard={discardDraftChanges}
+          />
+        </svelte:fragment>
+        <svelte:fragment slot="below">
+          <!-- Parked until Tasks 8-10 re-home it; nothing previously rendered
+               may be lost. Curve reset/test head + base feel strip: -->
+          <TriggerCurvesPanel
+            showCurves={false}
+            {selectedTuningScope}
+            {snapshot}
+            {baseFeelTestActive}
+            {baseFeelTestBusy}
+            {resetTriggerCurvesToProfileDefaults}
+            {toggleBaseFeelTest}
+            {triggerEffect}
+            {triggerIntensity}
+            {vibrationIntensity}
+            {vibrationMode}
+            {triggerEffectOptions}
+            {vibrationModeOptions}
+            {triggerEffectHelp}
+            {triggerStrengthHelp}
+            {vibrationHelp}
+            {vibrationModeHelp}
+            {setTriggerEffect}
+            {setTriggerIntensity}
+            {setVibrationIntensity}
+            {setVibrationMode}
+          />
+          {#if selectedTuningScope === 'game'}
+            <!-- Telemetry stream head + body rumble source routing chrome. -->
+            <div class="canvas-parked">
+              <TelemetryRoutingPanel
+                showEffects={false}
+                {enabledForzaEffectCount}
+                {allForzaEffectsEnabled}
+                {forzaEffectMetas}
+                {forzaBodyRumbleMode}
+                {bodyRumbleModeOptions}
+                {toggleAllForzaEffects}
+                {setForzaBodyRumbleMode}
+              />
+            </div>
+          {:else}
+            <!-- Global scope: base haptics panel (trigger pattern + body). -->
+            <div class="canvas-parked">
+              <GlobalFeelPanel
+                {snapshot}
+                {baseFeelTestActive}
+                {baseFeelTestBusy}
+                {triggerEffect}
+                {triggerIntensity}
+                {vibrationIntensity}
+                {vibrationMode}
+                {triggerEffectOptions}
+                {vibrationModeOptions}
+                {triggerEffectHelp}
+                {vibrationModeHelp}
+                {setTriggerEffect}
+                {setVibrationIntensity}
+                {setVibrationMode}
+                {toggleBaseFeelTest}
+                {previewBodyHaptics}
+              />
+            </div>
+          {/if}
+        </svelte:fragment>
+      </TuningCanvas>
+      {/if}
       {/if}
     <ButtonMappingView session={buttonMappingSession} />
     {/if}
@@ -2333,4 +2652,5 @@
     onValidateLocal={validateLocalGameFromDialog}
     onAddLocal={addLocalGameFromDialog}
   />
-</main>
+  </main>
+</div>
