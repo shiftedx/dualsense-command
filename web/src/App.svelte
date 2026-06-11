@@ -778,6 +778,8 @@
   const navigateToView = (view: AppView) => {
     view = guardView(view, { tuningReady, buttonMappingReady, edgeSlotsReady });
     activeView = view;
+    // An explicit navigation always wins over a parked deep-link intent.
+    requestedView = null;
     setViewHash(view);
   };
 
