@@ -597,6 +597,7 @@
       return;
     }
     await selectTuningGame(game);
+    setupGuideGameTracker = game.gameId;
     setupGuideManual = true;
   };
   $: telemetryRateText = `${telemetryPacketRate >= 100 ? telemetryPacketRate.toFixed(0) : telemetryPacketRate.toFixed(1)} Hz`;

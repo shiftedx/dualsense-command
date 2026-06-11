@@ -304,7 +304,8 @@
               class:setup={chipState === 'setup'}
               class:none={chipState === 'none'}
               type="button"
-              title={chipPresentation.title}
+              disabled={!setupVerified}
+              title={!setupVerified ? 'The setup guide is open below — it closes by itself once setup verifies.' : chipPresentation.title}
               aria-pressed={setupGuideOpen}
               onclick={onToggleSetupGuide}
             >
