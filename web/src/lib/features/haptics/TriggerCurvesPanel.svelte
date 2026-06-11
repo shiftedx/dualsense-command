@@ -48,6 +48,14 @@
   const emptyCurveLive: CurveLive = { liveX: 0, liveY: 100 };
   const noop = () => undefined;
 
+  // Semantic-column rendering (Task 6): 'L2'/'R2' renders a single trigger's
+  // curve editor so each tuning column owns its own instrument; 'both' keeps
+  // the legacy two-curve block. showCurves/showControls let the canvas park
+  // the shared head + base-feel strip separately without losing them.
+  export let trigger: 'L2' | 'R2' | 'both' = 'both';
+  export let showCurves = true;
+  export let showControls = true;
+
   export let selectedTuningScope: TuningScope = 'none';
   export let snapshot: unknown = null;
   export let baseFeelTestActive = false;
@@ -103,6 +111,7 @@
 </script>
 
 <section class="dm-physics" aria-label="Actuation curve tuning">
+  {#if showControls}
   <div class="dm-section-head">
     <div>
       <span>Actuation Engine</span>
@@ -135,8 +144,11 @@
       {/if}
     </div>
   </div>
+  {/if}
 
+  {#if showCurves}
   <div class="dm-curve-stack">
+    {#if trigger !== 'R2'}
     <article class="dm-curve-module" aria-label="L2 brake actuation curve">
       <div class="dm-module-title">
         <div>
@@ -233,7 +245,9 @@
         </div>
       </div>
     </article>
+    {/if}
 
+    {#if trigger !== 'L2'}
     <article class="dm-curve-module" aria-label="R2 throttle actuation curve">
       <div class="dm-module-title">
         <div>
@@ -324,8 +338,11 @@
         </div>
       </div>
     </article>
+    {/if}
   </div>
+  {/if}
 
+  {#if showControls}
   <div class="dm-parameter-strip" aria-label="Base force and light routing">
     <Tooltip block text={triggerEffectHelp[triggerEffect] ?? 'Selects the base adaptive trigger behavior.'} side="top" align="start">
       <label>
@@ -364,4 +381,5 @@
       </label>
     </Tooltip>
   </div>
+  {/if}
 </section>

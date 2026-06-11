@@ -304,6 +304,168 @@
   font-size: 10px;
 }
 
+/* --- tuning canvas: semantic columns (Task 6; layout truth tuning-canvas-v9) -
+
+   Columns group by what is being tuned (Brake / Throttle / Road feel /
+   Lights). No wasted space: extra width grows the trigger-curve instruments
+   only; small columns cap at 320px and slider tracks at --slider-cap. Task 7
+   wraps .canvas-grid in a .work-and-rail flex container. */
+
+.canvas-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px 22px;
+  padding: 14px 16px 18px;
+  flex: 1;
+  min-width: 0;
+}
+
+.col-trigger {
+  flex: 1 1 300px;
+  min-width: var(--curve-min);
+  max-width: var(--curve-max);
+}
+
+.col-small {
+  flex: 1 1 220px;
+  min-width: 210px;
+  max-width: 320px;
+}
+
+.canvas-grid .control-slider {
+  max-width: var(--slider-cap);
+}
+
+@media (max-width: 760px) {
+  .col-trigger,
+  .col-small {
+    max-width: none;
+    flex-basis: 100%;
+  }
+}
+
+.canvas-col-body {
+  margin-top: 6px;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.canvas-hint {
+  margin: 10px 0 0;
+  font-size: 10px;
+  color: var(--ink-muted);
+}
+
+/* Legacy panel chrome neutralized inside columns — the column label carries
+   the identity, the panels become bare instruments. */
+.canvas-grid .dm-physics {
+  display: block;
+  padding: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.canvas-grid .dm-curve-stack {
+  display: block;
+}
+
+.canvas-grid .dm-curve-module {
+  grid-template-rows: auto auto auto;
+}
+
+.canvas-grid .dm-curve-frame {
+  height: 170px;
+}
+
+.canvas-grid .dm-slider-bank {
+  margin-top: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.canvas-grid .dm-channel-list {
+  overflow: visible;
+  padding: 0;
+}
+
+/* Channel strips reflow to two rows inside the narrow semantic columns:
+   toggle | name on top, fader | route below. */
+.canvas-grid .dm-channel-strip {
+  grid-template-columns: 42px minmax(0, 1fr) minmax(96px, 118px);
+  row-gap: 6px;
+}
+
+.canvas-grid .dm-channel-strip > :nth-child(2) {
+  grid-column: 2 / 4;
+}
+
+.canvas-grid .dm-channel-strip > :nth-child(3) {
+  grid-column: 1 / 3;
+  grid-row: 2;
+}
+
+.canvas-grid .dm-channel-strip > :nth-child(4) {
+  grid-column: 3 / 4;
+  grid-row: 2;
+}
+
+/* Sliders never stretch: cap the track, keep the value field beside it. */
+.canvas-grid .dm-range {
+  max-width: var(--slider-cap);
+}
+
+.canvas-grid .dm-fader {
+  max-width: calc(var(--slider-cap) + 68px); /* track cap + value field + gap */
+}
+
+.dm-effects-embedded-head {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Lights column: the RGB console rows wrap instead of demanding the wide
+   six-track grid, and the console title yields to the column label. */
+.canvas-grid .dm-rgb-console {
+  padding-top: 0;
+  box-shadow: none;
+}
+
+.canvas-grid .dm-console-title {
+  display: none;
+}
+
+.canvas-grid .dm-led-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.canvas-grid .dm-led-row > span {
+  flex: 0 0 auto;
+}
+
+.canvas-grid .dm-led-row .dm-mini-range {
+  flex: 1 1 96px;
+  max-width: var(--slider-cap);
+}
+
+/* Content parked below the grid until Tasks 8-10 re-home it. */
+.canvas-below {
+  display: grid;
+  gap: 14px;
+  padding: 0 16px 18px;
+}
+
+.canvas-parked {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-m);
+}
+
 @media (max-width: 480px) {
   .tuning-header-content {
     padding: 10px 12px 8px;
