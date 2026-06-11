@@ -64,8 +64,7 @@
   z-index: 1;
 }
 
-.dm-controller-base,
-.dm-controller-focus {
+.dm-controller-base {
   position: absolute;
   inset: 4% 4% 6%;
   width: 92%;
@@ -83,19 +82,6 @@
 
 .dm-controller-canvas:hover .dm-controller-base {
   opacity: 0.46;
-}
-
-.dm-controller-focus {
-  z-index: 3;
-  opacity: 0;
-  filter:
-    drop-shadow(0 0 6px rgba(0, 112, 204, 0.55))
-    drop-shadow(0 0 18px rgba(0, 112, 204, 0.4));
-  transition: opacity 200ms ease-out, filter 220ms ease-out;
-}
-
-.dm-controller-focus.visible {
-  opacity: 1;
 }
 
 .dm-controller-focus-card {

@@ -110,9 +110,20 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
   border-radius: var(--radius-m);
   background: var(--surface-raised);
+}
+
+/* Two-class selector to out-specify .dm-controller-glyph's `mask` shorthand
+   (which would otherwise reset mask-size back to `contain`, same as the
+   sidebar brand glyph does in shell-v2.css). */
+.dm-controller-glyph.status-controller-glyph {
+  width: 30px;
+  height: 22px;
+  /* Square SVG canvas with the artwork in a central band — zoom the mask
+     past the box so the controller renders at ~22px tall (see shell-v2.css). */
+  mask-size: 36px 36px;
+  -webkit-mask-size: 36px 36px;
 }
 
 .status-controller-main {
@@ -237,3 +248,14 @@
 .status-ok { color: var(--ok); }
 .status-warn { color: var(--warn); }
 .status-mut { color: var(--ink-muted); }
+
+/* Wide desktops: the band keeps its scale but sits centered in the viewport
+   instead of hugging the top-left corner. */
+@media (min-width: 1200px) and (min-height: 720px) {
+  .status-view {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: calc(100dvh - 130px); /* viewport minus measured app chrome */
+  }
+}

@@ -41,6 +41,8 @@ export type SavedDiffRow = {
   savedValue: string;
   currentValue: string;
   dirty: boolean;
+  /** 'color' rows carry raw hex values; the rail pairs them with a swatch. */
+  kind?: 'color';
 };
 
 /** The saved baseline: the editable slice of a controller configuration. */
@@ -135,8 +137,9 @@ const row = (
   label: string,
   savedValue: string,
   currentValue: string,
-  dirty = savedValue !== currentValue
-): SavedDiffRow => ({ id, label, savedValue, currentValue, dirty });
+  dirty = savedValue !== currentValue,
+  kind?: 'color'
+): SavedDiffRow => ({ id, label, savedValue, currentValue, dirty, kind });
 
 /** A generic per-field comparison for the deep telemetry tuning groups. */
 const tuningGroupRow = <T extends object>(
@@ -249,13 +252,17 @@ export const savedDiffRows = (
       'lightbar-color',
       'Lightbar color',
       (saved.lightbar?.color ?? DEFAULT_LIGHTBAR_COLOR).toLowerCase(),
-      draft.lightbarColor.toLowerCase()
+      draft.lightbarColor.toLowerCase(),
+      undefined,
+      'color'
     ),
     row(
       'redline-color',
       'Redline color',
       (saved.lightbar?.rpmColor ?? DEFAULT_REDLINE_COLOR).toLowerCase(),
-      draft.rpmColor.toLowerCase()
+      draft.rpmColor.toLowerCase(),
+      undefined,
+      'color'
     ),
     row(
       'left-deadzone',

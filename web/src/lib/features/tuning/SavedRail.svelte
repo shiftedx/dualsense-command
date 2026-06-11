@@ -61,19 +61,23 @@
   );
 </script>
 
+{#snippet rowValue(value: string, isColor: boolean)}
+  {#if isColor && value.startsWith('#')}<span class="saved-swatch" style:background={value}></span>{/if}{value}
+{/snippet}
+
 {#snippet diffRows()}
   {#each rows as item (item.id)}
     <div class="saved-row" class:dirty={item.dirty}>
       <span class="saved-row-label">{item.label}</span>
       <span class="saved-row-value">
         {#if item.dirty && item.savedValue !== item.currentValue}
-          <s class="saved-row-was">{item.savedValue}</s>
-          <span class="saved-row-now">→ {item.currentValue}</span>
+          <s class="saved-row-was">{@render rowValue(item.savedValue, item.kind === 'color')}</s>
+          <span class="saved-row-now">→ {@render rowValue(item.currentValue, item.kind === 'color')}</span>
         {:else if item.dirty}
           <!-- Group summaries ("2 of 5 edited") have no single saved value to strike. -->
-          <span class="saved-row-now">{item.currentValue}</span>
+          <span class="saved-row-now">{@render rowValue(item.currentValue, item.kind === 'color')}</span>
         {:else}
-          <span class="saved-row-saved">{item.savedValue}</span>
+          <span class="saved-row-saved">{@render rowValue(item.savedValue, item.kind === 'color')}</span>
         {/if}
       </span>
     </div>

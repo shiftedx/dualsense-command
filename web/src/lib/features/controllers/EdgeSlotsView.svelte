@@ -82,9 +82,13 @@
         {:else}
           <div class="edge-slot-row disabled">
             <div class="edge-slot-copy">
-              <span class="lbl">Fn Slots</span>
-              <strong>{edgeProfilesLoading ? 'Reading slots' : 'No slot data'}</strong>
-              <small>{edgeProfilesLoading ? 'controller scan' : 'unavailable'}</small>
+              <span class="lbl">Fn slots</span>
+              <strong>{edgeProfilesLoading ? 'Reading slots' : 'Nothing read yet'}</strong>
+              <small
+                >{edgeProfilesLoading
+                  ? 'checking the controller'
+                  : 'Fn slots are shortcuts stored on the controller — hold Fn and press an action button to switch. Press Read to see what each slot holds.'}</small
+              >
             </div>
           </div>
         {/if}
