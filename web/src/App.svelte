@@ -802,6 +802,18 @@
     setViewHash(view);
   };
 
+  // Cmd/Ctrl+S writes the draft into the profile when there is something to
+  // save — the same action as the rail's "Save changes". Always prevent the
+  // browser save dialog while the app has focus.
+  const handleGlobalKeydown = (event: KeyboardEvent) => {
+    if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      if (activeView === 'tuning' && profileConfigDirty && selectedActionProfile && !profileSaveBusy) {
+        void saveActiveProfile();
+      }
+    }
+  };
+
   const dismissToast = (id: number) => {
     toastMessages = toastMessages.filter((toast) => toast.id !== id);
   };
@@ -2218,6 +2230,8 @@
     resetEdgeProfiles();
   }
 </script>
+
+<svelte:window onkeydown={handleGlobalKeydown} />
 
 <div class="app-shell">
   <AppSidebar
