@@ -115,21 +115,30 @@ export function headerTitle(options: {
   return 'Everyday (no game)';
 }
 
-export type TelemetryChipState = 'fresh' | 'quiet' | null;
+export type TelemetryChipState = 'fresh' | 'quiet' | 'setup' | 'none' | null;
 
 /**
- * Telemetry chip state for the header band. Only games with telemetry
- * support that are actually running get a chip; Fresh means packets are
- * arriving, Quiet means the game is up but its data feed is silent.
+ * Telemetry chip state for the header band. The chip is the door back into
+ * the setup guide:
+ * - `fresh` (green): packets are arriving for the running game.
+ * - `quiet` (yellow): the game is up but its data feed is silent.
+ * - `setup` (accent): a telemetry game that has never verified — one-time
+ *   setup is in progress.
+ * - `none` (neutral): the selected game needs no telemetry feed at all.
  */
 export function telemetryChipState(options: {
   scope: TuningScopeKind;
   selectedGame: SupportedGame | null;
   adapterRunning: boolean;
   packetRateHz: number;
+  /** Telemetry packets have been seen for this game at least once. */
+  setupVerified: boolean;
 }): TelemetryChipState {
   if (options.scope !== 'game') return null;
   const game = options.selectedGame;
-  if (!game || !game.running || game.supportLevel !== 'telemetry') return null;
+  if (!game) return null;
+  if (game.supportLevel !== 'telemetry') return 'none';
+  if (!options.setupVerified) return 'setup';
+  if (!game.running) return null;
   return options.adapterRunning && options.packetRateHz > 0 ? 'fresh' : 'quiet';
 }
