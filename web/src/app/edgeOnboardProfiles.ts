@@ -90,6 +90,16 @@ export function edgeSlotWriteLabel(edgeProfiles: EdgeProfilesResponse | null): s
   return edgeProfiles?.supportState === 'read_write' ? 'Write' : 'Stage';
 }
 
+/**
+ * The missing-agent failure arrives as dev-voiced API text (thrown by
+ * getEdgeProfiles/writeEdgeProfile when no real agent is serving); speak
+ * product before it reaches a note or toast.
+ */
+export const friendlyEdgeSlotsError = (message: string): string =>
+  message.includes('requires the real DSCC agent')
+    ? 'Reading onboard slots needs DSCC running.'
+    : message;
+
 export function edgeProfileNameForSlot(slot: EdgeProfileSlot, profileName: string): string {
   const sourceName = profileName || 'DSCC Profile';
   return `${sourceName} ${slot.shortcut.replace('Fn + ', '')}`.trim().slice(0, 64);
