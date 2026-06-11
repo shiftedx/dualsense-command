@@ -2,7 +2,6 @@
   import GlobalFeelPanel from './GlobalFeelPanel.svelte';
   import LightbarControls from './LightbarControls.svelte';
   import TelemetryRoutingPanel from './TelemetryRoutingPanel.svelte';
-  import ProfileConsole from '../profiles/ProfileConsole.svelte';
   import type {
     AppSnapshot,
     ForzaAbsTuningConfiguration,
@@ -12,8 +11,7 @@
     ForzaEffectRoute,
     ForzaRevLimiterTuningConfiguration,
     ForzaShiftTuningConfiguration,
-    ForzaThrottleTuningConfiguration,
-    ProfileSummary
+    ForzaThrottleTuningConfiguration
   } from '../../types';
   import type { ForzaEffectMeta, LightbarColorTarget } from './hapticsModel';
 
@@ -161,37 +159,6 @@
   export let setLightbarEnabled: (enabled: boolean) => void = noop as (enabled: boolean) => void;
   export let previewLightbar: () => Promise<void> | void = noop;
   export let previewRpmColor: () => Promise<void> | void = noop;
-
-  export let profileContextProfiles: ProfileSummary[] = [];
-  export let activeProfileId = '';
-  export let selectedOverrideProfileId = '';
-  export let selectedActionProfile: ProfileSummary | null | undefined = null;
-  export let selectedGameName = 'game';
-  export let canRenameSelectedProfile = false;
-  export let canDeleteSelectedProfile = false;
-  export let profileConfigDirty = false;
-  export let profileSaveBusy = false;
-  export let profileFileBusy = false;
-  export let profileSaveAsBusy = false;
-  export let profileRenameBusy = false;
-  export let saveAsProfileOpen = false;
-  export let saveAsProfileName = '';
-  export let renameProfileId = '';
-  export let renameProfileName = '';
-  export let onSelectProfile: (profileId: string) => void | Promise<void> = noop as (profileId: string) => void;
-  export let onImportFile: (event: Event) => void | Promise<void> = noop as (event: Event) => void;
-  export let onExportProfile: () => void | Promise<void> = noop;
-  export let onBeginSaveAs: () => void = noop;
-  export let onCancelSaveAs: () => void = noop;
-  export let onSubmitSaveAs: () => void | Promise<void> = noop;
-  export let onSaveAsKeydown: (event: KeyboardEvent) => void = noop as (event: KeyboardEvent) => void;
-  export let onBeginRename: () => void = noop;
-  export let onCancelRename: () => void = noop;
-  export let onSubmitRename: () => void | Promise<void> = noop;
-  export let onRenameKeydown: (event: KeyboardEvent) => void = noop as (event: KeyboardEvent) => void;
-  export let onDeleteProfile: (profile: ProfileSummary) => void | Promise<void> = noop as (profile: ProfileSummary) => void;
-  export let onRestoreDefaults: () => void | Promise<void> = noop;
-  export let onSaveProfile: () => void | Promise<void> = noop;
 </script>
 
 <aside
@@ -260,38 +227,5 @@
     {setLightbarEnabled}
     {previewLightbar}
     {previewRpmColor}
-  />
-
-  <ProfileConsole
-    {profileContextProfiles}
-    {activeProfileId}
-    {selectedOverrideProfileId}
-    {selectedActionProfile}
-    {selectedGameName}
-    {canRenameSelectedProfile}
-    {canDeleteSelectedProfile}
-    {profileConfigDirty}
-    {profileSaveBusy}
-    {profileFileBusy}
-    {profileSaveAsBusy}
-    {profileRenameBusy}
-    {saveAsProfileOpen}
-    bind:saveAsProfileName
-    {renameProfileId}
-    bind:renameProfileName
-    onSelectProfile={onSelectProfile}
-    onImportFile={onImportFile}
-    onExportProfile={onExportProfile}
-    onBeginSaveAs={onBeginSaveAs}
-    onCancelSaveAs={onCancelSaveAs}
-    onSubmitSaveAs={onSubmitSaveAs}
-    onSaveAsKeydown={onSaveAsKeydown}
-    onBeginRename={onBeginRename}
-    onCancelRename={onCancelRename}
-    onSubmitRename={onSubmitRename}
-    onRenameKeydown={onRenameKeydown}
-    onDeleteProfile={onDeleteProfile}
-    onRestoreDefaults={onRestoreDefaults}
-    onSaveProfile={onSaveProfile}
   />
 </aside>

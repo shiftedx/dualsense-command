@@ -119,10 +119,14 @@ async function main() {
 
       for (const check of routeChecks) {
         if (check.hash === '#/advanced/button-mapping') {
-          // Button mapping is guarded behind a game scope; pick the mock game
-          // (option 0 is the Global Profile) so the route does not bounce.
-          await page.selectOption('select[aria-label="Tuning scope"]', { index: 1 });
+          // Button mapping is guarded behind a game scope; pick the mock
+          // running game from the Tuning header's game dropdown so the route
+          // does not bounce.
+          await page.goto(`${baseUrl}/#/tuning`, { waitUntil: 'domcontentloaded' });
           await page.waitForTimeout(300);
+          await page.click('.tuning-header-game');
+          await page.click('.tuning-menu .tuning-menu-item:has(.tuning-running-dot)');
+          await page.waitForTimeout(500);
         }
         await page.goto(`${baseUrl}/${check.hash}`, { waitUntil: 'domcontentloaded' });
         await page.waitForTimeout(300);
@@ -132,8 +136,8 @@ async function main() {
         if (!check.pattern.test(snapshot.text)) failures.push(`${label}: expected route text was missing`);
         if (!snapshot.canReachBottom) failures.push(`${label}: page content could not scroll to the bottom`);
         if (snapshot.scrollWidth > snapshot.clientWidth + 2) failures.push(`${label}: horizontal overflow ${snapshot.scrollWidth - snapshot.clientWidth}px`);
-        if (check.hash === '#/advanced/button-mapping' && !/Default mirror only|No writable|read-only|Global Profile/i.test(snapshot.text)) {
-          failures.push(`${label}: read-only/default-mirror mapping copy was missing`);
+        if (check.hash === '#/advanced/button-mapping' && !/Default mirror only|No writable|read-only|inputs mapped/i.test(snapshot.text)) {
+          failures.push(`${label}: mapping session copy (read-only or live layout) was missing`);
         }
       }
 
