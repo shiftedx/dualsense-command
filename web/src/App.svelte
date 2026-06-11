@@ -258,6 +258,7 @@
   let applyMessage = '';
   let appSettingsMessage = '';
   let appSettingsBusy = false;
+  let toolbarOpen = false;
   let supportPanelOpen = false;
   let supportBundleBusy: SupportBundleBusy = '';
   let supportBundleMessage = '';
@@ -2270,59 +2271,70 @@
     <!-- Utility row: cross-view context that has no single page home — the
          target controller for writes, the web UI bind address, the Forza glyph
          override, and a compact system readout. -->
-    <section class="app-toolbar" aria-label="Controller and display options">
-      <label class="app-toolbar-field">
-        <span>Target Controller</span>
-        <select
-          aria-label="Target controller"
-          disabled={!connectedControllerIds.length}
-          value={profileTargetsAllConnected ? '__all__' : profileTargetControllerIds[0] ?? controller?.id ?? ''}
-          onchange={(event) => {
-            const picked = event.currentTarget.value;
-            if (picked === '__all__') pickAllControllers();
-            else if (picked) pickControllerTarget(picked);
-          }}
-        >
-          {#if connectedControllerIds.length > 1}
-            <option value="__all__">All Connected</option>
-          {/if}
-          {#each connectedControllers as item (item.id)}
-            <option value={item.id}>{item.name || controllerModelText(item)}</option>
-          {/each}
-        </select>
-      </label>
-      <label class="app-toolbar-field">
-        <span>Web UI Location</span>
-        <select
-          aria-label="Web UI location"
-          disabled={appSettingsBusy}
-          title={lanRestartRequired ? `restart -> ${appSettings?.desiredBindAddress}` : status?.bindAddress}
-          value={listenOnAllInterfaces ? 'lan' : 'local'}
-          onchange={(event) => void updateLanAccess(event.currentTarget.value === 'lan')}
-        >
-          <option value="local">Local Only</option>
-          <option value="lan">LAN Access</option>
-        </select>
-        <small>{lanRestartRequired ? `restart -> ${appSettings?.desiredBindAddress}` : status?.bindAddress}</small>
-      </label>
+    <section class="app-toolbar" class:open={toolbarOpen} aria-label="Controller and display options">
       <button
-        class="app-toolbar-toggle"
-        class:active={glyphOverrideEnabled}
+        class="app-toolbar-disclosure"
         type="button"
-        disabled={appSettingsBusy}
-        aria-pressed={glyphOverrideEnabled}
-        title={forzaGlyphs?.lastStatus ?? glyphInstallPath}
-        onclick={() => void updateForzaGlyphOverride()}
+        aria-expanded={toolbarOpen}
+        onclick={() => {
+          toolbarOpen = !toolbarOpen;
+        }}
       >
-        Controller Glyphs: {glyphOverrideEnabled ? 'PlayStation Icons' : 'Game Default'}
+        Controller &amp; display options
       </button>
-      <div class="app-toolbar-spacer"></div>
-      <div
-        class="app-toolbar-readout"
-        title={selectedTuningScope === 'global' ? systemReadoutDetail : adapter?.setupHint ?? telemetryRateDetail}
-      >
-        <span>{systemReadoutTitle}</span>
-        <p><strong>{systemReadoutValue}</strong><small>{systemReadoutDetail}</small></p>
+      <div class="app-toolbar-items">
+        <label class="app-toolbar-field">
+          <span>Target Controller</span>
+          <select
+            aria-label="Target controller"
+            disabled={!connectedControllerIds.length}
+            value={profileTargetsAllConnected ? '__all__' : profileTargetControllerIds[0] ?? controller?.id ?? ''}
+            onchange={(event) => {
+              const picked = event.currentTarget.value;
+              if (picked === '__all__') pickAllControllers();
+              else if (picked) pickControllerTarget(picked);
+            }}
+          >
+            {#if connectedControllerIds.length > 1}
+              <option value="__all__">All Connected</option>
+            {/if}
+            {#each connectedControllers as item (item.id)}
+              <option value={item.id}>{item.name || controllerModelText(item)}</option>
+            {/each}
+          </select>
+        </label>
+        <label class="app-toolbar-field">
+          <span>Web UI Location</span>
+          <select
+            aria-label="Web UI location"
+            disabled={appSettingsBusy}
+            title={lanRestartRequired ? `restart -> ${appSettings?.desiredBindAddress}` : status?.bindAddress}
+            value={listenOnAllInterfaces ? 'lan' : 'local'}
+            onchange={(event) => void updateLanAccess(event.currentTarget.value === 'lan')}
+          >
+            <option value="local">Local Only</option>
+            <option value="lan">LAN Access</option>
+          </select>
+        </label>
+        <button
+          class="app-toolbar-toggle"
+          class:active={glyphOverrideEnabled}
+          type="button"
+          disabled={appSettingsBusy}
+          aria-pressed={glyphOverrideEnabled}
+          title={forzaGlyphs?.lastStatus ?? glyphInstallPath}
+          onclick={() => void updateForzaGlyphOverride()}
+        >
+          Controller Glyphs: {glyphOverrideEnabled ? 'PlayStation Icons' : 'Game Default'}
+        </button>
+        <div class="app-toolbar-spacer"></div>
+        <div
+          class="app-toolbar-readout"
+          title={selectedTuningScope === 'global' ? systemReadoutDetail : adapter?.setupHint ?? telemetryRateDetail}
+        >
+          <span>{systemReadoutTitle}</span>
+          <p><strong>{systemReadoutValue}</strong><small>{systemReadoutDetail}</small></p>
+        </div>
       </div>
     </section>
 
