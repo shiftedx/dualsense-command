@@ -465,8 +465,11 @@
   $: telemetry = snapshot?.telemetry ?? [];
   $: telemetryByName = new Map(telemetry.map((item) => [item.name, item]));
   $: effectState = snapshot?.effectState;
-  $: l2LivePress = controllerInputFresh ? l2ControllerPress : selectedTuningScope === 'global' ? 0 : telemetryUnitValue('input.brake');
-  $: r2LivePress = controllerInputFresh ? r2ControllerPress : selectedTuningScope === 'global' ? 0 : telemetryUnitValue('input.throttle');
+  // Stale telemetry must read as "no press", not as the last frozen value:
+  // telemetryUnitValue keeps returning the last packet's value, so without the
+  // freshness gate the readout freezes non-zero when packets stop.
+  $: l2LivePress = controllerInputFresh ? l2ControllerPress : selectedTuningScope === 'global' || !selectedGameTelemetryFresh ? 0 : telemetryUnitValue('input.brake');
+  $: r2LivePress = controllerInputFresh ? r2ControllerPress : selectedTuningScope === 'global' || !selectedGameTelemetryFresh ? 0 : telemetryUnitValue('input.throttle');
   $: triggerCurveDisplayMode = selectedTuningScope === 'game' && usesForzaRuntimeProfile(selectedTuningGame) ? 'forza' : 'base';
   $: appSettings = snapshot?.appSettings;
   $: forzaGlyphs = appSettings?.settings.forzaPlaystationGlyphs;
