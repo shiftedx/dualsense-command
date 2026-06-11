@@ -42,7 +42,7 @@
     onRenameKeydown?: (event: KeyboardEvent) => void;
   } = $props();
 
-  type Finding = { text: string; detail?: string };
+  type Finding = { id: string; text: string; detail?: string };
 
   const connectedControllers = $derived(controllers.filter((item) => item.connected));
   const hasController = $derived(connectedControllers.length > 0);
@@ -59,6 +59,7 @@
     for (const item of controllers) {
       if (!item.connected) {
         list.push({
+          id: `controller-disconnected-${item.id}`,
           text: `${item.name || item.family} is disconnected.`,
           detail: 'Reconnect it and its tuned feel comes right back.'
         });
@@ -66,13 +67,15 @@
     }
     if (telemetryExpected && !telemetryFresh) {
       list.push({
+        id: 'telemetry-quiet',
         text: `${gameName} is running, but its telemetry has gone quiet.`,
-        detail: adapter?.setupHint || 'Check the game’s Data Out setting if the feel stops.'
+        detail: adapter?.setupHint || 'Check the game\'s Data Out setting if the feel stops.'
       });
     }
     for (const item of adapters) {
       if (item.state === 'faulted') {
         list.push({
+          id: `adapter-faulted-${item.id}`,
           text: `${item.name} is blocked — another app may be using its port.`,
           detail: item.setupHint || undefined
         });
@@ -167,9 +170,9 @@
                 {/if}
                 <div class="status-controller-line">
                   {#if item.connected}
-                    <span class="status-ok">&#9679; Connected</span>
+                    <span class="status-ok"><span aria-hidden="true">&#9679;</span> Connected</span>
                   {:else}
-                    <span class="status-warn">&#9679; Disconnected</span>
+                    <span class="status-warn"><span aria-hidden="true">&#9679;</span> Disconnected</span>
                   {/if}
                   {#if connectionLine(item)}
                     &middot; {connectionLine(item)}
@@ -199,7 +202,7 @@
         <div class="status-row">
           <span>Game detected</span>
           {#if gameRunning}
-            <span>{gameName} <span class="status-ok">&#9679;</span></span>
+            <span>{gameName} <span class="status-ok" aria-hidden="true">&#9679;</span></span>
           {:else if gameName}
             <span>{gameName} <span class="status-mut">(installed, not running)</span></span>
           {:else}
@@ -239,9 +242,9 @@
       <div class="lbl">Needs attention</div>
       <div class="status-surf">
         {#if findings.length}
-          {#each findings as finding (finding.text)}
+          {#each findings as finding (finding.id)}
             <div class="status-finding">
-              <span class="status-warn">&#9679;</span> {finding.text}
+              <span class="status-warn" aria-hidden="true">&#9679;</span> {finding.text}
               {#if finding.detail}
                 <div class="status-finding-detail">{finding.detail}</div>
               {/if}
