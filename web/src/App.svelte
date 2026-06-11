@@ -85,6 +85,8 @@
   import TelemetryRoutingPanel from './lib/features/haptics/TelemetryRoutingPanel.svelte';
   import TriggerCurvesPanel from './lib/features/haptics/TriggerCurvesPanel.svelte';
   import TuningCanvas from './lib/features/tuning/TuningCanvas.svelte';
+  import SavedRail from './lib/features/tuning/SavedRail.svelte';
+  import { savedDiffRows, unsavedChangeCount } from './lib/features/tuning/savedDiff';
   import {
     clampUnit,
     defaultTriggerCurve,
@@ -264,6 +266,9 @@
   let edgeProfilesError = '';
   let inputBridgeBusy: 'mode' | 'start' | 'stop' | '' = '';
   let profileSaveBaselineSignature = '';
+  // The saved baseline retained as a config object so the saved rail can diff
+  // the working draft against what the profile actually has on disk.
+  let profileSaveBaselineConfig: EditableControllerConfig | null = null;
   let profileConfigDirty = false;
   let effectActivityUntil: Record<string, number> = {};
   let partialErrorsDismissed = false;
@@ -996,6 +1001,87 @@
     Boolean(currentControllerConfig && profileSaveBaselineSignature) &&
     profileConfigSignature(buildControllerConfig()) !== profileSaveBaselineSignature;
 
+  // Saved rail diff (Task 7). The object literal mirrors
+  // currentProfileDraftValues() but names every draft variable directly so
+  // Svelte re-derives the snapshot the moment any tunable value moves (a
+  // plain function call would hide the dependencies from the compiler).
+  $: profileDraftSnapshot = {
+    l2From,
+    l2To,
+    r2From,
+    r2To,
+    l2Curve,
+    r2Curve,
+    l2CurvePoints,
+    r2CurvePoints,
+    triggerEffect,
+    triggerIntensity,
+    vibrationIntensity,
+    vibrationMode,
+    lightbarEnabled,
+    lightbarColor,
+    rpmColor,
+    lightbarBrightness,
+    forzaBodyRumbleMode: forzaTuning.bodyRumbleMode,
+    forzaEffects: forzaTuning.effects,
+    forzaBrakeTuning: forzaTuning.brake,
+    forzaAbsTuning: forzaTuning.abs,
+    forzaThrottleTuning: forzaTuning.throttle,
+    forzaShiftTuning: forzaTuning.shift,
+    forzaRevLimiterTuning: forzaTuning.revLimiter,
+    leftStickDeadzone,
+    rightStickDeadzone
+  };
+  $: savedRailRows = savedDiffRows(profileSaveBaselineConfig, profileDraftSnapshot, {
+    includeForza: selectedTuningScope === 'game',
+    intensityPercent: forzaIntensityPercent
+  });
+  $: unsavedCount = unsavedChangeCount(savedRailRows);
+  $: savedRailProfileName =
+    profiles.find((profile) => profile.id === (selectedOverrideProfileId || activeProfileId))?.name ??
+    'this profile';
+
+  // Discard: put the draft back to the saved baseline. The live controller
+  // sync then pushes the restored values to hardware; the baseline itself is
+  // untouched, so the dirty flag and rail diff clear together.
+  const discardDraftChanges = () => {
+    if (!profileSaveBaselineConfig) return;
+    applyEditableConfig(profileSaveBaselineConfig);
+    scheduleBaseFeelTestRefresh();
+    scheduleLiveControllerConfigSync();
+    setApplyMessage('Unsaved changes discarded', 'info');
+  };
+
+  // Saved-curve ghosts: dashed echo of the saved curve in each editor while
+  // the draft's shape differs from the saved one.
+  const savedCurveShapePath = (
+    side: TriggerSide,
+    saved: EditableControllerConfig | null,
+    displayMode: TriggerCurveDisplayMode
+  ): string | null => {
+    if (!saved) return null;
+    return curveShapeViewFor(
+      triggerCurveEditorContext({
+        side,
+        from: side === 'l2' ? saved.trigger.l2From : saved.trigger.r2From,
+        to: side === 'l2' ? saved.trigger.l2To : saved.trigger.r2To,
+        curve: side === 'l2' ? saved.trigger.l2Curve : saved.trigger.r2Curve,
+        points: side === 'l2' ? saved.trigger.l2CurvePoints : saved.trigger.r2CurvePoints,
+        triggerEffect: saved.trigger.effect,
+        triggerIntensity: saved.trigger.intensity,
+        displayMode,
+        forzaEffects: saved.forza?.effects ?? [],
+        forzaBrakeTuning: normalizeForzaBrakeTuning(saved.forza?.brake),
+        forzaThrottleTuning: normalizeForzaThrottleTuning(saved.forza?.throttle)
+      })
+    ).path;
+  };
+
+  $: l2SavedShapePath = savedCurveShapePath('l2', profileSaveBaselineConfig, triggerCurveDisplayMode);
+  $: r2SavedShapePath = savedCurveShapePath('r2', profileSaveBaselineConfig, triggerCurveDisplayMode);
+  $: l2SavedCurvePath = l2SavedShapePath && l2SavedShapePath !== l2CurveShape.path ? l2SavedShapePath : null;
+  $: r2SavedCurvePath = r2SavedShapePath && r2SavedShapePath !== r2CurveShape.path ? r2SavedShapePath : null;
+
   const forzaEffectState = createForzaEffectState({
     store: {
       get: () => forzaTuning,
@@ -1190,10 +1276,18 @@
     rightStickDeadzone = normalizeStickDeadzone(config.sticks?.rightDeadzone ?? 0);
     forzaTuning = forzaTuningFromConfig(config.forza);
   };
+  // Capture the saved baseline as both a signature (cheap dirty check) and a
+  // config object (saved rail diff + discard target).
+  const captureProfileSaveBaseline = () => {
+    const config = buildControllerConfig();
+    profileSaveBaselineSignature = profileConfigSignature(config);
+    profileSaveBaselineConfig = config;
+  };
+
   const applyControllerConfig = (config: ControllerConfiguration, updateProfileBaseline = true) => {
     currentControllerConfig = config;
     applyEditableConfig(config);
-    if (updateProfileBaseline) profileSaveBaselineSignature = profileConfigSignature(buildControllerConfig());
+    if (updateProfileBaseline) captureProfileSaveBaseline();
   };
 
   const loadControllerConfig = async (controllerId: string) => {
@@ -1201,6 +1295,7 @@
     configLoadError = '';
     currentControllerConfig = null;
     profileSaveBaselineSignature = '';
+    profileSaveBaselineConfig = null;
     try {
       const config = await getControllerConfig(controllerId);
       if (config.controllerId !== controllerId || selectedControllerId !== controllerId) return;
@@ -1313,7 +1408,7 @@
     }
 
     applyEditableConfig(config);
-    profileSaveBaselineSignature = profileConfigSignature(buildControllerConfig());
+    captureProfileSaveBaseline();
   };
 
   const applyTriggerConfig = (trigger: EditableControllerConfig['trigger']) => {
@@ -1686,6 +1781,8 @@
     profileConfigSignature: (config) => profileConfigSignature(config),
     setProfileSaveBaseline: (signature) => {
       profileSaveBaselineSignature = signature;
+      // Saving makes the current draft the new saved truth for the rail diff.
+      profileSaveBaselineConfig = buildControllerConfig();
     },
     saveControllerConfigForProfileTargets,
     setProfileOverrideForTargets: (profileId, gameId) => setProfileOverrideForTargets(profileId, gameId),
@@ -2160,6 +2257,7 @@
         {canRenameSelectedProfile}
         {canDeleteSelectedProfile}
         {profileConfigDirty}
+        unsavedChangeCount={unsavedCount}
         {profileSaveBusy}
         {profileFileBusy}
         {profileSaveAsBusy}
@@ -2246,6 +2344,8 @@
           {r2CurveLive}
           {curveHover}
           {curveDragPoint}
+          {l2SavedCurvePath}
+          {r2SavedCurvePath}
           {l2LivePress}
           {r2LivePress}
           {l2From}
@@ -2330,6 +2430,21 @@
           {#if selectedTuningScope === 'game'}
             {@render forzaEffectGroup(lightEffectMetas)}
           {/if}
+        </svelte:fragment>
+        <svelte:fragment slot="rail">
+          <SavedRail
+            profileName={savedRailProfileName}
+            rows={savedRailRows}
+            dirtyCount={unsavedCount}
+            previewActive={baseFeelTestActive}
+            previewBusy={baseFeelTestBusy}
+            previewDisabled={!snapshot}
+            saveBusy={profileSaveBusy}
+            canSave={Boolean(selectedActionProfile) && profileConfigDirty}
+            onPreviewFeel={toggleBaseFeelTest}
+            onSave={saveActiveProfile}
+            onDiscard={discardDraftChanges}
+          />
         </svelte:fragment>
         <svelte:fragment slot="below">
           <!-- Parked until Tasks 8-10 re-home it; nothing previously rendered

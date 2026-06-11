@@ -71,6 +71,7 @@
 
 .dm-trigger-curve .curve-grid,
 .dm-trigger-curve .curve-linear,
+.dm-trigger-curve .curve-saved-ghost,
 .dm-trigger-curve .curve-force,
 .dm-trigger-curve .curve-range-edge,
 .dm-trigger-curve .curve-live,
@@ -98,6 +99,16 @@
   stroke: rgba(0, 112, 204, 0.45);
   stroke-dasharray: 2 2;
   stroke-width: 0.85;
+}
+
+/* Saved-profile ghost (Task 7): dashed echo of the saved curve while the
+   working draft drifts; sits behind the live force curve. */
+.dm-trigger-curve .curve-saved-ghost {
+  stroke: rgba(214, 214, 220, 0.55);
+  stroke-dasharray: 5 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.4;
 }
 
 .dm-trigger-curve .curve-force {
