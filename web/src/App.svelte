@@ -1974,15 +1974,10 @@
     if (!refreshOnly) baseFeelTestBusy = true;
     try {
       if (!refreshOnly) await pollTriggerInput();
-      const result = await runEffectTest(baseFeelTestRequest(), controller?.id);
-
-      snapshot = {
-        ...snapshot,
-        effectState: {
-          ...snapshot.effectState,
-          output: result.output
-        }
-      };
+      // The test response's output frame has no UI consumers; reassigning the
+      // whole snapshot here invalidated every snapshot-derived statement per
+      // 35ms refresh tick. The 1Hz snapshot stream keeps effectState current.
+      await runEffectTest(baseFeelTestRequest(), controller?.id);
       baseFeelTestActive = true;
       startTriggerInputPolling();
       armBaseFeelTestTimer();
@@ -2005,7 +2000,8 @@
     baseFeelTestBusy = true;
     baseFeelTestRefreshTask.clear();
     try {
-      const result = await runEffectTest(
+      // Output frame has no UI consumers; the 1Hz snapshot stream keeps state current.
+      await runEffectTest(
         {
           target: 'base_feel',
           mode: 'off',
@@ -2014,13 +2010,6 @@
         },
         controller?.id
       );
-      snapshot = {
-        ...snapshot,
-        effectState: {
-          ...snapshot.effectState,
-          output: result.output
-        }
-      };
       setApplyMessage('Base feel test stopped');
     } catch (caught) {
       setApplyMessage(caught instanceof Error ? caught.message : 'Unable to stop Base feel test');
@@ -2047,7 +2036,8 @@
     }
 
     try {
-      const result = await runEffectTest(
+      // Output frame has no UI consumers; the 1Hz snapshot stream keeps state current.
+      await runEffectTest(
         {
           target: 'rumble',
           mode: vibrationModeRequest(vibrationMode),
@@ -2056,13 +2046,6 @@
         },
         controller?.id
       );
-      snapshot = {
-        ...snapshot,
-        effectState: {
-          ...snapshot.effectState,
-          output: result.output
-        }
-      };
       setApplyMessage(`${vibrationMode} body haptics previewed`);
     } catch (caught) {
       setApplyMessage(caught instanceof Error ? caught.message : 'Body haptics preview failed');
@@ -2076,7 +2059,8 @@
 
     const intensity = lightbarEnabled ? lightbarBrightness : 0;
     try {
-      const result = await runEffectTest(
+      // Output frame has no UI consumers; the 1Hz snapshot stream keeps state current.
+      await runEffectTest(
         {
           target: 'lightbar',
           mode: color,
@@ -2085,14 +2069,6 @@
         },
         controller?.id
       );
-
-      snapshot = {
-        ...snapshot,
-        effectState: {
-          ...snapshot.effectState,
-          output: result.output
-        }
-      };
     } catch (caught) {
       setApplyMessage(caught instanceof Error ? caught.message : `${label} preview failed`);
       return;
