@@ -1,5 +1,5 @@
 import type { ForzaAbsMode, ForzaAbsSlipSource, ForzaBodyRumbleMode, ForzaEffectRoute } from '../../types';
-import type { ForzaEffectMeta } from './hapticsModel';
+import type { ForzaEffectMeta, TuningColumnId } from './hapticsModel';
 export const forzaRoutes: Array<{ value: ForzaEffectRoute; label: string }> = [
     { value: 'body_both', label: 'Both grips' },
     { value: 'body_left', label: 'Left grip' },
@@ -155,6 +155,7 @@ export const forzaAbsSlipSourceOptions: Array<{ value: ForzaAbsSlipSource; label
 export const forzaEffectMetas: ForzaEffectMeta[] = [
     {
       id: 'brake_resistance',
+      column: 'brake',
       label: 'Brake pressure',
       signal: 'input.brake',
       group: 'Trigger',
@@ -164,6 +165,7 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
     },
     {
       id: 'abs_slip_pulse',
+      column: 'brake',
       label: 'ABS pulse',
       signal: 'wheel.slip.front_max',
       group: 'Trigger',
@@ -173,6 +175,7 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
     },
     {
       id: 'handbrake_wall',
+      column: 'brake',
       label: 'Handbrake wall',
       signal: 'input.handbrake',
       group: 'Trigger',
@@ -182,6 +185,7 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
     },
     {
       id: 'throttle_resistance',
+      column: 'throttle',
       label: 'Throttle load',
       signal: 'input.throttle',
       group: 'Trigger',
@@ -191,6 +195,7 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
     },
     {
       id: 'gear_shift_thump',
+      column: 'throttle',
       label: 'Gear-shift kick',
       signal: 'drivetrain.shift_pulse',
       group: 'Cue',
@@ -200,6 +205,7 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
     },
     {
       id: 'rev_limiter_buzz',
+      column: 'throttle',
       label: 'Rev-limiter buzz',
       signal: 'vehicle.rpm_ratio',
       group: 'Cue',
@@ -254,6 +260,7 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
     },
     {
       id: 'rpm_leds',
+      column: 'lights',
       label: 'Redline ramp',
       signal: 'vehicle.rpm_ratio',
       group: 'Light',
@@ -264,20 +271,11 @@ export const forzaEffectMetas: ForzaEffectMeta[] = [
   ];
 
 // Semantic tuning columns (Task 6): effects group by what is being tuned —
-// brake, throttle, road feel, or lights — never by control type. Effects
-// without an explicit column land in Road feel; the canvas teaches "More
-// effects appear here for games that send them."
-export type TuningColumnId = 'brake' | 'throttle' | 'road' | 'lights';
-
-const tuningColumnByEffectId: Record<string, TuningColumnId> = {
-  brake_resistance: 'brake',
-  abs_slip_pulse: 'brake',
-  handbrake_wall: 'brake',
-  throttle_resistance: 'throttle',
-  gear_shift_thump: 'throttle',
-  rev_limiter_buzz: 'throttle',
-  rpm_leds: 'lights'
-};
+// brake, throttle, road feel, or lights — never by control type. Each meta
+// carries its own compiler-checked `column`; effects without an explicit
+// column land in Road feel (Lights for Light-group effects); the canvas
+// teaches "More effects appear here for games that send them."
+export type { TuningColumnId } from './hapticsModel';
 
 export const tuningColumnForEffect = (meta: ForzaEffectMeta): TuningColumnId =>
-  tuningColumnByEffectId[meta.id] ?? (meta.group === 'Light' ? 'lights' : 'road');
+  meta.column ?? (meta.group === 'Light' ? 'lights' : 'road');
