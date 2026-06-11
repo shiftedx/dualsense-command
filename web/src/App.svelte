@@ -1538,13 +1538,18 @@
     lightbarColor,
     rpmColor,
     lightbarBrightness,
-    forzaBodyRumbleMode,
-    forzaEffects,
-    forzaBrakeTuning,
-    forzaAbsTuning,
-    forzaThrottleTuning,
-    forzaShiftTuning,
-    forzaRevLimiterTuning,
+    // Read forzaTuning directly, not the `$:` aliases (forzaEffects et al.):
+    // captureProfileSaveBaseline() runs synchronously right after
+    // applyEditableConfig() reassigns forzaTuning, before Svelte re-runs the
+    // reactive aliases — reading the aliases here baselines stale values and
+    // marks a freshly loaded profile dirty.
+    forzaBodyRumbleMode: forzaTuning.bodyRumbleMode,
+    forzaEffects: forzaTuning.effects,
+    forzaBrakeTuning: forzaTuning.brake,
+    forzaAbsTuning: forzaTuning.abs,
+    forzaThrottleTuning: forzaTuning.throttle,
+    forzaShiftTuning: forzaTuning.shift,
+    forzaRevLimiterTuning: forzaTuning.revLimiter,
     leftStickDeadzone,
     rightStickDeadzone
   });
