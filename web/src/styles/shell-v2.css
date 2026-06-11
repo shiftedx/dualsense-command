@@ -2,7 +2,9 @@
 
 /* The document scrolls again under the v2 shell; base.css pinned it for the old
    HUD shell, which scrolled inside .ops-shell. Delete the base.css rules in the
-   cleanup task and fold these in. */
+   cleanup task and fold these in. ALSO: responsive.css (@max-width: 1180px) sets
+   body { overflow: auto } and .ops-shell rules that override document scroll —
+   fold those into the responsive section here. */
 html,
 body,
 #app {
@@ -189,19 +191,6 @@ html {
   flex: 1;
 }
 
-/* TEMPORARY carry-over from shell.css (still used by legacy feature views);
-   delete with the views in the cleanup task. */
-.dm-controller-glyph {
-  width: 42px;
-  height: 42px;
-  flex: 0 0 auto;
-  color: var(--ink);
-  opacity: 0.82;
-  background: currentColor;
-  mask: url("/dualsense-controller.svg") center / contain no-repeat;
-  -webkit-mask: url("/dualsense-controller.svg") center / contain no-repeat;
-}
-
 .dm-battery-pill {
   display: inline-flex;
   align-items: center;
@@ -226,6 +215,12 @@ html {
 
 .dm-battery-fill {
   fill: var(--ink);
+}
+
+/* Prevent scroll bleed behind fixed overlays; the main document scrolls under
+   v2 shell, so fixed panels must contain their scroll momentum. */
+.dm-onboarding {
+  overscroll-behavior: contain;
 }
 
 @media (max-width: 760px) {
