@@ -20,7 +20,7 @@ const routeChecks = [
   { hash: '#/advanced/button-mapping', pattern: /Button Mapping|Default mirror/i }
 ];
 // Old routes keep working forever; each lands on the new home for its content.
-const legacyRedirectChecks = [{ from: '#/games', to: '#/tuning' }];
+const retiredRouteRedirectChecks = [{ from: '#/games', to: '#/tuning' }];
 const viewports = [
   { width: 1366, height: 768 },
   { width: 1440, height: 900 },
@@ -141,7 +141,7 @@ async function main() {
         }
       }
 
-      for (const redirect of legacyRedirectChecks) {
+      for (const redirect of retiredRouteRedirectChecks) {
         await page.goto(`${baseUrl}/${redirect.from}`, { waitUntil: 'domcontentloaded' });
         await page.waitForTimeout(300);
         const finalHash = await page.evaluate(() => location.hash);
