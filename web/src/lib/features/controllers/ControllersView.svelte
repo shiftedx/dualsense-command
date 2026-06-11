@@ -346,12 +346,6 @@
     return value ? yes : no;
   }
 
-  function hasPowerMetrics(item: ControllerStatus | undefined) {
-    const diagnostics = item?.powerDiagnostics;
-    if (!diagnostics) return false;
-    return Object.values(diagnostics).some((value) => value !== null && value !== undefined);
-  }
-
   function batteryFriendlySuggestions(
     item: ControllerStatus | undefined,
     config: ControllerConfiguration | null

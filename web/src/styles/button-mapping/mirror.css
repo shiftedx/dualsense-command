@@ -159,7 +159,7 @@
   min-width: 20px;
   height: 20px;
   color: #FFFFFF;
-  font-family: "JetBrains Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 900;
 }
