@@ -1,5 +1,9 @@
 import type { ForzaEffectRoute, TriggerCurvePoint } from '../../types';
 
+// Semantic tuning columns (Task 6): effects group by what is being tuned —
+// brake, throttle, road feel, or lights — never by control type.
+export type TuningColumnId = 'brake' | 'throttle' | 'road' | 'lights';
+
 export type ForzaEffectMeta = {
   id: string;
   label: string;
@@ -8,6 +12,8 @@ export type ForzaEffectMeta = {
   defaultIntensity: number;
   defaultRoute: ForzaEffectRoute;
   help: string;
+  /** Tuning canvas column. Omitted: Light-group effects land in Lights, everything else in Road feel. */
+  column?: TuningColumnId;
 };
 
 export type LightbarColorTarget = 'lightbar' | 'rpm';
