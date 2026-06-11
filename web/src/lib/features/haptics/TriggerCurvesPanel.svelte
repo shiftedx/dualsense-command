@@ -50,7 +50,7 @@
 
   // Semantic-column rendering (Task 6): 'L2'/'R2' renders a single trigger's
   // curve editor so each tuning column owns its own instrument; 'both' keeps
-  // the legacy two-curve block. showCurves/showControls let the canvas park
+  // the original two-curve block. showCurves/showControls let the canvas park
   // the shared head + base-feel strip separately without losing them.
   export let trigger: 'L2' | 'R2' | 'both' = 'both';
   export let showCurves = true;

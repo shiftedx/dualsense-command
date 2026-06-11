@@ -41,7 +41,7 @@
   // embedded instance per column with a filtered `forzaEffectMetas` subset
   // (showChrome=false), and parks the stream head + body source chrome below
   // the grid in a chrome-only instance (showEffects=false). Defaults keep the
-  // legacy all-in-one panel behavior.
+  // original all-in-one panel behavior.
   export let showChrome = true;
   export let showEffects = true;
 
