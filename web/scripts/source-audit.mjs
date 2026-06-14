@@ -79,6 +79,40 @@ const rules = [
 ];
 
 const failures = [];
+const releaseWorkflowPath = path.join(repoRoot, '.github/workflows/release.yml');
+const releaseWorkflowText = readFileSync(releaseWorkflowPath, 'utf8');
+const pinnedHidMaestroReleaseUrl = releaseWorkflowText.match(/HIDMAESTRO_RELEASE_URL:\s*(\S+)/)?.[1] ?? '';
+const pinnedHidMaestroReleaseSha256 = releaseWorkflowText.match(/HIDMAESTRO_RELEASE_SHA256:\s*(\S+)/)?.[1] ?? '';
+if (!pinnedHidMaestroReleaseUrl) {
+  failures.push('.github/workflows/release.yml: missing HIDMAESTRO_RELEASE_URL');
+}
+if (!pinnedHidMaestroReleaseSha256) {
+  failures.push('.github/workflows/release.yml: missing HIDMAESTRO_RELEASE_SHA256');
+}
+const thirdPartyNoticesPath = path.join(repoRoot, 'THIRD_PARTY_NOTICES.md');
+if (!existsSync(thirdPartyNoticesPath)) {
+  failures.push('THIRD_PARTY_NOTICES.md: missing third-party notices file');
+} else {
+  const thirdPartyNotices = readFileSync(thirdPartyNoticesPath, 'utf8');
+  for (const required of [
+    'HIDMaestro',
+    'MIT License',
+    'Copyright (c) 2026 HIDMaestro Contributors',
+    pinnedHidMaestroReleaseUrl,
+    pinnedHidMaestroReleaseSha256
+  ]) {
+    if (!thirdPartyNotices.includes(required)) {
+      failures.push(`THIRD_PARTY_NOTICES.md: missing required HIDMaestro notice text: ${required}`);
+    }
+  }
+}
+
+const packageMsiPath = path.join(repoRoot, 'packaging/package-msi.ps1');
+const packageMsiText = readFileSync(packageMsiPath, 'utf8');
+if (!packageMsiText.includes('THIRD_PARTY_NOTICES.txt')) {
+  failures.push('packaging/package-msi.ps1: Bridge staging must install THIRD_PARTY_NOTICES.txt beside the broker');
+}
+
 for (const file of trackedFiles) {
   const normalized = file.replaceAll('\\', '/');
   if (forbiddenTrackedArtifactPattern.test(normalized) && !allowedTrackedArtifacts.has(normalized)) {

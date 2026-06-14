@@ -191,4 +191,4 @@ DSCC is a clean-room project. Do not copy code, packet layouts, constants, or sc
 
 ## License
 
-DualSense Command Center uses the Apache License, Version 2.0. Bundled visual assets and third-party dependencies keep their own terms where they apply.
+DualSense Command Center uses the Apache License, Version 2.0. Bundled visual assets and third-party dependencies keep their own terms where they apply. Bridge installers that bundle `HIDMaestro.Core.dll` include the HIDMaestro MIT license notice in `hidmaestro\THIRD_PARTY_NOTICES.txt`; the tracked source notice is [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

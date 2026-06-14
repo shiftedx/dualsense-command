@@ -382,6 +382,10 @@ jobs:
             that already have the matching x64 .NET runtime installed. Smaller
             than `bridge`, less plug-and-play than `standard`.
 
+          Bridge installers include HIDMaestro under the MIT License. The
+          installer places the notice beside the broker at
+          `hidmaestro\THIRD_PARTY_NOTICES.txt`.
+
           The Linux archive includes the bundled production web UI, so
           `./dscc-cli serve --addr 127.0.0.1:43473` can serve the app without
           running Vite. Linux HID permissions and hardware validation remain

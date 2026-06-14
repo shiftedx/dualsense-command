@@ -90,7 +90,7 @@ function Assert-InstallerFlavorStaging {
         throw "$EffectiveFlavor installer staging must include the HIDMaestro broker."
     }
 
-    foreach ($required in @("dscc-hidmaestro-broker.exe", "HIDMaestro.Core.dll")) {
+    foreach ($required in @("dscc-hidmaestro-broker.exe", "HIDMaestro.Core.dll", "THIRD_PARTY_NOTICES.txt")) {
         if (-not (Test-Path -LiteralPath (Join-Path $brokerDir $required))) {
             throw "$EffectiveFlavor installer staging is missing $required."
         }
@@ -259,6 +259,7 @@ function Write-DirectoryXml {
 $repoRoot = Resolve-RepoRoot
 $webRoot = Join-Path $repoRoot "web"
 $licensePath = Join-Path $repoRoot "LICENSE"
+$thirdPartyNoticesPath = Join-Path $repoRoot "THIRD_PARTY_NOTICES.md"
 $trayIconPath = Join-Path $repoRoot "crates\dscc-tray\assets\dscc-tray.ico"
 $targetRoot = Join-Path $repoRoot "target"
 $stagingRoot = Join-Path $targetRoot "installer\staging"
@@ -351,6 +352,9 @@ if (-not (Test-Path (Join-Path $webDist "index.html"))) {
 if (-not (Test-Path -LiteralPath $licensePath)) {
     throw "LICENSE is missing."
 }
+if (-not (Test-Path -LiteralPath $thirdPartyNoticesPath)) {
+    throw "THIRD_PARTY_NOTICES.md is missing."
+}
 if (-not (Test-Path -LiteralPath $trayIconPath)) {
     throw "DSCC tray icon is missing: $trayIconPath"
 }
@@ -403,6 +407,7 @@ if ($includeBroker) {
     } else {
         Copy-DirectoryClean -Source $brokerPublish -Destination (Join-Path $stagingRoot "hidmaestro")
     }
+    Copy-Item -LiteralPath $thirdPartyNoticesPath -Destination (Join-Path $stagingRoot "hidmaestro\THIRD_PARTY_NOTICES.txt") -Force
 }
 Assert-InstallerFlavorStaging -StagingRoot $stagingRoot -EffectiveFlavor $effectiveFlavor
 
@@ -481,8 +486,9 @@ DualSense Command Center test build
 10. If the UI will not open, run dscc-cli.exe support-bundle from this folder and attach the sanitized output to a bug report.
 11. Installer flavor: $installerFlavorLabel.
 12. HIDMaestro broker package flavor: $brokerFlavor.
-13. Standard is the normal installer for Steam Input, controller tuning, haptics, profiles, and diagnostics. Use a Bridge installer only when you want DSCC Input Bridge testing for non-Steam games.
-14. Setup options can create a desktop shortcut, start DSCC with Windows, and launch DSCC after install.
+13. Bridge installers include the HIDMaestro MIT license notice at hidmaestro\THIRD_PARTY_NOTICES.txt.
+14. Standard is the normal installer for Steam Input, controller tuning, haptics, profiles, and diagnostics. Use a Bridge installer only when you want DSCC Input Bridge testing for non-Steam games.
+15. Setup options can create a desktop shortcut, start DSCC with Windows, and launch DSCC after install.
 "@
 
 Add-TextFile -Path (Join-Path $stagingRoot "Stop DSCC.cmd") -Content $stopScript

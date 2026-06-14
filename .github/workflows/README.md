@@ -37,6 +37,9 @@ Windows installer intent is deliberately explicit:
 | `bridge` | Users testing DSCC Input Bridge for non-Steam games. Bundles the self-contained HIDMaestro broker. |
 | `bridge-framework-dependent` | Advanced bridge users with the matching x64 .NET runtime already installed. |
 
+Bridge installers include HIDMaestro under the MIT License and install the
+notice beside the broker at `hidmaestro\THIRD_PARTY_NOTICES.txt`.
+
 The release workflow publishes the GitHub Release and uploads artifacts. Windows
 artifacts are unsigned unless signing is added later.
 

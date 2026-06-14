@@ -11,6 +11,7 @@ sign MSIs because there is no paid code-signing certificate.
   separate.
 - Assert that Standard builds do not bundle the HIDMaestro broker.
 - Pin the external HIDMaestro release URL and SHA256 used for Bridge builds.
+- Install the HIDMaestro MIT license notice beside the bundled Bridge broker.
 - Keep release artifacts, signing keys, private captures, and installer
   intermediates out of Git.
 

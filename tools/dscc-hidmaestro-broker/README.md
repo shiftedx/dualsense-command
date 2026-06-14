@@ -26,7 +26,8 @@ wrong MSI flavor.
 ### Default Self-Contained Publish
 
 Use .NET 10 and provide the HIDMaestro core assembly from the approved
-HIDMaestro release recorded in `PROVENANCE.md`:
+HIDMaestro release pinned in `.github/workflows/release.yml` and recorded in
+the root `THIRD_PARTY_NOTICES.md`:
 
 ```powershell
 dotnet publish tools/dscc-hidmaestro-broker `
@@ -44,6 +45,7 @@ The resulting publish directory must contain:
 
 - `dscc-hidmaestro-broker.exe`
 - `HIDMaestro.Core.dll`
+- `THIRD_PARTY_NOTICES.txt`
 
 Package the self-contained Bridge MSI with:
 
@@ -78,6 +80,7 @@ The resulting publish directory must contain:
 - `dscc-hidmaestro-broker.deps.json`
 - `dscc-hidmaestro-broker.runtimeconfig.json`
 - `HIDMaestro.Core.dll`
+- `THIRD_PARTY_NOTICES.txt`
 
 Package the framework-dependent MSI with:
 
