@@ -11,4 +11,8 @@
   <ItemGroup Condition="'$(HidMaestroCoreDll)' != ''">
     <Content Include="$(HidMaestroCoreDll)" Link="HIDMaestro.Core.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\THIRD_PARTY_NOTICES.md" Link="THIRD_PARTY_NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
