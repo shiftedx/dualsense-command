@@ -26,7 +26,7 @@ Start here:
   checklist for controller and transport testing.
 - [Windows Installer Smoke](windows-installer-smoke.md): MSI install, upgrade,
   uninstall, and orphan-process release smoke checks.
-- [Production Readiness](production-readiness-plan.md): what is complete and
-  what remains before DSCC should be called production-ready.
+- [Production Readiness](production-readiness-plan.md): release-facing checks,
+  no-ship conditions, and remaining validation gates.
 
 Most users only need the README and Troubleshooting page.

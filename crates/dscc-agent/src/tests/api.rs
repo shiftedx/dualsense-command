@@ -27,8 +27,8 @@ async fn status_reports_mock_active_state() {
 async fn support_bundle_route_returns_sanitized_shareable_payload() {
     let _env = TestEnv::new(&["USERPROFILE", "HOME", "DSCC_WEB_DIST"]);
     std::env::set_var("USERPROFILE", r"C:\Users\ExampleUser");
-    std::env::set_var("HOME", "/home/user");
-    std::env::set_var("DSCC_WEB_DIST", r"D:\PrivateLab\DSCC Secret Web Dist");
+    std::env::set_var("HOME", "/home/example-user");
+    std::env::set_var("DSCC_WEB_DIST", r"D:\PrivateLab\DSCC Redaction Fixture");
     let state = AgentState::mock();
     {
         let mut inner = state.inner.write().await;
@@ -67,7 +67,7 @@ async fn support_bundle_route_returns_sanitized_shareable_payload() {
     assert!(!body_text.contains("123456789"));
     assert!(!body_text.contains("SteamLibrary"));
     assert!(!body_text.contains("PrivateLab"));
-    assert!(!body_text.contains("DSCC Secret Web Dist"));
+    assert!(!body_text.contains("DSCC Redaction Fixture"));
     assert!(!body_text.contains("installPath"));
     assert!(!body_text.contains("steamPath"));
     assert!(!body_text.contains("rawBinding"));

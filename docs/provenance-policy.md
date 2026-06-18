@@ -13,8 +13,8 @@ and copied packet layouts are not allowed.
 - Provider or broker protocol fields.
 - Controller asset sources.
 
-Use the private local `PROVENANCE.md` for raw notes during research. Move only
-sanitized source summaries into tracked docs or PR notes.
+Use private local notes for raw research. Move only sanitized source summaries
+into tracked docs or PR notes.
 
 ## Allowed Sources
 
@@ -51,4 +51,3 @@ Provenance:
 
 If the provenance cannot be explained in three or four clear bullets, split the
 PR and document the research first.
-

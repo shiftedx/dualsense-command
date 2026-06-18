@@ -52,9 +52,11 @@ pnpm-debug.log*
 /[Aa][Gg][Ee][Nn][Tt][Ss].md
 /[Aa][Gg][Ee][Nn][Tt][Ss].local.md
 /.agents/
+/docs/agents/
 /.mcp/
 /.mcp.json
 /.mcp.*.json
+/skills-lock.json
 
 # Internal research, handoff, and planning notes
 /internal/
@@ -74,6 +76,7 @@ pnpm-debug.log*
 /docs/*experiment*.md
 /docs/*validation*.md
 /docs/*handoff*.md
+/docs/superpowers/
 !/docs/production-readiness-plan.md
 !/docs/provenance-policy.md
 !/docs/hardware-validation-template.md
