@@ -1,52 +1,50 @@
 # DualSense Command Center
 
 [![Latest release](https://img.shields.io/github/v/release/shiftedx/dualsense-command?style=for-the-badge&label=release)](https://github.com/shiftedx/dualsense-command/releases/latest)
-[![Release downloads](https://img.shields.io/github/downloads/shiftedx/dualsense-command/total?style=for-the-badge&label=downloads)](https://github.com/shiftedx/dualsense-command/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/shiftedx/dualsense-command/ci.yml?branch=main&style=for-the-badge&label=ci)](https://github.com/shiftedx/dualsense-command/actions/workflows/ci.yml)
 [![Stars](https://img.shields.io/github/stars/shiftedx/dualsense-command?style=for-the-badge)](https://github.com/shiftedx/dualsense-command/stargazers)
 [![License](https://img.shields.io/github/license/shiftedx/dualsense-command?style=for-the-badge)](LICENSE)
 
-DualSense Command Center (DSCC) is a free Windows app for the PlayStation DualSense and DualSense Edge controller.
+DualSense Command Center (DSCC) is a free Windows app for PlayStation DualSense
+and DualSense Edge controllers on PC.
 
-It changes how your controller feels on PC: how the triggers push back, how it rumbles, and how it reacts to your racing games. No Python, no scripts, no command line.
+Tune adaptive triggers, haptics, lights, profiles, and racing-game telemetry
+from one local app. No Python, no scripts, no command line.
 
-A few words you will see a lot:
+Quick terms:
 
-- **Adaptive triggers**: the L2 and R2 triggers can stiffen, click, or push back, so a brake pedal feels like a brake pedal.
-- **Haptics**: full-body rumble through the controller, richer than the default buzz.
-- **Telemetry**: live data your racing game sends out, such as brake pressure and engine RPM. DSCC turns it into feel.
+- **Adaptive triggers**: L2/R2 resistance, clicks, and feedback.
+- **Haptics**: controller rumble and texture.
+- **Telemetry**: game data like brake pressure, RPM, speed, and tire slip.
 
-## What you can do
+## Features
 
-- Tune how the L2 and R2 triggers feel, or draw your own 4-to-8 point curves for brake and throttle.
-- Feel your racing games. DSCC reads live telemetry and drives trigger resistance and rumble for braking, ABS, gear shifts, the rev limiter, road texture, and more.
-- Save setups as profiles. Create, name, import, export, and switch between them, and DSCC keeps them across updates.
-- Set the lights: lightbar color and brightness, RPM colors, and the player LEDs.
-- Check controller health at a glance: battery, connection, and basic diagnostics.
-- Get help with Steam button mapping for supported games, including a DualSense Edge paddle-shift preset.
-- Learn as you go with a built-in guide and tooltips on the main controls.
+- Tune L2/R2 feel, including custom brake and throttle curves.
+- Turn racing telemetry into trigger feedback, rumble, lightbar color, and RPM LEDs.
+- Save, import, export, rename, and switch profiles.
+- Check battery, connection, diagnostics, and controller status.
+- Mirror Steam Input mappings for supported games, including an Edge paddle-shift preset.
+- Use the built-in guide and tooltips when setting up.
 
 ## Download and install
 
-Most people need one file.
-
-1. Open the [latest release](https://github.com/shiftedx/dualsense-command/releases/latest) and download **DSCC Standard**, the Windows x86_64 `.msi`. The current release is `0.4.1`.
-2. Run the installer. Windows may show a blue SmartScreen warning, because we have not signed the installer yet. If you got the file from the official release page above, click **More info**, then **Run anyway**.
-3. The installer asks whether to start DSCC with Windows, add a desktop shortcut, and open it after setup. The defaults work for most people.
+1. Open the [latest release](https://github.com/shiftedx/dualsense-command/releases/latest).
+2. Download **DSCC Standard** for Windows x86_64. The current release is `0.4.1`.
+3. Run the `.msi` installer. Windows may show a SmartScreen warning because the installer is not signed yet; if you downloaded it from the official release page, choose **More info**, then **Run anyway**.
 
 Your profiles and settings live in your user folder and stay in place when you update. To verify a download, the release page lists SHA256 checksums for each file.
 
 ## First-time setup
 
-1. Open **DualSense Command Center** from the Start menu or the tray icon. It also opens in your browser at `http://127.0.0.1:43473/`.
+1. Open **DualSense Command Center** from the Start menu or tray icon.
 2. Connect your DualSense or DualSense Edge over USB, or pair it over Bluetooth.
-3. A short guide appears the first time. Read it or skip it, and reopen it later from the **Guide** button.
+3. Follow or skip the first-run guide. You can reopen it later with **Guide**.
 4. For everyday tuning, use the **Global Profile**.
-5. To feel a racing game, start a supported game. DSCC switches to that game's profile on its own.
+5. To use racing telemetry, start a supported game. DSCC switches profiles automatically.
 
 ### Turn on Forza telemetry
 
-Forza games need one setting from inside the game. Open the game's settings, turn on **Data Out** (some games call it **UDP Race Telemetry**), and enter:
+Forza games need one in-game setting. Turn on **Data Out** or **UDP Race Telemetry**, then enter:
 
 - IP address: `127.0.0.1`
 - Port: `5300`
@@ -57,34 +55,39 @@ Assetto Corsa Rally needs no setup. See [Games that work](#games-that-work).
 
 ### Forza
 
-Forza Horizon 5, Forza Horizon 6, and Forza Motorsport, through the in-game Data Out telemetry above.
-
-DSCC turns that data into trigger and rumble feel for braking and ABS, throttle, gear shifts, the rev limiter, road texture, tire slip, RPM lighting, and more.
+Forza Horizon 5, Forza Horizon 6, and Forza Motorsport work through Data Out
+telemetry. DSCC uses it for braking, ABS, throttle, gear shifts, rev limiter,
+road texture, tire slip, RPM lighting, and more.
 
 ### Assetto Corsa Rally
 
-Works through the game's shared-memory telemetry on Windows, with no port setup. Launch the game, enter a driving session, and pick the detected profile in DSCC.
+Works through shared-memory telemetry on Windows, with no port setup. Launch the
+game, enter a driving session, and pick the detected profile in DSCC.
 
 ## Will my controller work?
 
-DSCC supports the DualSense and DualSense Edge on Windows, over USB or Bluetooth.
+DSCC supports DualSense and DualSense Edge on Windows over USB or Bluetooth. The
+Edge gets the full experience: profiles, adaptive triggers, telemetry haptics,
+lightbar controls, and diagnostics.
 
-The Edge gets the full experience: profiles, adaptive triggers, telemetry haptics, lightbar controls, and diagnostics. The [Windows hardware matrix](docs/hardware-matrix.md) lists what the team has tested.
+The [Windows hardware matrix](docs/hardware-matrix.md) lists tested controller
+and connection combinations.
 
 ## Is it safe?
 
-DSCC runs on your PC and stays there.
+DSCC runs locally on your PC.
 
-- The app and its web UI run on your machine at `127.0.0.1:43473`. The Forza listener uses `127.0.0.1:5300`.
-- Nothing opens to your network unless you turn on LAN access in the app.
-- Game haptics run only when a supported game is active, a profile is on, and fresh telemetry is flowing. The rest of the time you get the Global Profile.
-- Test effects run only while you run the test.
-- DSCC backs up your Steam Input files before it changes them, and sends controller output through validated frames instead of raw HID byte writes.
+- The app uses `127.0.0.1:43473`; Forza telemetry uses `127.0.0.1:5300`.
+- LAN access stays off unless you enable it.
+- Game haptics require a supported game, an active profile, and fresh telemetry.
+- Test effects stop when the test ends.
+- Steam Input edits are backed up before changes are written.
+- Controller output goes through validated frames, not raw HID write routes.
 
 ## Get help
 
 - Stuck on setup? Start with [Troubleshooting](docs/troubleshooting.md).
-- Hit a bug? Open the **Support** panel in DSCC. It exports a support bundle that leaves out your hardware IDs and private paths, ready to attach to a report.
+- Hit a bug? Use the **Support** panel to export a sanitized support bundle.
 - Questions or tuning ideas? Post in [GitHub Discussions](https://github.com/shiftedx/dualsense-command/discussions).
 - Reproducible bugs go in [GitHub Issues](https://github.com/shiftedx/dualsense-command/issues).
 
