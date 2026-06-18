@@ -1,9 +1,10 @@
 # Production Readiness
 
-Last updated: 2026-05-26
+Last updated: 2026-06-18
 
-DSCC `0.3.4` is a public unsigned Windows beta. Testers can use it now. Do not
-call it production-ready until the hardware matrix is complete.
+DSCC `0.4.1` is a public unsigned Windows release candidate. The repository is
+kept release-facing: local agent notes, private hardware logs, generated build
+output, and unverified redistributable assets must stay out of tracked source.
 
 ## Current Status
 
@@ -102,6 +103,8 @@ Also confirm:
 - GitHub CI is green.
 - Web release-size budget is still passing and any large new assets are
   intentional.
+- No local agent plans, private research notes, generated release artifacts, or
+  personal paths are tracked.
 - Version metadata matches the tag, crates, web package, root package, MSI, and
   changelog.
 - README and troubleshooting docs mention that the MSI is unsigned.

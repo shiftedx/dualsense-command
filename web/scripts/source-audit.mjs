@@ -13,6 +13,18 @@ const trackedFiles = execFileSync(git, ['ls-files'], {
   .split(/\r?\n/)
   .filter(Boolean);
 
+const publicRootFiles = new Set([
+  'CHANGELOG.md',
+  'CONTEXT.md',
+  'PRODUCT.md',
+  'README.md',
+  'SECURITY.md',
+  'SUPPORT.md',
+  'THIRD_PARTY_NOTICES.md',
+  'package.json',
+  'Cargo.toml'
+]);
+
 const files = Array.from(new Set(execFileSync(git, ['ls-files', '--cached', '--modified', '--others', '--exclude-standard'], {
   cwd: repoRoot,
   encoding: 'utf8'
@@ -21,11 +33,13 @@ const files = Array.from(new Set(execFileSync(git, ['ls-files', '--cached', '--m
   .filter(Boolean)
   .filter((file) =>
     file.startsWith('crates/') ||
+    file.startsWith('docs/') ||
     file.startsWith('web/src/') ||
     file.startsWith('web/scripts/') ||
     file.startsWith('.github/workflows/') ||
     file.startsWith('packaging/') ||
-    file.startsWith('tools/dscc-hidmaestro-broker/')
+    file.startsWith('tools/dscc-hidmaestro-broker/') ||
+    publicRootFiles.has(file)
   )))
   .filter((file) => existsSync(path.join(repoRoot, file)));
 
@@ -39,6 +53,7 @@ const rules = [
   {
     name: 'raw HID route surface',
     pattern: /\b(raw_hid|raw-hid|raw hid-byte|raw hid byte)\b/i,
+    codeOnly: true,
     allow: [
       /web\/src\/app\/supportBundle\.ts$/,
       /web\/src\/App\.svelte$/,
@@ -49,16 +64,19 @@ const rules = [
   {
     name: 'driver payload route surface',
     pattern: /\bdriver payload\b/i,
+    codeOnly: true,
     allow: [selfAuditScript]
   },
   {
     name: 'game injection language',
     pattern: /\b(game injection|memory scanning|memory scan|anti-cheat bypass)\b/i,
+    codeOnly: true,
     allow: [selfAuditScript]
   },
   {
     name: 'private path disclosure',
     pattern: /\b(full executable path|provider private path|private broker path)\b/i,
+    codeOnly: true,
     allow: [
       /web\/src\/app\/supportBundle\.ts$/,
       /web\/src\/App\.svelte$/,
@@ -69,11 +87,23 @@ const rules = [
   {
     name: 'stub production surface',
     pattern: /\b(TODO: ship|STUB|stubbed|placeholder implementation)\b/i,
+    codeOnly: true,
     allow: [selfAuditScript]
   },
   {
     name: 'legacy production surface',
     pattern: /legacy/i,
+    codeOnly: true,
+    allow: [selfAuditScript]
+  },
+  {
+    name: 'local agent tooling surface',
+    pattern: /\b(mattpocock|setup-matt-pocock-skills|superpowers:|\.superpowers\/|Generated with \[Claude Code\]|docs\/agents\/|skills-lock\.json|AGENTS\.md|PROVENANCE\.md|WINDOWS_HANDOFF_PROMPT|AFK agent|impeccable skill)\b/i,
+    allow: [selfAuditScript]
+  },
+  {
+    name: 'external user-attachment asset',
+    pattern: /github\.com\/user-attachments\/assets/i,
     allow: [selfAuditScript]
   }
 ];
@@ -115,6 +145,7 @@ if (!packageMsiText.includes('THIRD_PARTY_NOTICES.txt')) {
 
 for (const file of trackedFiles) {
   const normalized = file.replaceAll('\\', '/');
+  if (!existsSync(path.join(repoRoot, file))) continue;
   if (forbiddenTrackedArtifactPattern.test(normalized) && !allowedTrackedArtifacts.has(normalized)) {
     failures.push(`${file}: tracked release, signing, or binary artifact`);
   }
@@ -122,6 +153,7 @@ for (const file of trackedFiles) {
 
 for (const file of files) {
   const normalized = file.replaceAll('\\', '/');
+  const isPublicText = normalized.startsWith('docs/') || publicRootFiles.has(normalized);
   const text = readFileSync(path.join(repoRoot, file), 'utf8');
   if (/-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/.test(text)) {
     failures.push(`${file}: private key material must not be committed`);
@@ -135,6 +167,7 @@ for (const file of files) {
   const lines = text.split(/\r?\n/);
   for (const [index, line] of lines.entries()) {
     for (const rule of rules) {
+      if (rule.codeOnly && isPublicText) continue;
       if (!rule.pattern.test(line)) continue;
       if (rule.allow.some((allowed) => allowed.test(normalized))) continue;
       failures.push(`${file}:${index + 1}: ${rule.name}: ${line.trim()}`);

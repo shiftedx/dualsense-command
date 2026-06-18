@@ -62,8 +62,8 @@ only one row unless it is adding a brand-new telemetry source.
 | Add a game that reuses existing telemetry | `crates/dscc-agent/src/game_modules.rs`, `crates/dscc-agent/src/profiles.rs`, route/profile tests |
 | Add local-app-only profile support | `crates/dscc-agent/src/game_detection/local_apps.rs`, profile tests |
 | Add Steam discovery or art behavior | `crates/dscc-agent/src/game_detection/steam.rs`, Steam/game detection tests |
-| Add a UDP telemetry parser | `crates/dscc-adapters/src/lib.rs`, parser tests, `PROVENANCE.md` |
-| Add a shared-memory telemetry source | `crates/dscc-agent/src/assetto_shared_memory.rs` or a new runtime module, platform-gated tests, `PROVENANCE.md` |
+| Add a UDP telemetry parser | `crates/dscc-adapters/src/lib.rs`, parser tests, PR provenance notes per `docs/provenance-policy.md` |
+| Add a shared-memory telemetry source | `crates/dscc-agent/src/assetto_shared_memory.rs` or a new runtime module, platform-gated tests, PR provenance notes per `docs/provenance-policy.md` |
 | Add haptic/profile defaults | `crates/dscc-agent/src/profiles.rs`, `crates/dscc-agent/src/effects/`, effect tests |
 
 Keep game modules declarative: id, display name, process names, store ids,

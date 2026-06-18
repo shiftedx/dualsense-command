@@ -10,8 +10,6 @@ DualSense Command Center (DSCC) is a free Windows app for the PlayStation DualSe
 
 It changes how your controller feels on PC: how the triggers push back, how it rumbles, and how it reacts to your racing games. No Python, no scripts, no command line.
 
-<img width="1961" height="1417" alt="image" src="https://github.com/user-attachments/assets/1957d28f-7582-4597-a43a-445814105b61" />
-
 A few words you will see a lot:
 
 - **Adaptive triggers**: the L2 and R2 triggers can stiffen, click, or push back, so a brake pedal feels like a brake pedal.

@@ -26,16 +26,16 @@ async fn status_reports_mock_active_state() {
 #[tokio::test]
 async fn support_bundle_route_returns_sanitized_shareable_payload() {
     let _env = TestEnv::new(&["USERPROFILE", "HOME", "DSCC_WEB_DIST"]);
-    std::env::set_var("USERPROFILE", r"C:\Users\Kyle");
-    std::env::set_var("HOME", "/home/kyle");
-    std::env::set_var("DSCC_WEB_DIST", r"D:\PrivateLab\DSCC Secret Web Dist");
+    std::env::set_var("USERPROFILE", r"C:\Users\ExampleUser");
+    std::env::set_var("HOME", "/home/example-user");
+    std::env::set_var("DSCC_WEB_DIST", r"D:\PrivateLab\DSCC Redaction Fixture");
     let state = AgentState::mock();
     {
         let mut inner = state.inner.write().await;
         inner.app_settings.forza_playstation_glyphs.install_path =
-            Some(r"C:\Users\Kyle\SteamLibrary\ForzaHorizon6".to_string());
+            Some(r"C:\Users\ExampleUser\SteamLibrary\ForzaHorizon6".to_string());
         inner.app_settings.forza_playstation_glyphs.last_message =
-            r"Installed from C:\Users\Kyle\SteamLibrary\ForzaHorizon6\userdata\123456789\config"
+            r"Installed from C:\Users\ExampleUser\SteamLibrary\ForzaHorizon6\userdata\123456789\config"
                 .to_string();
     }
 
@@ -62,12 +62,12 @@ async fn support_bundle_route_returns_sanitized_shareable_payload() {
         .iter()
         .any(|item| item == "raw controller hardware IDs"));
     assert!(bundle.app_settings.forza_playstation_glyphs_path_configured);
-    assert!(!body_text.contains(r"C:\Users\Kyle"));
-    assert!(!body_text.contains(r"C:\\Users\\Kyle"));
+    assert!(!body_text.contains(r"C:\Users\ExampleUser"));
+    assert!(!body_text.contains(r"C:\\Users\\ExampleUser"));
     assert!(!body_text.contains("123456789"));
     assert!(!body_text.contains("SteamLibrary"));
     assert!(!body_text.contains("PrivateLab"));
-    assert!(!body_text.contains("DSCC Secret Web Dist"));
+    assert!(!body_text.contains("DSCC Redaction Fixture"));
     assert!(!body_text.contains("installPath"));
     assert!(!body_text.contains("steamPath"));
     assert!(!body_text.contains("rawBinding"));
@@ -137,13 +137,13 @@ fn support_steam_input_summary_omits_raw_layout_details() {
 #[test]
 fn support_sanitizer_redacts_absolute_paths_and_steam_ids() {
     let sanitized = sanitize_support_text(
-        r"Installed at \\?\D:\SteamLibrary\steamapps\common\ForzaHorizon6. User path C:\Users\Kyle\Documents\dscc. Layout steamapps/common/Steam Controller Configs/60706926/config/controller.vdf and userdata\76561198000000000\config.",
+        r"Installed at \\?\D:\SteamLibrary\steamapps\common\ForzaHorizon6. User path C:\Users\ExampleUser\Documents\dscc. Layout steamapps/common/Steam Controller Configs/60706926/config/controller.vdf and userdata\76561198000000000\config.",
     );
 
     assert!(sanitized.contains("[local-path]"));
     assert!(sanitized.contains("<steam-user>"));
     assert!(!sanitized.contains("D:\\"));
-    assert!(!sanitized.contains("C:\\Users\\Kyle"));
+    assert!(!sanitized.contains("C:\\Users\\ExampleUser"));
     assert!(!sanitized.contains("SteamLibrary"));
     assert!(!sanitized.contains("60706926"));
     assert!(!sanitized.contains("76561198000000000"));
