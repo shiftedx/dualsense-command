@@ -52,7 +52,6 @@ pnpm-debug.log*
 /[Aa][Gg][Ee][Nn][Tt][Ss].md
 /[Aa][Gg][Ee][Nn][Tt][Ss].local.md
 /.agents/
-/docs/agents/
 /.mcp/
 /.mcp.json
 /.mcp.*.json
