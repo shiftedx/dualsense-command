@@ -87,17 +87,23 @@ pub(crate) async fn import_profile(
     }
     let (profile, to_save) = {
         let mut inner = state.inner.write().await;
-        let mut id = request.id.unwrap_or_else(|| slugify(&request.name));
+        // Imports cross a trust boundary: bound the id and name and run the
+        // config through the same normalization as PUT config below.
+        let name = request.name.trim().chars().take(96).collect::<String>();
+        let mut id = request
+            .id
+            .map(|id| id.trim().chars().take(96).collect::<String>())
+            .unwrap_or_default();
         let game_id = normalize_optional_profile_game_id(request.game_id);
-        if id.trim().is_empty() {
-            id = slugify(&request.name);
+        if id.is_empty() {
+            id = slugify(&name);
         }
         if inner.profiles.iter().any(|profile| profile.id == id) {
             return Ok((
                 StatusCode::CONFLICT,
                 Json(ProfileSummary {
                     id,
-                    name: request.name,
+                    name,
                     built_in: false,
                     active: false,
                     game_id,
@@ -107,13 +113,16 @@ pub(crate) async fn import_profile(
 
         let profile = ProfileSummary {
             id,
-            name: request.name,
+            name,
             built_in: false,
             active: false,
             game_id,
         };
         if let Some(config) = request.config {
-            inner.profile_configs.insert(profile.id.clone(), config);
+            let model_hint = model_hint_for_profile_buttons(&config.buttons);
+            inner
+                .profile_configs
+                .insert(profile.id.clone(), config.normalized_for_model(model_hint));
         }
         inner.profiles.push(profile.clone());
         inner.effect_revision = inner.effect_revision.saturating_add(1);
@@ -163,7 +172,7 @@ pub(crate) async fn update_profile(
             }
         }
         inner.effect_revision = inner.effect_revision.saturating_add(1);
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: "info".to_string(),
             message: format!("Renamed profile {}", updated.name),
             timestamp: current_timestamp(),
@@ -233,7 +242,7 @@ pub(crate) async fn update_profile_config(
             );
         }
         inner.effect_revision = inner.effect_revision.saturating_add(1);
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: "info".to_string(),
             message: format!("Profile settings saved for {profile_name}"),
             timestamp: current_timestamp(),
@@ -293,7 +302,7 @@ pub(crate) async fn delete_profile(
             profile.active = active_profile_id.as_deref() == Some(profile.id.as_str());
         }
         inner.effect_revision = inner.effect_revision.saturating_add(1);
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: "info".to_string(),
             message: format!("Deleted profile {deleted_name}"),
             timestamp: current_timestamp(),

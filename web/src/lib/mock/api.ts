@@ -2,6 +2,7 @@ import type {
   AddCustomGameResponse,
   AddLocalAppRequest,
   AppSettingsResponse,
+  AppUpdateCheck,
   ActionAccepted,
   AppSnapshot,
   ControllerConfiguration,
@@ -114,6 +115,20 @@ export async function saveMockAppSettings(request: {
   }
   state.snapshot.appSettings = next;
   return clone(next);
+}
+
+export async function getMockAppUpdateCheck(currentVersion: string): Promise<AppUpdateCheck> {
+  // Mock mode never leaves the browser: report the running version as
+  // up to date instead of calling the agent or the GitHub API.
+  return {
+    currentVersion,
+    latestVersion: currentVersion,
+    updateAvailable: false,
+    releaseUrl: 'https://github.com/shiftedx/dualsense-command/releases/latest',
+    source: 'agent',
+    checkedAt: new Date().toISOString(),
+    message: 'Mock mode checked in-browser without contacting GitHub.'
+  };
 }
 
 export async function runMockEffectTest(request: EffectTestRequest): Promise<MockEffectTestResult> {

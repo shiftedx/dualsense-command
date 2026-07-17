@@ -82,6 +82,9 @@
 
   let menuLeft = $state(0);
   let menuTop = $state(0);
+  // Deleting is irreversible, so the Delete item swaps to an inline confirm
+  // (same editor strip as rename/save-as) instead of deleting on first click.
+  let deleteConfirmProfile: ProfileSummary | null = $state(null);
   let menuEl: HTMLDivElement | undefined = $state();
   let importInput: HTMLInputElement | undefined = $state();
   let placedFor: HTMLButtonElement | undefined;
@@ -162,11 +165,13 @@
 
   const pickProfile = (profileId: string) => {
     closeMenu();
+    deleteConfirmProfile = null;
     if (profileId !== selectedProfileId) void onSelectProfile(profileId);
   };
 
   const runProfileAction = (action: () => void | Promise<void>) => {
     closeMenu();
+    deleteConfirmProfile = null;
     void action();
   };
 
@@ -177,13 +182,28 @@
 
   const deleteSelectedProfile = () => {
     const profile = selectedActionProfile;
-    if (profile) runProfileAction(() => onDeleteProfile(profile));
+    if (!profile) return;
+    closeMenu();
+    // Only one inline editor at a time: close rename/save-as before confirming.
+    onCancelSaveAs();
+    onCancelRename();
+    deleteConfirmProfile = profile;
+  };
+
+  const cancelDeleteConfirm = () => {
+    deleteConfirmProfile = null;
+  };
+
+  const confirmDeleteProfile = () => {
+    const profile = deleteConfirmProfile;
+    deleteConfirmProfile = null;
+    if (profile) void onDeleteProfile(profile);
   };
 </script>
 
 <svelte:window onpointerdown={handleWindowPointerDown} />
 
-{#if saveAsOpen || renameProfileId}
+{#if saveAsOpen || renameProfileId || deleteConfirmProfile}
   <div class="tuning-profile-editor">
     {#if saveAsOpen}
       <label>
@@ -204,7 +224,7 @@
         disabled={profileSaveAsBusy || !saveAsName.trim()}
         onclick={() => void onSubmitSaveAs()}
       >{profileSaveAsBusy ? 'Saving' : 'Create'}</button>
-    {:else}
+    {:else if renameProfileId}
       <label>
         <span>Profile name</span>
         <input
@@ -223,6 +243,15 @@
         disabled={profileRenameBusy || !renameName.trim()}
         onclick={() => void onSubmitRename()}
       >{profileRenameBusy ? 'Saving' : 'Apply'}</button>
+    {:else if deleteConfirmProfile}
+      <span class="tuning-profile-editor-text">Delete &ldquo;{deleteConfirmProfile.name}&rdquo;?</span>
+      <button class="dm-mini-button" type="button" disabled={profileFileBusy} onclick={cancelDeleteConfirm}>Cancel</button>
+      <button
+        class="dm-mini-button primary"
+        type="button"
+        disabled={profileFileBusy}
+        onclick={confirmDeleteProfile}
+      >{profileFileBusy ? 'Deleting' : 'Delete'}</button>
     {/if}
   </div>
 {/if}
