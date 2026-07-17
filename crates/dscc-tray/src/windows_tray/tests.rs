@@ -52,7 +52,9 @@ fn tray_state_debounces_duplicate_open_ui_requests() {
 
     assert!(state.claim_open_ui(DASHBOARD_URL));
     assert!(!state.claim_open_ui(DASHBOARD_URL));
-    assert!(state.claim_open_ui(HAPTICS_URL));
+    // Dashboard and Triggers & Haptics share the canonical #/tuning URL, so a
+    // rapid follow-up click on the other menu item is debounced too.
+    assert!(!state.claim_open_ui(HAPTICS_URL));
     assert!(state.claim_open_ui(BUTTON_MAPPING_URL));
 
     state.last_open_ui = Some((
@@ -87,9 +89,9 @@ fn tray_agent_launch_grants_lan_toggle_capability() {
 
 #[test]
 fn tray_menu_exposes_useful_actions_and_agent_state() {
-    assert!(DASHBOARD_URL.ends_with("#/games"));
-    assert!(HAPTICS_URL.ends_with("#/adaptive-triggers-haptics"));
-    assert!(BUTTON_MAPPING_URL.ends_with("#/button-mapping"));
+    assert!(DASHBOARD_URL.ends_with("#/tuning"));
+    assert!(HAPTICS_URL.ends_with("#/tuning"));
+    assert!(BUTTON_MAPPING_URL.ends_with("#/advanced/button-mapping"));
 
     let running_summary = TrayHealthSummary {
         agent_running: true,
@@ -226,6 +228,27 @@ fn tray_snapshot_summary_reads_active_profile_and_diagnostics() {
         fallback_profile_name("forza-horizon-immersive"),
         "Immersive"
     );
+}
+
+#[test]
+fn agent_status_health_check_parses_json_instead_of_substring_matching() {
+    assert!(status_body_reports_healthy(
+        r#"{"product":"DualSense Command Center Agent","version":"0.4.1","healthy":true,"bind_address":"127.0.0.1:43473","uptime_seconds":3,"active_profile_id":null,"active_adapter_id":null}"#
+    ));
+    // Field order and formatting must not matter.
+    assert!(status_body_reports_healthy(
+        "{\n  \"healthy\": true,\n  \"product\": \"DualSense Command Center Agent\"\n}"
+    ));
+
+    assert!(!status_body_reports_healthy(
+        r#"{"product":"DualSense Command Center Agent","healthy":false}"#
+    ));
+    assert!(!status_body_reports_healthy(
+        r#"{"product":"Some Other Agent","healthy":true}"#
+    ));
+    assert!(!status_body_reports_healthy(r#"{}"#));
+    assert!(!status_body_reports_healthy("not json at all"));
+    assert!(!status_body_reports_healthy(""));
 }
 
 #[test]

@@ -44,9 +44,9 @@ use windows_sys::Win32::{
 };
 
 const TRAY_ICON_ICO: &[u8] = include_bytes!("../assets/dscc-tray.ico");
-const DASHBOARD_URL: &str = "http://127.0.0.1:43473/#/games";
-const HAPTICS_URL: &str = "http://127.0.0.1:43473/#/adaptive-triggers-haptics";
-const BUTTON_MAPPING_URL: &str = "http://127.0.0.1:43473/#/button-mapping";
+const DASHBOARD_URL: &str = "http://127.0.0.1:43473/#/tuning";
+const HAPTICS_URL: &str = "http://127.0.0.1:43473/#/tuning";
+const BUTTON_MAPPING_URL: &str = "http://127.0.0.1:43473/#/advanced/button-mapping";
 const STATUS_PATH: &str = "/api/status";
 const SNAPSHOT_PATH: &str = "/api/snapshot";
 const API_HOST: &str = "127.0.0.1:43473";
@@ -880,10 +880,8 @@ fn message_loop() {
 }
 
 fn agent_is_healthy() -> bool {
-    http_get_body(STATUS_PATH, Duration::from_millis(450)).is_some_and(|body| {
-        body.contains("DualSense Command Center Agent")
-            && (body.contains("\"healthy\":true") || body.contains("\"healthy\": true"))
-    })
+    http_get_body(STATUS_PATH, Duration::from_millis(450))
+        .is_some_and(|body| status_body_reports_healthy(&body))
 }
 
 fn http_get_body(path: &str, timeout: Duration) -> Option<String> {
