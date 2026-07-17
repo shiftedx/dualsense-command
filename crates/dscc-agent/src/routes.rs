@@ -1,9 +1,14 @@
 use super::*;
+use axum::{handler::HandlerWithoutStateExt, http::Uri, response::Response};
 
 pub fn app(state: AgentState) -> Router {
     let dist = web_dist_dir();
-    let static_assets =
-        ServeDir::new(&dist).not_found_service(ServeFile::new(dist.join("index.html")));
+    let index = dist.join("index.html");
+    let spa_fallback = move |uri: Uri| {
+        let index = index.clone();
+        async move { spa_fallback_response(&index, uri.path()).await }
+    };
+    let static_assets = ServeDir::new(&dist).fallback(spa_fallback.into_service());
 
     Router::new()
         .route("/api/status", get(get_status))
@@ -105,6 +110,24 @@ pub fn app(state: AgentState) -> Router {
         .layer(middleware::from_fn(reject_cross_origin_mutations))
         .fallback_service(static_assets)
         .with_state(state)
+}
+
+/// SPA fallback for paths that match neither an API route nor a static
+/// asset: unknown `/api` paths stay 404, while app routes receive the
+/// resolved `index.html` with HTTP 200 so deep links are not reported as
+/// errors by status-sensitive clients.
+async fn spa_fallback_response(index: &FsPath, path: &str) -> Response {
+    if path == "/api" || path.starts_with("/api/") {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    match tokio::fs::read(index).await {
+        Ok(contents) => (
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            contents,
+        )
+            .into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 pub(crate) fn web_dist_dir() -> PathBuf {
