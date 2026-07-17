@@ -66,6 +66,14 @@
   font-size: 10px;
 }
 
+/* Redline ramp row: color-only controls. The note spans the slider, readout,
+   and toggle columns so Preview stays aligned with the lightbar row above. */
+.dm-led-row .dm-led-note {
+  grid-column: 3 / 6;
+  color: var(--ink-muted);
+  font-size: 10px;
+}
+
 .dm-color-pill {
   position: relative;
   width: 38px;
