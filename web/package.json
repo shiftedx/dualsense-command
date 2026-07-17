@@ -14,6 +14,7 @@
     "test:button-map": "node --experimental-strip-types scripts/button-mapping-p95.mjs",
     "test:snapshot-map": "node --experimental-strip-types scripts/snapshot-mapping.mjs",
     "test:haptics-graph": "node --experimental-strip-types scripts/haptics-graph-parity.mjs",
+    "test:curve-drag": "node scripts/curve-drag-budget.mjs",
     "test:release-size": "node scripts/release-web-budget.mjs",
     "test:source-audit": "node scripts/source-audit.mjs",
     "test:visual-smoke": "node scripts/visual-smoke.mjs"

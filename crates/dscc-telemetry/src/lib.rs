@@ -8,7 +8,6 @@
 use std::borrow::Borrow;
 use std::collections::BTreeMap;
 use std::fmt;
-use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -328,17 +327,6 @@ pub enum AdapterError {
     Io(String),
     #[error("adapter failed: {0}")]
     Other(String),
-}
-
-/// Contract implemented by game/source telemetry adapters.
-pub trait TelemetryAdapter: Send {
-    fn id(&self) -> &'static str;
-    fn display_name(&self) -> &'static str;
-    fn capabilities(&self) -> AdapterCapabilities;
-    fn detect(&mut self) -> AdapterDetection;
-    fn start(&mut self, config: AdapterConfig) -> Result<(), AdapterError>;
-    fn poll(&mut self, now: Instant) -> Result<Vec<SignalUpdate>, AdapterError>;
-    fn stop(&mut self) -> Result<(), AdapterError>;
 }
 
 #[cfg(test)]

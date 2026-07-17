@@ -477,7 +477,6 @@ fn discover_hidmaestro_broker() -> Option<BrokerCommand> {
     for relative in [
         "dscc-hidmaestro-broker.exe",
         "hidmaestro/dscc-hidmaestro-broker.exe",
-        "providers/hidmaestro/dscc-hidmaestro-broker.exe",
     ] {
         let path = exe_dir.join(relative);
         if path.is_file() {
