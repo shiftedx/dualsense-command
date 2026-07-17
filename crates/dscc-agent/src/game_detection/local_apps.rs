@@ -549,15 +549,16 @@ pub(crate) async fn add_custom_game(
     }
 
     let game_id = user_game_id_for_app_id(&app_id);
-    if built_in_game_modules()
+    if let Some(module) = built_in_game_modules()
         .iter()
-        .any(|module| module.id == game_id)
+        .find(|module| module.steam_app_ids.contains(&app_id.as_str()))
     {
         return Err((
             StatusCode::CONFLICT,
             Json(serde_json::json!({
-                "error": "A built-in module already covers this gameId",
-                "gameId": game_id,
+                "error": "A built-in module already covers this Steam appId",
+                "appId": app_id,
+                "gameId": module.id,
             })),
         ));
     }
