@@ -18,7 +18,6 @@ pub mod manager;
 pub mod metadata;
 pub mod output;
 pub mod registry;
-pub mod session;
 pub mod status;
 pub mod transport;
 
@@ -49,7 +48,6 @@ pub use output::{
     ControllerOutputTarget, ControllerOutputWrite, EncodedOutputReport, OutputReportKind,
 };
 pub use registry::{DeviceRegistry, RegistryConfig, RegistryEntry};
-pub use session::DeviceSession;
 pub use status::{
     BatteryInfo, BatteryState, ConnectionState, ControllerCapabilities, ControllerId,
     ControllerInfo, ControllerState, DeviceFamily, DevicePathHint, DeviceTransportKind,
