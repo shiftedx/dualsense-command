@@ -101,18 +101,23 @@ The UI is Svelte 5 + Vite, not SvelteKit.
 | `web/src/lib/api.ts` | API calls, DTO normalization, WebSocket setup, fallback polling. |
 | `web/src/lib/types.ts` | UI-side DTOs and shared types. |
 | `web/src/app/` | Navigation, runtime, selection, profile-draft, haptics-state, polling, update-state, toast, onboarding, partial-error, and support-bundle helpers. |
-| `web/src/lib/features/haptics/HapticsView.svelte` | Adaptive triggers and haptics view. |
+| `web/src/lib/features/haptics/` | Tuning panels: `GlobalFeelPanel`, `LightbarControls`, `TelemetryRoutingPanel`, and `TriggerCurvesPanel`. |
 | `web/src/lib/features/buttonMapping` | Steam Input mirror view and p95-tested helpers. |
-| `web/src/components/ControllerCard.svelte` | Games page controller panel. |
+| `web/src/lib/features/controllers/ControllerCard.svelte` | Controller panel on the Controller details view. |
 | `web/src/lib/features/games/AddGameDialog.svelte` | Steam and local-app registration. |
 | `web/src/lib/mock` | Dev-only mock API. Production builds ignore mock toggles. |
 
-Primary routes:
+Primary routes (see `web/src/app/navigation.ts`):
 
-- `#/games`
-- `#/controllers`
-- `#/adaptive-triggers-haptics`
-- `#/button-mapping`
+- `#/status`
+- `#/tuning`
+- `#/advanced/controller`
+- `#/advanced/button-mapping`
+- `#/advanced/edge-slots`
+
+Old routes keep working forever: `#/games`, `#/adaptive-triggers-haptics`,
+`#/controllers`, and `#/button-mapping` redirect to the new home for that
+content.
 
 ## Game And Adapter Modules
 

@@ -47,7 +47,7 @@ pub(crate) async fn update_controller(
         let mut inner = state.inner.write().await;
         let detail = inner.controllers.detail(&id).ok_or(StatusCode::NOT_FOUND)?;
         inner.controller_names.insert(id.clone(), name.clone());
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: "info".to_string(),
             message: format!("Controller {id} renamed to {name}"),
             timestamp: current_timestamp(),
@@ -70,33 +70,27 @@ pub(crate) async fn get_controller_config(
     Path(id): Path<String>,
     State(state): State<AgentState>,
 ) -> Result<Json<ControllerConfig>, StatusCode> {
-    let (config, to_save) = {
-        let mut inner = state.inner.write().await;
+    // Reads compute the effective config without inserting or persisting;
+    // configs are created and saved on PUT.
+    let config = {
+        let inner = state.inner.read().await;
         let detail = inner.controllers.detail(&id).ok_or(StatusCode::NOT_FOUND)?;
-        let active_profile_config = inner
-            .active_profile_id
-            .as_deref()
-            .and_then(|profile_id| inner.profile_configs.get(profile_id))
-            .cloned();
-        let model = detail.model;
-        let config = inner
-            .controller_configs
-            .entry(id.clone())
-            .or_insert_with(|| {
-                let mut config = ControllerConfig::default_for(id, model);
-                if let Some(profile_config) = active_profile_config.as_ref() {
+        match inner.controller_configs.get(&id) {
+            Some(config) => config.clone(),
+            None => {
+                let mut config = ControllerConfig::default_for(&id, detail.model);
+                if let Some(profile_config) = inner
+                    .active_profile_id
+                    .as_deref()
+                    .and_then(|profile_id| inner.profile_configs.get(profile_id))
+                {
                     profile_config.apply_to_controller_config(&mut config);
                 }
                 config
-            })
-            .clone()
-            .normalized();
-        inner
-            .controller_configs
-            .insert(config.controller_id.clone(), config.clone());
-        (config, build_persist_snapshot(&inner))
+            }
+        }
+        .normalized()
     };
-    persist_snapshot(&state, to_save).await;
     Ok(Json(config))
 }
 
@@ -116,7 +110,7 @@ pub(crate) async fn update_controller_config(
             ControllerConfig::from_update(id.clone(), detail.model, request, existing_input_bridge);
         inner.controller_configs.insert(id.clone(), config.clone());
         inner.effect_revision = inner.effect_revision.saturating_add(1);
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: "info".to_string(),
             message: format!("Configuration saved for controller {id}"),
             timestamp: current_timestamp(),

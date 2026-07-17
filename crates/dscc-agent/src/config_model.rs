@@ -1018,7 +1018,7 @@ impl StickConfig {
     pub(crate) fn normalized(mut self) -> Self {
         for curve in [&mut self.left_curve, &mut self.right_curve] {
             if ![
-                "Default", "Quick", "Precise", "Steady", "Digital", "Dynamic",
+                "Default", "Quick", "Precise", "Steady", "Digital", "Dynamic", "Custom",
             ]
             .contains(&curve.as_str())
             {
@@ -1210,7 +1210,12 @@ pub(crate) fn default_adapters() -> Vec<AdapterSummary> {
     built_in_adapters()
         .iter()
         .map(|adapter| {
-            let enabled = adapter.enabled_by_default;
+            // DSCC always starts listeners for built-in UDP adapters, so they
+            // are enabled out of the box until the user disables them.
+            let enabled = adapter.enabled_by_default
+                || built_in_udp_adapters()
+                    .iter()
+                    .any(|udp_adapter| udp_adapter.id == adapter.id);
             AdapterSummary {
                 id: adapter.id.to_string(),
                 name: adapter.display_name.to_string(),
@@ -1223,6 +1228,25 @@ pub(crate) fn default_adapters() -> Vec<AdapterSummary> {
             }
         })
         .collect()
+}
+
+pub(crate) fn adapters_with_persisted_state(
+    persisted: &BTreeMap<String, PersistedAdapterState>,
+) -> Vec<AdapterSummary> {
+    let mut adapters = default_adapters();
+    for adapter in &mut adapters {
+        if let Some(saved) = persisted.get(&adapter.id) {
+            if adapter.enabled != saved.enabled {
+                adapter.enabled = saved.enabled;
+                if let Some(built_in) = adapter_by_id(&adapter.id) {
+                    adapter.state =
+                        adapter_state_label(&initial_detection(built_in, saved.enabled))
+                            .to_string();
+                }
+            }
+        }
+    }
+    adapters
 }
 
 pub(crate) fn set_adapter_running(

@@ -24,8 +24,8 @@ use axum::{
     Json, Router,
 };
 use dscc_adapters::{
-    built_in_adapters, built_in_udp_adapters, initial_detection, parse_udp_telemetry_packet,
-    AdapterProtocol, UdpTelemetryAdapter,
+    adapter_by_id, built_in_adapters, built_in_udp_adapters, initial_detection,
+    parse_udp_telemetry_packet, AdapterProtocol, UdpTelemetryAdapter,
 };
 #[cfg(test)]
 use dscc_core::ControllerFamily;
@@ -55,7 +55,7 @@ use tokio::{
     net::{TcpListener, UdpSocket},
     sync::{broadcast, Mutex as AsyncMutex, RwLock},
 };
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 use tracing::info;
 
 mod adapter_runtime;
@@ -183,7 +183,8 @@ pub(crate) use input_bridge::{
 #[cfg(test)]
 pub(crate) use persistence::PERSISTED_STATE_VERSION;
 pub(crate) use persistence::{
-    build_persist_snapshot, persist_snapshot, PersistedAgentState, PersistenceStore,
+    build_persist_snapshot, persist_snapshot, PersistedAdapterState, PersistedAgentState,
+    PersistenceStore,
 };
 #[cfg(test)]
 pub(crate) use profiles::default_profiles;
@@ -417,6 +418,16 @@ struct AgentStateInner {
 }
 
 impl AgentStateInner {
+    /// Appends a log entry, evicting the oldest entries so the log history
+    /// stays bounded at [`MAX_LOGS`].
+    fn push_log(&mut self, entry: LogEntry) {
+        if self.logs.len() >= MAX_LOGS {
+            let overflow = self.logs.len() + 1 - MAX_LOGS;
+            self.logs.drain(..overflow);
+        }
+        self.logs.push(entry);
+    }
+
     fn adapter_runtime(&self, adapter_id: &str) -> Option<&AdapterRuntime> {
         self.adapter_runtimes.get(adapter_id)
     }
@@ -605,7 +616,7 @@ impl AgentState {
                     merge_profiles(persisted.profiles),
                     &active_profile_id,
                 ),
-                adapters: default_adapters(),
+                adapters: adapters_with_persisted_state(&persisted.adapters),
                 telemetry: SignalSnapshot::default(),
                 logs: vec![LogEntry {
                     level: "info".to_string(),
@@ -930,7 +941,7 @@ impl AgentState {
 
     async fn log_warn(&self, message: String) {
         let mut inner = self.inner.write().await;
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: "warn".to_string(),
             message,
             timestamp: current_timestamp(),
@@ -956,7 +967,7 @@ impl AgentState {
 
         if should_log {
             let mut inner = self.inner.write().await;
-            inner.logs.push(LogEntry {
+            inner.push_log(LogEntry {
                 level: "warn".to_string(),
                 message,
                 timestamp: current_timestamp(),
@@ -1191,6 +1202,13 @@ impl AgentState {
     ) {
         let realtime = {
             let mut inner = self.inner.write().await;
+            if inner
+                .adapters
+                .iter()
+                .any(|adapter| adapter.id == adapter_id && !adapter.enabled)
+            {
+                return;
+            }
             let mut updates = updates;
             let packet_rate_hz = inner
                 .adapter_runtime_mut(adapter_id)
@@ -1274,7 +1292,7 @@ impl AgentState {
                             .map(|runtime| runtime.display_name.clone())
                             .unwrap_or_else(|| adapter_id.to_string())
                     });
-                inner.logs.push(LogEntry {
+                inner.push_log(LogEntry {
                     level: "info".to_string(),
                     message: format!("{display_name} stream connected ({packet_len} byte packets)"),
                     timestamp: current_timestamp(),

@@ -363,6 +363,7 @@ pub(crate) fn edge_profile_config_from_hardware(
 pub(crate) fn edge_profile_from_slot_config(
     slot: EdgeOnboardSlotId,
     config: &EdgeProfileSlotConfig,
+    previous: Option<&EdgeOnboardProfile>,
 ) -> EdgeOnboardProfile {
     let config = config.clone().normalized();
     let mut profile = EdgeOnboardProfile::new(slot, config.name.clone());
@@ -371,20 +372,46 @@ pub(crate) fn edge_profile_from_slot_config(
         right: [config.trigger.r2_from, config.trigger.r2_to],
         unified: config.trigger.same_range,
     };
-    profile.left_stick = EdgeStickProfile {
-        preset: EdgeStickPreset::from_label(&config.sticks.left_curve),
-        ..EdgeStickProfile::default()
-    };
-    profile.right_stick = EdgeStickProfile {
-        preset: EdgeStickPreset::from_label(&config.sticks.right_curve),
-        ..EdgeStickProfile::default()
-    };
+    profile.left_stick = edge_stick_profile_from_label(
+        &config.sticks.left_curve,
+        previous.map(|previous| previous.left_stick),
+    );
+    profile.right_stick = edge_stick_profile_from_label(
+        &config.sticks.right_curve,
+        previous.map(|previous| previous.right_stick),
+    );
     profile.trigger_effect_intensity =
         edge_profile_intensity_from_trigger(&config.trigger.intensity);
     profile.vibration_intensity = edge_profile_intensity_from_vibration(&config.trigger.vibration);
     profile.button_mappings = edge_button_mappings_from_config(&config.buttons);
     profile.updated_at_ms = current_timestamp_millis();
     profile
+}
+
+/// Resolves a stick curve label to the hardware stick profile. A named
+/// preset always uses default curve points, but a `Custom` label keeps the
+/// previously-read stick profile (preset byte and curve points) so saving
+/// an unrelated slot edit never discards an onboard custom curve.
+pub(crate) fn edge_stick_profile_from_label(
+    label: &str,
+    previous: Option<EdgeStickProfile>,
+) -> EdgeStickProfile {
+    let preset = EdgeStickPreset::from_label(label);
+    if preset == EdgeStickPreset::Custom {
+        if let Some(previous) = previous {
+            return previous;
+        }
+    }
+    EdgeStickProfile {
+        preset,
+        ..EdgeStickProfile::default()
+    }
+}
+
+pub(crate) fn edge_slot_config_keeps_custom_curve(config: &EdgeProfileSlotConfig) -> bool {
+    [&config.sticks.left_curve, &config.sticks.right_curve]
+        .into_iter()
+        .any(|label| EdgeStickPreset::from_label(label) == EdgeStickPreset::Custom)
 }
 
 pub(crate) fn normalize_edge_onboard_profile_name(name: &str) -> String {
@@ -571,18 +598,20 @@ pub(crate) async fn get_edge_profiles(
     Path(id): Path<String>,
     State(state): State<AgentState>,
 ) -> Result<Json<EdgeProfilesResponse>, StatusCode> {
-    let (detail, store, to_save) = {
-        let mut inner = state.inner.write().await;
+    // Reads normalize a copy for the response without touching stored state;
+    // stores are normalized on load and on write.
+    let (detail, store) = {
+        let inner = state.inner.read().await;
         let detail = inner.controllers.detail(&id).ok_or(StatusCode::NOT_FOUND)?;
-        let snapshot = if let Some(store) = inner.edge_profiles.remove(&id) {
-            inner.edge_profiles.insert(id.clone(), store.normalized());
-            build_persist_snapshot(&inner)
-        } else {
-            None
-        };
-        (detail, inner.edge_profiles.get(&id).cloned(), snapshot)
+        (
+            detail,
+            inner
+                .edge_profiles
+                .get(&id)
+                .cloned()
+                .map(EdgeProfileStore::normalized),
+        )
     };
-    persist_snapshot(&state, to_save).await;
 
     if detail.model != "DualSense Edge" {
         return Ok(Json(EdgeProfilesResponse::for_controller(
@@ -647,7 +676,23 @@ pub(crate) async fn write_edge_profile(
     }
 
     let mut config = edge_profile_config_from_request(request);
-    let hardware_profile = edge_profile_from_slot_config(slot_id, &config);
+    let previous_profile = if edge_slot_config_keeps_custom_curve(&config) {
+        // A Custom curve label carries no curve points of its own, so read
+        // the live slot first and preserve its stored stick profile.
+        read_edge_profiles_from_hardware(&state, &id)
+            .await
+            .ok()
+            .and_then(|hardware| {
+                hardware
+                    .profiles
+                    .into_iter()
+                    .find(|profile| profile.slot == slot_id)
+            })
+    } else {
+        None
+    };
+    let hardware_profile =
+        edge_profile_from_slot_config(slot_id, &config, previous_profile.as_ref());
     let write_result = write_edge_profile_to_hardware(&state, &id, hardware_profile).await;
     let (status, message, dry_run, level) = match write_result {
         EdgeHardwareProfileWriteResult::Written => {
@@ -688,7 +733,7 @@ pub(crate) async fn write_edge_profile(
             .or_default()
             .slots
             .insert(slot.clone(), config);
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: level.to_string(),
             message: message.clone(),
             timestamp: current_timestamp(),

@@ -231,6 +231,17 @@
   color: var(--ink-muted);
 }
 
+.tuning-profile-editor-text {
+  display: block;
+  min-width: 0;
+  line-height: 30px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-size: 12px;
+}
+
 .tuning-profile-editor input {
   background: var(--surface-raised);
   border: 1px solid var(--hairline-strong);
