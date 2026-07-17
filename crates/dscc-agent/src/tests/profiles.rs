@@ -257,6 +257,64 @@ async fn profiles_can_be_exported_and_imported() {
 }
 
 #[tokio::test]
+async fn imported_profile_config_is_normalized_before_storage() {
+    let state = AgentState::mock();
+    let router = app(state.clone());
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/profiles/import")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r##"{
+                        "schema":"dev.dscc.profile.v1",
+                        "id":"imported-hot",
+                        "name":"Imported Hot",
+                        "config":{
+                            "lightbar":{"enabled":true,"color":"#ff0000","brightness":250},
+                            "trigger":{
+                                "sameRange":false,
+                                "l2From":10,
+                                "l2To":90,
+                                "r2From":0,
+                                "r2To":100,
+                                "effect":"Wall",
+                                "intensity":"Medium",
+                                "vibration":"Medium"
+                            },
+                            "sticks":{
+                                "leftCurve":"Default",
+                                "leftCurveAmount":50,
+                                "leftDeadzone":5,
+                                "rightCurve":"Default",
+                                "rightCurveAmount":110,
+                                "rightDeadzone":42
+                            }
+                        }
+                    }"##,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let inner = state.inner.read().await;
+    let stored = inner
+        .profile_configs
+        .get("imported-hot")
+        .expect("imported config is stored");
+    assert_eq!(
+        stored.lightbar.brightness, 100,
+        "out-of-range brightness must be clamped at import"
+    );
+    assert_eq!(stored.sticks.right_curve_amount, 100);
+    assert_eq!(stored.sticks.right_deadzone, 40);
+}
+
+#[tokio::test]
 async fn modules_and_profile_resolution_are_api_visible() {
     let router = app(AgentState::mock());
 
