@@ -47,7 +47,7 @@ pub(crate) async fn update_controller(
         let mut inner = state.inner.write().await;
         let detail = inner.controllers.detail(&id).ok_or(StatusCode::NOT_FOUND)?;
         inner.controller_names.insert(id.clone(), name.clone());
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: "info".to_string(),
             message: format!("Controller {id} renamed to {name}"),
             timestamp: current_timestamp(),
@@ -116,7 +116,7 @@ pub(crate) async fn update_controller_config(
             ControllerConfig::from_update(id.clone(), detail.model, request, existing_input_bridge);
         inner.controller_configs.insert(id.clone(), config.clone());
         inner.effect_revision = inner.effect_revision.saturating_add(1);
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: "info".to_string(),
             message: format!("Configuration saved for controller {id}"),
             timestamp: current_timestamp(),
