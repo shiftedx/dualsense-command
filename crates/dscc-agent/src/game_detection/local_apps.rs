@@ -310,7 +310,7 @@ pub(crate) async fn add_local_game(
             ));
         }
         inner.user_games.insert(game_id.clone(), new_game.clone());
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: "info".to_string(),
             message: format!(
                 "Registered local app {} ({} processes)",
@@ -618,7 +618,7 @@ pub(crate) async fn add_custom_game(
             ));
         }
         inner.user_games.insert(game_id.clone(), new_game.clone());
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: "info".to_string(),
             message: format!(
                 "Registered custom Steam game {} ({} processes)",
@@ -659,7 +659,7 @@ pub(crate) async fn remove_custom_game(
         if inner.user_games.remove(&game_id).is_none() {
             return Err(StatusCode::NOT_FOUND);
         }
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: "info".to_string(),
             message: format!("Removed custom game {game_id}"),
             timestamp: current_timestamp(),

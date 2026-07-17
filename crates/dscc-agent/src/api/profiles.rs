@@ -163,7 +163,7 @@ pub(crate) async fn update_profile(
             }
         }
         inner.effect_revision = inner.effect_revision.saturating_add(1);
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: "info".to_string(),
             message: format!("Renamed profile {}", updated.name),
             timestamp: current_timestamp(),
@@ -233,7 +233,7 @@ pub(crate) async fn update_profile_config(
             );
         }
         inner.effect_revision = inner.effect_revision.saturating_add(1);
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: "info".to_string(),
             message: format!("Profile settings saved for {profile_name}"),
             timestamp: current_timestamp(),
@@ -293,7 +293,7 @@ pub(crate) async fn delete_profile(
             profile.active = active_profile_id.as_deref() == Some(profile.id.as_str());
         }
         inner.effect_revision = inner.effect_revision.saturating_add(1);
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: "info".to_string(),
             message: format!("Deleted profile {deleted_name}"),
             timestamp: current_timestamp(),

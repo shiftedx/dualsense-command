@@ -19,7 +19,7 @@ pub(crate) async fn udp_telemetry_adapter_loop(
             inner
                 .adapter_runtime_mut(adapter.id)
                 .mark_bind_error(bind_addr, error.to_string());
-            inner.logs.push(LogEntry {
+            inner.push_log(LogEntry {
                 level: "warn".to_string(),
                 message: format!(
                     "{} listener could not bind {bind_addr}: {error}",
@@ -34,7 +34,7 @@ pub(crate) async fn udp_telemetry_adapter_loop(
     {
         let mut inner = state.inner.write().await;
         inner.adapter_runtime_mut(adapter.id).mark_bound(bind_addr);
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: "info".to_string(),
             message: format!("{} listener ready on {bind_addr}", adapter.display_name),
             timestamp: current_timestamp(),
@@ -76,7 +76,7 @@ pub(crate) async fn udp_telemetry_adapter_loop(
             Err(error) => {
                 let mut inner = state.inner.write().await;
                 inner.adapter_runtime_mut(adapter.id).last_error = Some(error.to_string());
-                inner.logs.push(LogEntry {
+                inner.push_log(LogEntry {
                     level: "warn".to_string(),
                     message: format!("{} listener read failed: {error}", adapter.display_name),
                     timestamp: current_timestamp(),

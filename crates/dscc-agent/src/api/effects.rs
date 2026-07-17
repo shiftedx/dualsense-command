@@ -213,7 +213,7 @@ pub(crate) async fn run_effect_test_for_controller(
 
     {
         let mut inner = state.inner.write().await;
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: if accepted { "info" } else { "warn" }.to_string(),
             message: format!("{}: target={} mode={}", message, target, mode),
             timestamp: current_timestamp(),

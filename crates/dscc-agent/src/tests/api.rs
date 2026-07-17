@@ -24,6 +24,35 @@ async fn status_reports_mock_active_state() {
 }
 
 #[tokio::test]
+async fn log_history_is_capped_and_drops_oldest_entries() {
+    let state = AgentState::mock();
+    {
+        let mut inner = state.inner.write().await;
+        let seeded = inner.logs.len();
+        for index in 0..(MAX_LOGS + 40) {
+            inner.push_log(LogEntry {
+                level: "info".to_string(),
+                message: format!("bounded log entry {index}"),
+                timestamp: current_timestamp(),
+            });
+        }
+        assert!(seeded > 0, "mock state seeds at least one log entry");
+        assert_eq!(inner.logs.len(), MAX_LOGS);
+        assert_eq!(
+            inner.logs.last().map(|entry| entry.message.as_str()),
+            Some(format!("bounded log entry {}", MAX_LOGS + 39).as_str())
+        );
+        assert!(!inner
+            .logs
+            .iter()
+            .any(|entry| entry.message == "bounded log entry 0"));
+    }
+
+    let logs: Vec<LogEntry> = get_json(app(state), "/api/logs", StatusCode::OK).await;
+    assert_eq!(logs.len(), MAX_LOGS);
+}
+
+#[tokio::test]
 async fn support_bundle_route_returns_sanitized_shareable_payload() {
     let _env = TestEnv::new(&["USERPROFILE", "HOME", "DSCC_WEB_DIST"]);
     std::env::set_var("USERPROFILE", r"C:\Users\ExampleUser");
