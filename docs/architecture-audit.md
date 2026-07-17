@@ -9,6 +9,9 @@ profile management) and the three lib.rs slices (`ForzaEffectRuntime`,
 background loops, game detection cache) are now extracted and marked completed
 below._
 
+_Updated 2026-07-17: App.svelte line counts refreshed. The shell has grown
+back to ~2,741 lines with features added since the extractions._
+
 This audit looks at DSCC through the lens of the project's own engineering
 skills: the domain language in [CONTEXT.md](../CONTEXT.md) and the decisions in
 [docs/adr/](adr/). It records the current shape of the two largest source files
@@ -23,9 +26,10 @@ The Rust agent is well separated: a typed controller-output boundary
 kept distinct from telemetry adapters
 ([ADR 0005](adr/0005-separate-game-modules-and-telemetry-adapters.md)), and a
 consistent habit of extracting pure compute (hashing, diagnostics, shift
-detection). The web UI carried the main smell: `web/src/App.svelte` is now a
-2,336-line shell (down from ~2,700) that still bundles several concerns, though
-its three largest have been extracted.
+detection). The web UI carried the main smell: `web/src/App.svelte` is a
+~2,741-line shell (as of 2026-07-17; the extractions below took it to ~2,336
+before later features grew it back) that still bundles several concerns,
+though its three largest have been extracted.
 
 Domain-language hygiene is clean in both files. The CONTEXT.md `_Avoid_` terms
 (Device, HID device, gamepad, plugin, backend, bus) do not leak into
@@ -33,7 +37,7 @@ user-facing or public API names; the code consistently uses Controller, Target
 Controller, Profile Resolution, Game Module, Telemetry Adapter, Hardware
 Output, Edge Onboard Slot, and Runtime Live Effect.
 
-## web/src/App.svelte (2,336 lines)
+## web/src/App.svelte (~2,741 lines as of 2026-07-17)
 
 A capable shell whose three heaviest concerns have been extracted to `app/`
 modules. The remaining distinct concerns are listed with their current line
@@ -61,9 +65,10 @@ Corsa Rally) should follow.
 
 ### Remaining order (App.svelte)
 
-The completed slices took App.svelte from ~2,700 to 2,336 lines without touching
-backend behavior. The remaining items below are smaller follow-ups, each
-independently shippable:
+The completed slices took App.svelte from ~2,700 to ~2,336 lines at the time
+without touching backend behavior; later features have since grown the shell
+again. The remaining items below are smaller follow-ups, each independently
+shippable:
 
 1. **Controller selection & rename**: the pure workspace helpers
    (`deriveTargetControllerWorkspace`, `targetControllerSelection`,

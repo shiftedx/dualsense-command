@@ -964,3 +964,174 @@ fn steam_input_writer_rejects_layouts_over_guarded_size_limit() {
     );
     let _ = fs::remove_dir_all(root);
 }
+
+#[tokio::test]
+async fn steam_input_binding_route_honors_snake_case_dry_run() {
+    let _env = TestEnv::new(&["DSCC_STEAM_ROOT"]);
+    let root = temp_test_dir("dscc-steam-input-snake-dry");
+    let layout_dir = root
+        .join("steamapps")
+        .join("common")
+        .join("Steam Controller Configs")
+        .join("123456")
+        .join("config")
+        .join("2483190");
+    fs::create_dir_all(&layout_dir).expect("layout fixture directory");
+    let layout_file = layout_dir.join("controller_ps5.vdf");
+    let original = r##""controller_mappings"
+{
+"title" "Gamepad"
+"controller_type" "controller_ps5_edge"
+"group"
+{
+    "id" "7"
+    "mode" "switches"
+    "inputs"
+    {
+        "button_back_left"
+        {
+            "activators"
+            {
+                "Full_Press"
+                {
+                    "bindings"
+                    {
+                        "binding" "key_press Q, , "
+                    }
+                }
+            }
+        }
+    }
+}
+}"##;
+    fs::write(&layout_file, original).expect("layout fixture");
+    let source = sanitized_steam_path(&root, &layout_file).expect("sanitized source");
+    std::env::set_var("DSCC_STEAM_ROOT", &root);
+
+    let body = serde_json::json!({
+        "layoutSource": source,
+        "appId": "2483190",
+        "inputId": "button_back_left",
+        "groupId": "7",
+        "activator": "Full Press",
+        "rawBinding": "key_press M",
+        "profileName": "Base",
+        "dry_run": true,
+    });
+    let response = app(AgentState::mock())
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/steam-input/bindings")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+    let parsed: SteamInputBindingWriteResponse = serde_json::from_slice(&bytes).unwrap();
+    assert!(
+        parsed.dry_run,
+        "snake_case dry_run must be honored as a dry run"
+    );
+    assert!(parsed.accepted);
+    assert_eq!(parsed.backup_path, None);
+    assert_eq!(
+        fs::read_to_string(&layout_file).expect("layout still readable"),
+        original,
+        "a snake_case dry_run request must not write the layout"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn steam_input_paddle_preset_route_honors_snake_case_dry_run() {
+    let _env = TestEnv::new(&["DSCC_STEAM_ROOT"]);
+    let root = temp_test_dir("dscc-steam-paddle-snake-dry");
+    let layout_dir = root
+        .join("steamapps")
+        .join("common")
+        .join("Steam Controller Configs")
+        .join("123456")
+        .join("config")
+        .join("2483190");
+    fs::create_dir_all(&layout_dir).expect("layout fixture directory");
+    let layout_file = layout_dir.join("controller_ps5.vdf");
+    let original = r##""controller_mappings"
+{
+"title" "Forza Layout"
+"controller_type" "controller_ps5_edge"
+"group"
+{
+    "id" "7"
+    "mode" "switches"
+    "inputs"
+    {
+        "button_back_left"
+        {
+            "activators"
+            {
+                "Full_Press"
+                {
+                    "bindings"
+                    {
+                        "binding" "xinput_button joystick_left, , "
+                    }
+                }
+            }
+        }
+        "button_back_right"
+        {
+            "activators"
+            {
+                "Full_Press"
+                {
+                    "bindings"
+                    {
+                        "binding" "xinput_button joystick_right, , "
+                    }
+                }
+            }
+        }
+    }
+}
+}"##;
+    fs::write(&layout_file, original).expect("layout fixture");
+    let source = sanitized_steam_path(&root, &layout_file).expect("sanitized source");
+    std::env::set_var("DSCC_STEAM_ROOT", &root);
+
+    let body = serde_json::json!({
+        "layoutSource": source,
+        "appId": "2483190",
+        "profileName": "Forza Paddle Shift",
+        "dry_run": true,
+    });
+    let response = app(AgentState::mock())
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/steam-input/paddle-preset")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+    let parsed: SteamInputPaddlePresetResponse = serde_json::from_slice(&bytes).unwrap();
+    assert!(
+        parsed.dry_run,
+        "snake_case dry_run must be honored as a dry run"
+    );
+    assert!(parsed.accepted);
+    assert_eq!(parsed.backup_path, None);
+    assert_eq!(
+        fs::read_to_string(&layout_file).expect("layout still readable"),
+        original,
+        "a snake_case dry_run request must not write the layout"
+    );
+    let _ = fs::remove_dir_all(root);
+}

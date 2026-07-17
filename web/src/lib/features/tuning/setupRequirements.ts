@@ -1,4 +1,4 @@
-import type { AdapterStatus, SupportedGame } from '../../types';
+import type { AdapterStatus, ModuleSummary, SupportedGame } from '../../types';
 
 // Pure setup-walkthrough model for the Tuning canvas (Task 8). Each Game
 // Module's metadata plus live telemetry state derive `{required, steps,
@@ -65,6 +65,55 @@ export function telemetryPortFromAdapter(adapter: AdapterStatus | null | undefin
   return DEFAULT_TELEMETRY_PORT;
 }
 
+export type GameTelemetryAdapterLink = {
+  adapterId: string | null;
+  protocol: string | null;
+};
+
+const GAME_MODULE_PROTOCOL_PREFIX = 'game:';
+
+/**
+ * Resolve a Supported Game's Telemetry Adapter from the module catalog. Game
+ * modules report `protocol: "game:<adapterId>"`; the adapter module with that
+ * id reports the transport protocol (`udp`, `sharedmemory`, ...). Returns
+ * nulls when the catalog does not know the game (the mock fixture, custom
+ * games).
+ */
+export function gameTelemetryAdapter(modules: ModuleSummary[], gameId: string): GameTelemetryAdapterLink {
+  const gameModule = gameId
+    ? modules.find((module) => module.kind === 'game' && module.id === gameId)
+    : undefined;
+  const linkedId = gameModule?.protocol.startsWith(GAME_MODULE_PROTOCOL_PREFIX)
+    ? gameModule.protocol.slice(GAME_MODULE_PROTOCOL_PREFIX.length)
+    : '';
+  const adapterId = linkedId || null;
+  const adapterModule = adapterId
+    ? modules.find((module) => module.kind === 'adapter' && module.id === adapterId)
+    : undefined;
+  return { adapterId, protocol: adapterModule?.protocol ?? null };
+}
+
+/**
+ * Shared-memory Telemetry Adapters need no in-game configuration: DSCC reads
+ * the public shared-memory pages on its own once the game is driving.
+ */
+export function isSharedMemoryTelemetry(adapter: GameTelemetryAdapterLink | null | undefined): boolean {
+  if (!adapter) return false;
+  const protocol = (adapter.protocol ?? '').toLowerCase().replace(/[-_\s]/g, '');
+  if (protocol === 'sharedmemory') return true;
+  return /shared[-_]?memory/.test((adapter.adapterId ?? '').toLowerCase());
+}
+
+/**
+ * Exact Data Out menu locations by Game Module id. Forza Motorsport files the
+ * feed under a differently-ordered menu than the Horizon titles (per the
+ * public Forza Data Out documentation).
+ */
+const DATA_OUT_MENU_PATHS: Record<string, string> = {
+  'forza-motorsport': 'Settings → Gameplay & HUD → Data Out'
+};
+const DEFAULT_DATA_OUT_MENU_PATH = 'Settings → HUD and Gameplay → Data Out';
+
 const foundDetail = (game: SupportedGame): string => {
   if (game.running) return 'Running now.';
   if (game.source === 'local_app') return 'Added as a local app.';
@@ -79,11 +128,15 @@ export function deriveSetupModel(options: {
   /** Packets were seen for this game at least once (persisted). */
   verified: boolean;
   port?: number;
+  /** The game's linked Telemetry Adapter, when the module catalog knows it. */
+  telemetryAdapter?: GameTelemetryAdapterLink | null;
 }): SetupModel {
   const { game, telemetryFresh, verified } = options;
   const port = options.port ?? DEFAULT_TELEMETRY_PORT;
 
-  if (game.supportLevel !== 'telemetry') {
+  // Shared-memory games (Assetto Corsa Rally) need no in-game setup: no port,
+  // no Data Out menu. They get the same zero-setup variant as custom games.
+  if (game.supportLevel !== 'telemetry' || isSharedMemoryTelemetry(options.telemetryAdapter)) {
     return { required: false, verified, fresh: telemetryFresh, port, steps: [] };
   }
 
@@ -100,7 +153,7 @@ export function deriveSetupModel(options: {
       state: telemetryFresh ? 'done' : found ? 'now' : 'todo',
       title: "Turn on the game's telemetry feed",
       detail: `In ${game.name}: `,
-      menuPath: 'Settings → HUD and Gameplay → Data Out',
+      menuPath: DATA_OUT_MENU_PATHS[game.gameId] ?? DEFAULT_DATA_OUT_MENU_PATH,
       detailAfterPath: '. Some versions call it UDP Race Telemetry. Set:',
       copyValues: [
         { label: 'IP address', value: TELEMETRY_TARGET_IP },
