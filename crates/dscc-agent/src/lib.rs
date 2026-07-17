@@ -55,7 +55,7 @@ use tokio::{
     net::{TcpListener, UdpSocket},
     sync::{broadcast, Mutex as AsyncMutex, RwLock},
 };
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 use tracing::info;
 
 mod adapter_runtime;
