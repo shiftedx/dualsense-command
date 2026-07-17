@@ -299,6 +299,10 @@ export const createProfileManagement = (deps: ProfileManagementDeps) => {
       profiles.find((profile) => profile.id !== id)?.id ??
       '';
     if (state().renameProfileId === id) cancelRenameProfile();
+    // Retarget the selection BEFORE the delete: anything that fetches config
+    // for the selected profile must never see the id we are about to remove.
+    const wasSelected = deps.getSelectedOverrideProfileId() === id;
+    if (wasSelected) deps.setSelectedOverrideProfileId(fallbackProfileId);
     patch({ fileBusy: true });
     try {
       const snapshot = deps.getSnapshot();
@@ -313,6 +317,8 @@ export const createProfileManagement = (deps: ProfileManagementDeps) => {
       if (deps.getSelectedOverrideProfileId() === id) deps.setSelectedOverrideProfileId(fallbackProfileId);
       deps.notify(response?.message ?? `Deleted ${name}`);
     } catch (caught) {
+      // The profile still exists; put the selection back before resyncing.
+      if (wasSelected) deps.setSelectedOverrideProfileId(id);
       deps.notify(caught instanceof Error ? caught.message : 'Failed to delete profile');
       await deps.refresh();
     } finally {
