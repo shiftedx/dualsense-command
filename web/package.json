@@ -9,6 +9,7 @@
     "dev:mock": "vite --host 127.0.0.1 --mode mock",
     "check": "npm run typecheck && npm run test:source-audit && npm run test:button-map && npm run test:snapshot-map && npm run test:haptics-graph && npm run build && npm run test:release-size && npm run test:visual-smoke",
     "build": "vite build",
+    "check:perf": "node ../tools/check-perf.mjs",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json",
     "preview": "vite preview --host 127.0.0.1",
     "test:button-map": "node --experimental-strip-types scripts/button-mapping-p95.mjs",
