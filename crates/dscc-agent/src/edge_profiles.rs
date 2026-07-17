@@ -571,18 +571,20 @@ pub(crate) async fn get_edge_profiles(
     Path(id): Path<String>,
     State(state): State<AgentState>,
 ) -> Result<Json<EdgeProfilesResponse>, StatusCode> {
-    let (detail, store, to_save) = {
-        let mut inner = state.inner.write().await;
+    // Reads normalize a copy for the response without touching stored state;
+    // stores are normalized on load and on write.
+    let (detail, store) = {
+        let inner = state.inner.read().await;
         let detail = inner.controllers.detail(&id).ok_or(StatusCode::NOT_FOUND)?;
-        let snapshot = if let Some(store) = inner.edge_profiles.remove(&id) {
-            inner.edge_profiles.insert(id.clone(), store.normalized());
-            build_persist_snapshot(&inner)
-        } else {
-            None
-        };
-        (detail, inner.edge_profiles.get(&id).cloned(), snapshot)
+        (
+            detail,
+            inner
+                .edge_profiles
+                .get(&id)
+                .cloned()
+                .map(EdgeProfileStore::normalized),
+        )
     };
-    persist_snapshot(&state, to_save).await;
 
     if detail.model != "DualSense Edge" {
         return Ok(Json(EdgeProfilesResponse::for_controller(
