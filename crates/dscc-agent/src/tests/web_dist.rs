@@ -25,6 +25,53 @@ fn web_dist_finds_packaged_assets_next_to_binary() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[tokio::test]
+async fn spa_fallback_serves_index_with_ok_and_keeps_api_not_found() {
+    let _env = TestEnv::new(&["DSCC_WEB_DIST"]);
+    let root = temp_test_dir("dscc-spa-fallback");
+    fs::create_dir_all(&root).expect("web dist fixture directory");
+    fs::write(
+        root.join("index.html"),
+        "<!doctype html><title>DSCC</title>",
+    )
+    .expect("web dist fixture");
+    std::env::set_var("DSCC_WEB_DIST", &root);
+
+    let response = app(AgentState::mock())
+        .oneshot(
+            Request::builder()
+                .uri("/some/unknown/path")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let content_type = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .expect("content type header")
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(content_type.starts_with("text/html"), "{content_type}");
+    let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+    assert!(String::from_utf8(body.to_vec()).unwrap().contains("DSCC"));
+
+    let api_response = app(AgentState::mock())
+        .oneshot(
+            Request::builder()
+                .uri("/api/unknown-route")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(api_response.status(), StatusCode::NOT_FOUND);
+
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn web_dist_candidates_cover_repo_and_packaged_layouts() {
     let repo = PathBuf::from("repo-root");

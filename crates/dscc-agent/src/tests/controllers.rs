@@ -254,6 +254,94 @@ async fn controller_config_can_be_read_and_updated() {
         .iter()
         .any(|button| button.key == "Back Right" && button.label == "R3"));
 }
+
+#[tokio::test]
+async fn get_config_and_edge_profiles_do_not_rewrite_persisted_state() {
+    let state = AgentState::from_controller_events([attach_event(
+        "edge-read-only",
+        ControllerFamily::DualSenseEdge,
+        ControllerTransportKind::Bluetooth,
+        Some(64),
+    )]);
+    let state_dir = temp_test_dir("dscc-get-no-persist");
+    let state_file = state_dir.join("state.json");
+    {
+        let mut inner = state.inner.write().await;
+        inner.storage = Some(PersistenceStore {
+            state_file: state_file.clone(),
+        });
+    }
+    let router = app(state.clone());
+
+    for _ in 0..2 {
+        let config: ControllerConfig = get_json(
+            router.clone(),
+            "/api/controllers/edge-read-only/config",
+            StatusCode::OK,
+        )
+        .await;
+        assert_eq!(config.controller_id, "edge-read-only");
+        assert_eq!(config.model, "DualSense Edge");
+        let _profiles: EdgeProfilesResponse = get_json(
+            router.clone(),
+            "/api/controllers/edge-read-only/edge-profiles",
+            StatusCode::OK,
+        )
+        .await;
+        assert!(
+            !state_file.exists(),
+            "GET endpoints must not persist agent state"
+        );
+    }
+    {
+        let inner = state.inner.read().await;
+        assert!(
+            inner.controller_configs.is_empty(),
+            "GET config must not insert a config entry"
+        );
+    }
+
+    // Sanity check the spy wiring: a real write persists through the store.
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/controllers/edge-read-only/config")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{
+                        "trigger":{
+                            "sameRange":true,
+                            "l2From":10,
+                            "l2To":90,
+                            "r2From":0,
+                            "r2To":100,
+                            "effect":"Wall",
+                            "intensity":"Medium",
+                            "vibration":"Medium"
+                        },
+                        "sticks":{
+                            "leftCurve":"Default",
+                            "leftCurveAmount":50,
+                            "leftDeadzone":5,
+                            "rightCurve":"Default",
+                            "rightCurveAmount":50,
+                            "rightDeadzone":5
+                        }
+                    }"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        state_file.exists(),
+        "PUT config persists through the same store"
+    );
+    let _ = fs::remove_dir_all(&state_dir);
+}
+
 #[tokio::test]
 async fn real_controller_replaces_windows_pnp_fallback() {
     let state = AgentState::from_controller_events([attach_event(

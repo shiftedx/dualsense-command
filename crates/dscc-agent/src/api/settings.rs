@@ -89,7 +89,7 @@ pub(crate) async fn update_app_settings(
             }
         }
         inner.app_settings = settings.clone();
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: "info".to_string(),
             message: "Application settings updated".to_string(),
             timestamp: current_timestamp(),

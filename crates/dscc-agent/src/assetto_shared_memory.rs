@@ -327,7 +327,7 @@ pub(crate) async fn assetto_shared_memory_adapter_loop(state: AgentState) {
         inner
             .adapter_runtime_mut(ASSETTO_SHARED_MEMORY_ADAPTER_ID)
             .mark_ready();
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: "info".to_string(),
             message: "Assetto shared-memory reader ready".to_string(),
             timestamp: current_timestamp(),

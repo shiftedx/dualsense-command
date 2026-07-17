@@ -78,6 +78,15 @@ pub struct ControllerState {
 }
 
 /// Profile-level policy for standard rumble writes.
+///
+/// Actual semantics today: only `FullControl` lets the effect engine copy a
+/// resolved `EffectTarget::Rumble` rule into `ControllerOutputFrame::rumble`.
+/// `TriggerOverlay` and `Disabled` currently behave identically — both
+/// suppress engine rumble, and no overlay behavior exists despite the
+/// `TriggerOverlay` name. No built-in profile defines an
+/// `EffectTarget::Rumble` rule, so production rumble flows through the Forza
+/// enhancement path in the agent rather than through this policy. Collapsing
+/// or extending the enum is a pending product decision.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RumblePolicy {
@@ -1168,6 +1177,58 @@ mod tests {
         match trigger {
             TriggerOutput::AdaptiveResistance { strength, .. } => *strength,
             other => panic!("expected adaptive resistance, got {other:?}"),
+        }
+    }
+
+    fn rumble_rule_profile(rumble_policy: RumblePolicy) -> Profile {
+        Profile {
+            id: "rumble-policy".to_owned(),
+            name: "Rumble Policy".to_owned(),
+            version: 1,
+            rumble_policy,
+            rules: vec![EffectRule {
+                id: "engine-rumble".to_owned(),
+                target: EffectTarget::Rumble,
+                priority: 10,
+                condition: RuleCondition::Always,
+                effect: EffectTemplate::Rumble {
+                    low_frequency: ValueSource::signal_scale("input.throttle", 0.0, 1.0, 0.0, 1.0),
+                    high_frequency: ValueSource::constant(0.25),
+                },
+                smoothing: None,
+                hysteresis: None,
+                timeout: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn full_control_policy_emits_engine_rumble() {
+        let mut engine = EffectEngine::new();
+        let frame = engine.evaluate_at(
+            &rumble_rule_profile(RumblePolicy::FullControl),
+            &throttle_snapshot(0.8),
+            Instant::now(),
+        );
+
+        let rumble = frame.rumble.expect("FullControl should emit engine rumble");
+        assert!((rumble.low_frequency - 0.8).abs() < 1e-9);
+        assert!((rumble.high_frequency - 0.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn trigger_overlay_and_disabled_policies_suppress_engine_rumble() {
+        for policy in [RumblePolicy::TriggerOverlay, RumblePolicy::Disabled] {
+            let mut engine = EffectEngine::new();
+            let frame = engine.evaluate_at(
+                &rumble_rule_profile(policy),
+                &throttle_snapshot(0.8),
+                Instant::now(),
+            );
+            assert_eq!(
+                frame.rumble, None,
+                "{policy:?} should suppress engine rumble"
+            );
         }
     }
 

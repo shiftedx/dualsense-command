@@ -6,7 +6,7 @@ pub(crate) struct PersistenceStore {
     pub(crate) state_file: PathBuf,
 }
 
-pub(crate) const PERSISTED_STATE_VERSION: u32 = 8;
+pub(crate) const PERSISTED_STATE_VERSION: u32 = 9;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,6 +24,14 @@ pub(crate) struct PersistedAgentState {
     pub(crate) active_profile_id: Option<String>,
     #[serde(default)]
     pub(crate) user_games: BTreeMap<String, UserGameConfig>,
+    #[serde(default)]
+    pub(crate) adapters: BTreeMap<String, PersistedAdapterState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PersistedAdapterState {
+    pub(crate) enabled: bool,
 }
 
 impl PersistenceStore {
@@ -179,6 +187,11 @@ impl PersistedAgentState {
                 Some((game_id, config))
             })
             .collect();
+        self.adapters.retain(|id, _| {
+            built_in_adapters()
+                .iter()
+                .any(|adapter| adapter.id == id.as_str())
+        });
         self.version = PERSISTED_STATE_VERSION;
         self
     }
@@ -205,6 +218,18 @@ impl PersistedAgentState {
             app_settings: inner.app_settings.clone(),
             active_profile_id: inner.active_profile_id.clone(),
             user_games: inner.user_games.clone(),
+            adapters: inner
+                .adapters
+                .iter()
+                .map(|adapter| {
+                    (
+                        adapter.id.clone(),
+                        PersistedAdapterState {
+                            enabled: adapter.enabled,
+                        },
+                    )
+                })
+                .collect(),
         }
     }
 }

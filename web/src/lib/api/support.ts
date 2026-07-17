@@ -42,14 +42,16 @@ export async function getAppUpdateCheck(currentVersion: string): Promise<AppUpda
     throw new Error('Current app version is unavailable.');
   }
 
-  if (!import.meta.env.DEV || !isMockApiEnabled()) {
-    const params = new URLSearchParams({ currentVersion: normalizedCurrent });
-    try {
-      const dto = await apiFetch<AppUpdateCheckDto>(`/update-check?${params.toString()}`);
-      return normalizeUpdateCheckDto(dto, normalizedCurrent, 'agent');
-    } catch (caught) {
-      if (!shouldFallbackToGitHubUpdateCheck(caught)) throw caught;
-    }
+  if (import.meta.env.DEV && isMockApiEnabled()) {
+    return (await loadMockApi()).getMockAppUpdateCheck(normalizedCurrent);
+  }
+
+  const params = new URLSearchParams({ currentVersion: normalizedCurrent });
+  try {
+    const dto = await apiFetch<AppUpdateCheckDto>(`/update-check?${params.toString()}`);
+    return normalizeUpdateCheckDto(dto, normalizedCurrent, 'agent');
+  } catch (caught) {
+    if (!shouldFallbackToGitHubUpdateCheck(caught)) throw caught;
   }
 
   return getGitHubUpdateCheck(normalizedCurrent);
