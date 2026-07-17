@@ -1824,7 +1824,15 @@
         setSupportBundleMessage('Clipboard unavailable. Exported a sanitized support bundle instead.', 'info');
         return;
       }
-      await navigator.clipboard.writeText(body);
+      try {
+        await navigator.clipboard.writeText(body);
+      } catch {
+        // Permission denied or embedded context: same download fallback as a
+        // missing clipboard API — never surface the raw browser error.
+        downloadSupportBundleText(body);
+        setSupportBundleMessage('Clipboard unavailable. Exported a sanitized support bundle instead.', 'info');
+        return;
+      }
       setSupportBundleMessage(
         fallback ? 'Copied a sanitized UI support bundle. The agent bundle endpoint was unavailable.' : 'Copied sanitized support bundle.',
         fallback ? 'info' : 'success'
