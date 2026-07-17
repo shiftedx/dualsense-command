@@ -1018,7 +1018,7 @@ impl StickConfig {
     pub(crate) fn normalized(mut self) -> Self {
         for curve in [&mut self.left_curve, &mut self.right_curve] {
             if ![
-                "Default", "Quick", "Precise", "Steady", "Digital", "Dynamic",
+                "Default", "Quick", "Precise", "Steady", "Digital", "Dynamic", "Custom",
             ]
             .contains(&curve.as_str())
             {

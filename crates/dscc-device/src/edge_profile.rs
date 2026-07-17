@@ -150,6 +150,7 @@ impl EdgeStickPreset {
             "steady" => Self::Steady,
             "digital" => Self::Digital,
             "dynamic" => Self::Dynamic,
+            "custom" => Self::Custom,
             _ => Self::Default,
         }
     }
@@ -955,6 +956,67 @@ mod tests {
         assert_eq!(plan.ack_report_id, Some(0x64));
         assert_eq!(plan.payload(&encoded[0]).len(), EDGE_PROFILE_REPORT_LEN);
         assert_eq!(plan.payload(&encoded[0])[0], 0x61);
+    }
+
+    #[test]
+    fn edge_stick_preset_from_label_maps_every_preset() {
+        assert_eq!(EdgeStickPreset::from_label("Quick"), EdgeStickPreset::Quick);
+        assert_eq!(
+            EdgeStickPreset::from_label("Precise"),
+            EdgeStickPreset::Precise
+        );
+        assert_eq!(
+            EdgeStickPreset::from_label("Steady"),
+            EdgeStickPreset::Steady
+        );
+        assert_eq!(
+            EdgeStickPreset::from_label("Digital"),
+            EdgeStickPreset::Digital
+        );
+        assert_eq!(
+            EdgeStickPreset::from_label("Dynamic"),
+            EdgeStickPreset::Dynamic
+        );
+        assert_eq!(
+            EdgeStickPreset::from_label("Custom"),
+            EdgeStickPreset::Custom
+        );
+        assert_eq!(
+            EdgeStickPreset::from_label(" custom "),
+            EdgeStickPreset::Custom
+        );
+        assert_eq!(
+            EdgeStickPreset::from_label("unknown"),
+            EdgeStickPreset::Default
+        );
+    }
+
+    #[test]
+    fn edge_profile_round_trips_custom_stick_curves() {
+        let mut profile = EdgeOnboardProfile::new(EdgeOnboardSlotId::Square, "Custom Curve");
+        profile.left_stick = EdgeStickProfile {
+            preset: EdgeStickPreset::Custom,
+            curve_points: [3, 9, 60, 90, 140, 180, 210, 250],
+        };
+        profile.right_stick = EdgeStickProfile {
+            preset: EdgeStickPreset::Custom,
+            curve_points: [1, 7, 55, 85, 150, 190, 220, 240],
+        };
+
+        let encoded = encode_edge_onboard_profile(&profile).unwrap();
+        assert_eq!(encoded[2][30], 0xff);
+        assert_eq!(encoded[2][32], 0xff);
+
+        let mut read_encoded = encoded;
+        read_encoded[0][0] = 0x73;
+        read_encoded[1][0] = 0x73;
+        read_encoded[2][0] = 0x73;
+        let decoded =
+            decode_edge_onboard_profile([&read_encoded[0], &read_encoded[1], &read_encoded[2]])
+                .unwrap();
+
+        assert_eq!(decoded.left_stick, profile.left_stick);
+        assert_eq!(decoded.right_stick, profile.right_stick);
     }
 
     #[test]
