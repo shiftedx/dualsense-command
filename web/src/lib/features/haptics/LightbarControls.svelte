@@ -373,26 +373,9 @@
             </div>
           {/if}
         </div>
-        <input
-          class="dm-mini-range"
-          style="--value:{lightbarBrightness}%"
-          value={lightbarBrightness}
-          disabled={!lightbarEnabled}
-          max="100"
-          min="0"
-          type="range"
-          aria-label="Redline ramp brightness"
-          oninput={(event) => setLightbarBrightness(event.currentTarget.valueAsNumber)}
-        />
-        <code>{normalizeTriggerPercent(lightbarBrightness).toString().padStart(3, '0')}</code>
-        <button
-          class:active={lightbarEnabled}
-          class="dm-toggle"
-          type="button"
-          aria-label="Toggle redline ramp"
-          aria-pressed={lightbarEnabled}
-          onclick={() => setLightbarEnabled(!lightbarEnabled)}
-        ><span></span></button>
+        <!-- The redline ramp only has its own color; brightness and on/off are
+             the lightbar's, so the row says so instead of duplicating them. -->
+        <span class="dm-led-note">Brightness and on/off follow the lightbar</span>
         <button class="dm-mini-button" type="button" onclick={previewRpmColor}>Preview</button>
       </div>
     {/if}

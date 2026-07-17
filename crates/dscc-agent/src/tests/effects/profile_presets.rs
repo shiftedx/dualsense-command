@@ -284,20 +284,16 @@ async fn activating_forza_profile_writes_preset_into_controller_config() {
     )]);
     let router = app(state.clone());
 
-    // Touch the controller's config once so the lazy-created default
-    // config exists in `controller_configs` (the API materializes it on
-    // first GET).
-    let response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/controllers/edge-forza/config")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+    // Seed the controller's saved config with the engineering default
+    // (GET config computes defaults without inserting; configs are
+    // created on PUT).
+    {
+        let mut inner = state.inner.write().await;
+        inner.controller_configs.insert(
+            "edge-forza".to_string(),
+            ControllerConfig::default_for("edge-forza", "DualSense Edge"),
+        );
+    }
 
     // Sanity: the controller starts with the engineering default config
     // (which enables surface effects).
@@ -306,7 +302,7 @@ async fn activating_forza_profile_writes_preset_into_controller_config() {
         let config = inner
             .controller_configs
             .get("edge-forza")
-            .expect("controller config materialized by GET");
+            .expect("controller config seeded");
         let road = config
             .forza
             .effects
@@ -495,22 +491,16 @@ async fn activating_user_profile_leaves_controller_config_alone() {
     )]);
     let router = app(state.clone());
 
-    // Materialize the controller config and seed a user-created
-    // profile by writing it into state directly (the public API is
-    // `POST /api/profiles` — exercised elsewhere).
-    let response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/controllers/edge-forza/config")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+    // Seed the saved controller config and a user-created profile by
+    // writing them into state directly (the public APIs are
+    // `PUT /api/controllers/{id}/config` and `POST /api/profiles` —
+    // exercised elsewhere).
     {
         let mut inner = state.inner.write().await;
+        inner.controller_configs.insert(
+            "edge-forza".to_string(),
+            ControllerConfig::default_for("edge-forza", "DualSense Edge"),
+        );
         inner.profiles.push(ProfileSummary {
             id: "my-custom-profile".to_string(),
             name: "My Custom Profile".to_string(),
@@ -526,7 +516,7 @@ async fn activating_user_profile_leaves_controller_config_alone() {
             .controller_configs
             .get("edge-forza")
             .map(|config| config.forza.clone())
-            .expect("controller config materialized by GET")
+            .expect("controller config seeded")
     };
 
     let response = router

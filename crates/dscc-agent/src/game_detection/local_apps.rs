@@ -310,7 +310,7 @@ pub(crate) async fn add_local_game(
             ));
         }
         inner.user_games.insert(game_id.clone(), new_game.clone());
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: "info".to_string(),
             message: format!(
                 "Registered local app {} ({} processes)",
@@ -549,15 +549,16 @@ pub(crate) async fn add_custom_game(
     }
 
     let game_id = user_game_id_for_app_id(&app_id);
-    if built_in_game_modules()
+    if let Some(module) = built_in_game_modules()
         .iter()
-        .any(|module| module.id == game_id)
+        .find(|module| module.steam_app_ids.contains(&app_id.as_str()))
     {
         return Err((
             StatusCode::CONFLICT,
             Json(serde_json::json!({
-                "error": "A built-in module already covers this gameId",
-                "gameId": game_id,
+                "error": "A built-in module already covers this Steam appId",
+                "appId": app_id,
+                "gameId": module.id,
             })),
         ));
     }
@@ -618,7 +619,7 @@ pub(crate) async fn add_custom_game(
             ));
         }
         inner.user_games.insert(game_id.clone(), new_game.clone());
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: "info".to_string(),
             message: format!(
                 "Registered custom Steam game {} ({} processes)",
@@ -659,7 +660,7 @@ pub(crate) async fn remove_custom_game(
         if inner.user_games.remove(&game_id).is_none() {
             return Err(StatusCode::NOT_FOUND);
         }
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: "info".to_string(),
             message: format!("Removed custom game {game_id}"),
             timestamp: current_timestamp(),
