@@ -158,6 +158,56 @@ async fn add_custom_game_rejects_unknown_app_id() {
 }
 
 #[tokio::test]
+async fn add_custom_game_rejects_app_id_covered_by_built_in_module() {
+    let _env = TestEnv::new(&[
+        "DSCC_STEAM_ROOT",
+        "ProgramFiles(x86)",
+        "ProgramFiles",
+        "LOCALAPPDATA",
+    ]);
+    let steam_root = make_test_steam_root("dscc-add-custom-builtin");
+    install_test_steam_manifest(
+        &steam_root,
+        FORZA_HORIZON5_STEAM_APP_ID,
+        "Forza Horizon 5",
+        "ForzaHorizon5",
+        &["ForzaHorizon5.exe"],
+    );
+    std::env::set_var("DSCC_STEAM_ROOT", &steam_root);
+    std::env::remove_var("ProgramFiles(x86)");
+    std::env::remove_var("ProgramFiles");
+    std::env::remove_var("LOCALAPPDATA");
+
+    let state = AgentState::mock();
+    let response = app(state.clone())
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/games/custom")
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"appId":"{FORZA_HORIZON5_STEAM_APP_ID}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+    let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        parsed.get("gameId").and_then(|value| value.as_str()),
+        Some("forza-horizon-5")
+    );
+
+    {
+        let inner = state.inner.read().await;
+        assert!(inner.user_games.is_empty());
+    }
+    let _ = fs::remove_dir_all(&steam_root);
+}
+
+#[tokio::test]
 async fn add_custom_game_rejects_duplicate_registration() {
     let _env = TestEnv::new(&[
         "DSCC_STEAM_ROOT",

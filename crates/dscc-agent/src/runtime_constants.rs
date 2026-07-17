@@ -14,6 +14,7 @@ pub(crate) fn current_timestamp_millis() -> u64 {
     chrono::Utc::now().timestamp_millis().max(0) as u64
 }
 
+pub(crate) const MAX_LOGS: usize = 512;
 pub(crate) const HARDWARE_OUTPUT_INTERVAL: Duration = Duration::from_millis(33);
 pub(crate) const INPUT_BRIDGE_PROCESS_INTERVAL: Duration = Duration::from_millis(8);
 pub(crate) const INPUT_BRIDGE_CONFIG_REFRESH_INTERVAL: Duration = Duration::from_millis(100);

@@ -82,7 +82,7 @@ pub struct SteamInputBindingWriteRequest {
     pub activator: Option<String>,
     pub raw_binding: String,
     pub profile_name: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "dry_run")]
     pub dry_run: bool,
 }
 
@@ -107,7 +107,7 @@ pub struct SteamInputPaddlePresetRequest {
     pub left_key: Option<String>,
     pub right_key: Option<String>,
     pub profile_name: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "dry_run")]
     pub dry_run: bool,
 }
 
