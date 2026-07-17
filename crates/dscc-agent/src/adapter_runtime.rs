@@ -192,6 +192,12 @@ pub(crate) fn apply_adapter_runtime_summary(
     game_detection: Option<&GameDetectionResponse>,
     now: Instant,
 ) {
+    if !adapter.enabled {
+        adapter.state = "disabled".to_string();
+        adapter.packet_rate_hz = None;
+        return;
+    }
+
     let bind_addr = runtime
         .bind_addr
         .map(|addr| addr.to_string())
@@ -200,7 +206,6 @@ pub(crate) fn apply_adapter_runtime_summary(
 
     if !runtime.listener_bound {
         if let Some(error) = runtime.last_error.as_ref() {
-            adapter.enabled = true;
             adapter.state = "faulted".to_string();
             adapter.packet_rate_hz = None;
             adapter.setup_hint = if runtime.protocol == AdapterProtocol::SharedMemory {
@@ -218,7 +223,6 @@ pub(crate) fn apply_adapter_runtime_summary(
         return;
     }
 
-    adapter.enabled = true;
     if runtime.has_recent_packet(now) {
         adapter.state = "connected".to_string();
         adapter.packet_rate_hz = runtime.packet_rate_hz;
