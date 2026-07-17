@@ -8,7 +8,10 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:43473'
+        target: 'http://127.0.0.1:43473',
+        // Forward WebSocket upgrades so dev against a live agent gets push
+        // updates on /api/ws instead of degrading to 5s fallback polling.
+        ws: true
       }
     }
   }
