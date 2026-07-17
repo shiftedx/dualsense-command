@@ -24,8 +24,8 @@ use axum::{
     Json, Router,
 };
 use dscc_adapters::{
-    built_in_adapters, built_in_udp_adapters, initial_detection, parse_udp_telemetry_packet,
-    AdapterProtocol, UdpTelemetryAdapter,
+    adapter_by_id, built_in_adapters, built_in_udp_adapters, initial_detection,
+    parse_udp_telemetry_packet, AdapterProtocol, UdpTelemetryAdapter,
 };
 #[cfg(test)]
 use dscc_core::ControllerFamily;
@@ -183,7 +183,8 @@ pub(crate) use input_bridge::{
 #[cfg(test)]
 pub(crate) use persistence::PERSISTED_STATE_VERSION;
 pub(crate) use persistence::{
-    build_persist_snapshot, persist_snapshot, PersistedAgentState, PersistenceStore,
+    build_persist_snapshot, persist_snapshot, PersistedAdapterState, PersistedAgentState,
+    PersistenceStore,
 };
 #[cfg(test)]
 pub(crate) use profiles::default_profiles;
@@ -605,7 +606,7 @@ impl AgentState {
                     merge_profiles(persisted.profiles),
                     &active_profile_id,
                 ),
-                adapters: default_adapters(),
+                adapters: adapters_with_persisted_state(&persisted.adapters),
                 telemetry: SignalSnapshot::default(),
                 logs: vec![LogEntry {
                     level: "info".to_string(),
@@ -1191,6 +1192,13 @@ impl AgentState {
     ) {
         let realtime = {
             let mut inner = self.inner.write().await;
+            if inner
+                .adapters
+                .iter()
+                .any(|adapter| adapter.id == adapter_id && !adapter.enabled)
+            {
+                return;
+            }
             let mut updates = updates;
             let packet_rate_hz = inner
                 .adapter_runtime_mut(adapter_id)
