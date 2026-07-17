@@ -400,7 +400,9 @@
   </div>
 
   <div class="ctl-groups">
-    {#if controllers.length > 1}
+    <!-- Rendered for a single controller too: this card carries the page's
+         only rename affordance, so it must not be gated on having several. -->
+    {#if controllers.length > 0}
       <div class="ctl-group ctl-group-controllers">
         <div class="lbl">Controllers</div>
         <div class="ctl-controller-list">
