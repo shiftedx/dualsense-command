@@ -90,6 +90,24 @@ struct TraySnapshotHealthCheckDto {
     status: String,
 }
 
+/// The `product` value the agent reports in `/api/status`.
+const AGENT_STATUS_PRODUCT: &str = "DualSense Command Center Agent";
+
+/// Minimal subset of the agent `/api/status` response the tray health
+/// check cares about.
+#[derive(Debug, Deserialize)]
+struct TrayStatusDto {
+    #[serde(default)]
+    product: String,
+    #[serde(default)]
+    healthy: bool,
+}
+
+pub(super) fn status_body_reports_healthy(body: &str) -> bool {
+    serde_json::from_str::<TrayStatusDto>(body)
+        .is_ok_and(|status| status.product == AGENT_STATUS_PRODUCT && status.healthy)
+}
+
 pub(super) fn refreshing_health_summary() -> TrayHealthSummary {
     TrayHealthSummary {
         agent_running: false,
