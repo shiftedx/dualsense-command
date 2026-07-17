@@ -733,7 +733,7 @@ pub(crate) async fn write_edge_profile(
             .or_default()
             .slots
             .insert(slot.clone(), config);
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: level.to_string(),
             message: message.clone(),
             timestamp: current_timestamp(),

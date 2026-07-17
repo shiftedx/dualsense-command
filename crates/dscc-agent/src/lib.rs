@@ -418,6 +418,16 @@ struct AgentStateInner {
 }
 
 impl AgentStateInner {
+    /// Appends a log entry, evicting the oldest entries so the log history
+    /// stays bounded at [`MAX_LOGS`].
+    fn push_log(&mut self, entry: LogEntry) {
+        if self.logs.len() >= MAX_LOGS {
+            let overflow = self.logs.len() + 1 - MAX_LOGS;
+            self.logs.drain(..overflow);
+        }
+        self.logs.push(entry);
+    }
+
     fn adapter_runtime(&self, adapter_id: &str) -> Option<&AdapterRuntime> {
         self.adapter_runtimes.get(adapter_id)
     }
@@ -931,7 +941,7 @@ impl AgentState {
 
     async fn log_warn(&self, message: String) {
         let mut inner = self.inner.write().await;
-        inner.logs.push(LogEntry {
+        inner.push_log(LogEntry {
             level: "warn".to_string(),
             message,
             timestamp: current_timestamp(),
@@ -957,7 +967,7 @@ impl AgentState {
 
         if should_log {
             let mut inner = self.inner.write().await;
-            inner.logs.push(LogEntry {
+            inner.push_log(LogEntry {
                 level: "warn".to_string(),
                 message,
                 timestamp: current_timestamp(),
@@ -1282,7 +1292,7 @@ impl AgentState {
                             .map(|runtime| runtime.display_name.clone())
                             .unwrap_or_else(|| adapter_id.to_string())
                     });
-                inner.logs.push(LogEntry {
+                inner.push_log(LogEntry {
                     level: "info".to_string(),
                     message: format!("{display_name} stream connected ({packet_len} byte packets)"),
                     timestamp: current_timestamp(),
