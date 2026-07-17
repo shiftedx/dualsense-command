@@ -90,7 +90,7 @@
   import TuningCanvas from './lib/features/tuning/TuningCanvas.svelte';
   import SavedRail from './lib/features/tuning/SavedRail.svelte';
   import SetupGuide from './lib/features/tuning/SetupGuide.svelte';
-  import { telemetryPortFromAdapter } from './lib/features/tuning/setupRequirements';
+  import { gameTelemetryAdapter, telemetryPortFromAdapter } from './lib/features/tuning/setupRequirements';
   import {
     loadVerifiedSetupGameIds,
     markSetupVerified,
@@ -570,6 +570,12 @@
   $: telemetryPacketRate = adapter?.packetRateHz ?? 0;
   // --- per-game setup guide state (Task 8) --------------------------------
   $: telemetryPort = telemetryPortFromAdapter(adapter);
+  // The selected game's own Telemetry Adapter (not the active one): the setup
+  // guide uses it to skip the Data Out walkthrough for shared-memory games.
+  $: selectedTuningGameTelemetryAdapter = gameTelemetryAdapter(
+    snapshot?.modules ?? [],
+    selectedTuningGame?.gameId ?? ''
+  );
   $: selectedGameSetupVerified =
     selectedTuningScope !== 'game' || !selectedTuningGame
       ? true
@@ -2595,6 +2601,7 @@
           packetRateHz={telemetryPacketRate}
           adapterName={adapter?.name ?? ''}
           adapterHint={adapter?.setupHint ?? ''}
+          telemetryAdapter={selectedTuningGameTelemetryAdapter}
           onVerified={completeSetupGuide}
           onStartTuning={completeSetupGuide}
         />

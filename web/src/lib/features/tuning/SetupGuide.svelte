@@ -1,5 +1,6 @@
 <script lang="ts">
   import { deriveSetupModel, TELEMETRY_TARGET_IP } from './setupRequirements';
+  import type { GameTelemetryAdapterLink } from './setupRequirements';
   import type { SupportedGame } from '../../types';
 
   // Per-game setup walkthrough (Task 8). Rendered as a CANVAS STATE: it
@@ -16,6 +17,7 @@
     packetRateHz = 0,
     adapterName = '',
     adapterHint = '',
+    telemetryAdapter = null,
     onVerified = () => {},
     onStartTuning = () => {}
   }: {
@@ -26,11 +28,13 @@
     packetRateHz?: number;
     adapterName?: string;
     adapterHint?: string;
+    /** The game's linked Telemetry Adapter from the module catalog. */
+    telemetryAdapter?: GameTelemetryAdapterLink | null;
     onVerified?: () => void;
     onStartTuning?: () => void;
   } = $props();
 
-  const model = $derived(deriveSetupModel({ game, telemetryFresh, verified, port }));
+  const model = $derived(deriveSetupModel({ game, telemetryFresh, verified, port, telemetryAdapter }));
 
   // Passive verification: the first fresh packets complete setup on their
   // own. A short green beat on the LISTENING box, then the parent swaps the
