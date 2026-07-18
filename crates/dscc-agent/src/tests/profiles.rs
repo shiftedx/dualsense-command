@@ -1,6 +1,55 @@
 use super::support::*;
 use super::*;
 
+fn cycle_summary(id: &str) -> ProfileSummary {
+    ProfileSummary {
+        id: id.to_string(),
+        name: id.to_string(),
+        built_in: false,
+        active: false,
+        game_id: None,
+    }
+}
+
+#[test]
+fn cycled_profile_wraps_in_ui_order() {
+    let profiles = vec![cycle_summary("a"), cycle_summary("b"), cycle_summary("c")];
+    assert_eq!(
+        cycled_profile_id(&profiles, Some("a"), true).as_deref(),
+        Some("b")
+    );
+    assert_eq!(
+        cycled_profile_id(&profiles, Some("c"), true).as_deref(),
+        Some("a")
+    );
+    assert_eq!(
+        cycled_profile_id(&profiles, Some("a"), false).as_deref(),
+        Some("c")
+    );
+}
+
+#[test]
+fn cycled_profile_requires_two_profiles() {
+    assert_eq!(
+        cycled_profile_id(&[cycle_summary("only")], Some("only"), true),
+        None
+    );
+    assert_eq!(cycled_profile_id(&[], None, true), None);
+}
+
+#[test]
+fn cycled_profile_starts_from_first_when_none_active() {
+    let profiles = vec![cycle_summary("a"), cycle_summary("b")];
+    assert_eq!(
+        cycled_profile_id(&profiles, None, true).as_deref(),
+        Some("b")
+    );
+    assert_eq!(
+        cycled_profile_id(&profiles, Some("missing"), false).as_deref(),
+        Some("b")
+    );
+}
+
 #[tokio::test]
 async fn profile_can_be_created_and_activated() {
     let router = app(AgentState::mock());

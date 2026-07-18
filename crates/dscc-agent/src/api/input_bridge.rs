@@ -1,5 +1,9 @@
 use super::*;
 
+use super::profiles::{activate_profile_by_id, cycled_profile_id};
+use crate::input_bridge::{bridge_frame_from_input, BridgeCommandEdges};
+use dscc_core::input_bridge::DsccBridgeCommand;
+
 pub(crate) async fn get_input_bridge_status(
     State(state): State<AgentState>,
 ) -> Json<InputBridgeStatusResponse> {
@@ -116,6 +120,7 @@ pub(crate) async fn run_input_bridge_session_loop(state: AgentState, controller_
     let mut last_game_check_at = Instant::now();
     let mut last_config_check_at: Option<Instant> = None;
     let mut active_config: Option<InputBridgeConfig> = None;
+    let mut command_edges = BridgeCommandEdges::new();
     let mut process_interval = tokio::time::interval(INPUT_BRIDGE_PROCESS_INTERVAL);
     process_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -199,14 +204,10 @@ pub(crate) async fn run_input_bridge_session_loop(state: AgentState, controller_
                     continue;
                 }
                 last_submitted_sequence = Some(sample.sequence);
+                let frame = bridge_frame_from_input(&sample.state, config);
                 if state
                     .input_bridge
-                    .submit_controller_input(
-                        &controller_id,
-                        &sample.state,
-                        config,
-                        current_timestamp_millis(),
-                    )
+                    .submit_virtual_state(&controller_id, &frame.state, current_timestamp_millis())
                     .is_err()
                 {
                     state.input_bridge.neutralize_session(
@@ -218,6 +219,9 @@ pub(crate) async fn run_input_bridge_session_loop(state: AgentState, controller_
                     tracing::warn!(controller_id = %controller_id, "DSCC Input Bridge backend fault");
                     send_input_bridge_invalidation(&state, "input-bridge-backend-fault");
                     break;
+                }
+                for command in command_edges.rising(&frame) {
+                    dispatch_bridge_command(&state, command).await;
                 }
             }
             Ok(None) => {
@@ -243,6 +247,30 @@ pub(crate) async fn run_input_bridge_session_loop(state: AgentState, controller_
                 send_input_bridge_invalidation(&state, "input-bridge-input-fault");
                 break;
             }
+        }
+    }
+}
+
+pub(crate) async fn dispatch_bridge_command(state: &AgentState, command: DsccBridgeCommand) {
+    let forward = match command {
+        DsccBridgeCommand::ProfileNext => true,
+        DsccBridgeCommand::ProfilePrevious => false,
+        DsccBridgeCommand::ShiftLayer => return,
+    };
+    let target_id = {
+        let inner = state.inner.read().await;
+        cycled_profile_id(&inner.profiles, inner.active_profile_id.as_deref(), forward)
+    };
+    let Some(target_id) = target_id else {
+        return;
+    };
+    match activate_profile_by_id(state, &target_id).await {
+        Ok(()) => {
+            send_input_bridge_invalidation(state, "input-bridge-profile-cycled");
+            tracing::info!(profile_id = %target_id, "DSCC Input Bridge cycled the active profile");
+        }
+        Err(_) => {
+            tracing::debug!(profile_id = %target_id, "DSCC Input Bridge cycle target profile vanished before activation");
         }
     }
 }

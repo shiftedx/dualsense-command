@@ -13,6 +13,8 @@ pub struct InputBridgeConfig {
     pub auto_start: bool,
     #[serde(default)]
     pub bindings: Vec<InputBridgeBindingConfig>,
+    #[serde(default = "default_input_bridge_shift_bindings")]
+    pub shift_bindings: Vec<InputBridgeBindingConfig>,
 }
 
 impl Default for InputBridgeConfig {
@@ -22,6 +24,7 @@ impl Default for InputBridgeConfig {
             output_kind: InputBridgeOutputKind::Xbox360,
             auto_start: false,
             bindings: default_input_bridge_bindings(),
+            shift_bindings: default_input_bridge_shift_bindings(),
         }
     }
 }
@@ -29,7 +32,12 @@ impl Default for InputBridgeConfig {
 impl InputBridgeConfig {
     pub fn normalized(mut self) -> Self {
         self.output_kind = InputBridgeOutputKind::Xbox360;
-        self.bindings = normalize_input_bridge_bindings(self.bindings);
+        self.bindings =
+            normalize_input_bridge_bindings(self.bindings, default_input_bridge_bindings());
+        self.shift_bindings = normalize_input_bridge_bindings(
+            self.shift_bindings,
+            default_input_bridge_shift_bindings(),
+        );
         self
     }
 }
@@ -201,12 +209,28 @@ pub fn default_input_bridge_bindings() -> Vec<InputBridgeBindingConfig> {
     ]
 }
 
+pub fn default_input_bridge_shift_bindings() -> Vec<InputBridgeBindingConfig> {
+    use InputBridgeSource::Button;
+    use InputBridgeTarget::Command;
+    vec![
+        binding(
+            Button("dpad_left".into()),
+            Command(DsccBridgeCommand::ProfilePrevious),
+        ),
+        binding(
+            Button("dpad_right".into()),
+            Command(DsccBridgeCommand::ProfileNext),
+        ),
+    ]
+}
+
 fn binding(source: InputBridgeSource, target: InputBridgeTarget) -> InputBridgeBindingConfig {
     InputBridgeBindingConfig { source, target }
 }
 
 fn normalize_input_bridge_bindings(
     bindings: Vec<InputBridgeBindingConfig>,
+    defaults: Vec<InputBridgeBindingConfig>,
 ) -> Vec<InputBridgeBindingConfig> {
     let configured_sources: BTreeSet<InputBridgeSource> = bindings
         .iter()
@@ -215,7 +239,7 @@ fn normalize_input_bridge_bindings(
     let mut seen = BTreeSet::new();
     let mut normalized = Vec::new();
     for binding in bindings.into_iter().chain(
-        default_input_bridge_bindings()
+        defaults
             .into_iter()
             .filter(|binding| !configured_sources.contains(&binding.source)),
     ) {
@@ -296,5 +320,48 @@ mod tests {
             binding.source == InputBridgeSource::Button("cross".to_string())
                 && binding.target == InputBridgeTarget::Button(VirtualButton::A)
         }));
+    }
+
+    #[test]
+    fn bridge_defaults_include_shift_profile_cycle() {
+        let config = InputBridgeConfig::default().normalized();
+        assert!(config.shift_bindings.iter().any(|binding| {
+            binding.source == InputBridgeSource::Button("dpad_left".to_string())
+                && binding.target == InputBridgeTarget::Command(DsccBridgeCommand::ProfilePrevious)
+        }));
+        assert!(config.shift_bindings.iter().any(|binding| {
+            binding.source == InputBridgeSource::Button("dpad_right".to_string())
+                && binding.target == InputBridgeTarget::Command(DsccBridgeCommand::ProfileNext)
+        }));
+        assert_eq!(config.shift_bindings, default_input_bridge_shift_bindings());
+    }
+
+    #[test]
+    fn shift_binding_override_replaces_default_for_source() {
+        let config = InputBridgeConfig {
+            shift_bindings: vec![binding(
+                InputBridgeSource::Button("dpad_right".to_string()),
+                InputBridgeTarget::Disabled,
+            )],
+            ..InputBridgeConfig::default()
+        }
+        .normalized();
+
+        assert!(config.shift_bindings.iter().any(|binding| {
+            binding.source == InputBridgeSource::Button("dpad_right".to_string())
+                && binding.target == InputBridgeTarget::Disabled
+        }));
+        assert!(!config.shift_bindings.iter().any(|binding| {
+            binding.target == InputBridgeTarget::Command(DsccBridgeCommand::ProfileNext)
+        }));
+        assert!(config.shift_bindings.iter().any(|binding| {
+            binding.target == InputBridgeTarget::Command(DsccBridgeCommand::ProfilePrevious)
+        }));
+    }
+
+    #[test]
+    fn bridge_config_without_shift_bindings_deserializes_defaults() {
+        let config: InputBridgeConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.shift_bindings, default_input_bridge_shift_bindings());
     }
 }
