@@ -187,11 +187,10 @@ impl InputBridgeService {
             .is_some_and(|record| record.state == InputBridgeSessionState::Active)
     }
 
-    pub(crate) fn submit_controller_input(
+    pub(crate) fn submit_virtual_state(
         &self,
         controller_id: &str,
-        input: &ControllerInputState,
-        config: &InputBridgeConfig,
+        state: &VirtualGamepadState,
         updated_at_ms: u64,
     ) -> Result<InputBridgeSessionSummary, String> {
         let target = self
@@ -199,9 +198,8 @@ impl InputBridgeService {
             .get(controller_id)
             .and_then(|record| record.target.clone())
             .ok_or_else(|| "DSCC Input Bridge session is not active".to_string())?;
-        let state = virtual_state_from_input(input, config);
         self.backend
-            .submit_state(&target, &state)
+            .submit_state(&target, state)
             .map_err(|error| public_virtual_output_error(&error))?;
         let mut sessions = self.lock();
         let record = sessions
@@ -395,11 +393,15 @@ fn public_virtual_output_error(error: &VirtualOutputError) -> String {
 #[derive(Clone, Debug)]
 pub(crate) struct BridgeFrame {
     pub(crate) state: VirtualGamepadState,
+    /// Read by unit tests asserting shift-layer resolution; the session loop
+    /// consumes `state` and the command flags only.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) shift_held: bool,
     pub(crate) profile_next: bool,
     pub(crate) profile_prev: bool,
 }
 
+#[cfg(test)]
 pub(crate) fn virtual_state_from_input(
     input: &ControllerInputState,
     config: &InputBridgeConfig,
