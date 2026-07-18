@@ -40,7 +40,10 @@ fn cycled_profile_requires_two_profiles() {
 #[test]
 fn cycled_profile_starts_from_first_when_none_active() {
     let profiles = vec![cycle_summary("a"), cycle_summary("b")];
-    assert_eq!(cycled_profile_id(&profiles, None, true).as_deref(), Some("b"));
+    assert_eq!(
+        cycled_profile_id(&profiles, None, true).as_deref(),
+        Some("b")
+    );
     assert_eq!(
         cycled_profile_id(&profiles, Some("missing"), false).as_deref(),
         Some("b")

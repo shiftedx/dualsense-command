@@ -327,8 +327,7 @@ mod tests {
         let config = InputBridgeConfig::default().normalized();
         assert!(config.shift_bindings.iter().any(|binding| {
             binding.source == InputBridgeSource::Button("dpad_left".to_string())
-                && binding.target
-                    == InputBridgeTarget::Command(DsccBridgeCommand::ProfilePrevious)
+                && binding.target == InputBridgeTarget::Command(DsccBridgeCommand::ProfilePrevious)
         }));
         assert!(config.shift_bindings.iter().any(|binding| {
             binding.source == InputBridgeSource::Button("dpad_right".to_string())
