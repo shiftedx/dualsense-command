@@ -633,7 +633,10 @@ mod tests {
 
     #[test]
     fn shift_held_routes_dpad_to_profile_commands() {
-        let input = test_input(vec![pressed_button("edge_fn_left"), pressed_button("dpad_right")]);
+        let input = test_input(vec![
+            pressed_button("edge_fn_left"),
+            pressed_button("dpad_right"),
+        ]);
         let config = InputBridgeConfig::default().normalized();
 
         let frame = bridge_frame_from_input(&input, &config);
@@ -662,7 +665,10 @@ mod tests {
 
     #[test]
     fn unshifted_sources_keep_normal_targets_while_shift_held() {
-        let input = test_input(vec![pressed_button("edge_fn_right"), pressed_button("cross")]);
+        let input = test_input(vec![
+            pressed_button("edge_fn_right"),
+            pressed_button("cross"),
+        ]);
         let config = InputBridgeConfig::default().normalized();
 
         let frame = bridge_frame_from_input(&input, &config);
@@ -741,7 +747,10 @@ mod tests {
         let config = InputBridgeConfig::default().normalized();
 
         let held = bridge_frame_from_input(
-            &test_input(vec![pressed_button("edge_fn_left"), pressed_button("dpad_right")]),
+            &test_input(vec![
+                pressed_button("edge_fn_left"),
+                pressed_button("dpad_right"),
+            ]),
             &config,
         );
         assert_eq!(edges.rising(&held), vec![DsccBridgeCommand::ProfileNext]);
@@ -750,7 +759,10 @@ mod tests {
         // Releasing shift while dpad_right stays held: level drops, nothing fires.
         let shift_released =
             bridge_frame_from_input(&test_input(vec![pressed_button("dpad_right")]), &config);
-        assert_eq!(edges.rising(&shift_released), Vec::<DsccBridgeCommand>::new());
+        assert_eq!(
+            edges.rising(&shift_released),
+            Vec::<DsccBridgeCommand>::new()
+        );
 
         // Fresh shifted press fires again.
         assert_eq!(edges.rising(&held), vec![DsccBridgeCommand::ProfileNext]);
