@@ -36,9 +36,9 @@ pub(crate) struct PersistedAdapterState {
 
 impl PersistenceStore {
     pub(crate) fn default() -> Option<Self> {
-        if let Some(config_dir) = std::env::var_os("DSCC_CONFIG_DIR") {
+        if let Some(config_dir) = crate::runtime_paths::config_dir_override() {
             return Some(Self {
-                state_file: PathBuf::from(config_dir).join("state.json"),
+                state_file: config_dir.join("state.json"),
             });
         }
 

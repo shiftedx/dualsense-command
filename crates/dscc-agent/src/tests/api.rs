@@ -425,6 +425,23 @@ fn agent_bind_addr_allows_non_loopback_with_lan_opt_in() {
 }
 
 #[test]
+fn app_paths_honors_dscc_config_dir_override() {
+    let _env = TestEnv::new(&["DSCC_CONFIG_DIR"]);
+    let config_dir = temp_test_dir("dscc-paths-config");
+    std::env::set_var("DSCC_CONFIG_DIR", &config_dir);
+
+    let paths = app_paths().expect("app paths resolve with override set");
+    assert_eq!(paths.config_dir, config_dir.display().to_string());
+    // Single source of truth: paths must report the directory persistence uses.
+    let store = PersistenceStore::default().expect("persistence store resolves");
+    assert_eq!(store.state_file, config_dir.join("state.json"));
+
+    std::env::remove_var("DSCC_CONFIG_DIR");
+    let default_paths = app_paths().expect("app paths resolve without override");
+    assert_ne!(default_paths.config_dir, config_dir.display().to_string());
+}
+
+#[test]
 fn forza_bind_addr_ignores_non_loopback_without_lan_opt_in() {
     let _env = TestEnv::new(&[FORZA_BIND_ADDR_ENV, FORZA_LAN_ENABLE_ENV]);
     std::env::set_var(FORZA_BIND_ADDR_ENV, "0.0.0.0:5300");
