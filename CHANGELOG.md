@@ -1,3 +1,53 @@
+# DualSense Command Center 0.5.0
+
+Release date: 2026-07-17
+
+0.5.0 makes DSCC Input Bridge command bindings functional with an Edge Fn shift
+layer for on-controller profile switching, and lands a broad reliability pass
+across the agent, tray, and web UI.
+
+## Input Bridge
+
+- Holding an Edge Fn button now activates a shift layer while the bridge is
+  forwarding input. By default, shift + d-pad left/right cycles the active
+  profile backward/forward in UI order, mirroring the DualSense Edge Fn
+  convention. The switch is persisted and the UI refreshes automatically.
+- Shift-layer bindings live in a new `shiftBindings` list in the bridge config.
+  Sources without a shift entry keep their normal mapping while shift is held,
+  and command bindings never emit virtual controller output.
+
+## Agent and Profiles
+
+- Imported profile configs are normalized at the trust boundary.
+- Read-only GET endpoints for config and Edge profiles no longer persist state.
+- Adapter disable is respected, enforced, and persisted.
+- Steam Input write endpoints accept snake_case `dry_run`.
+- Agent log history is capped to bound memory use.
+- Custom stick curves are preserved when saving Edge slots.
+- Custom games whose Steam appId is already covered by a built-in module are
+  rejected at creation.
+- Config and data paths honor `DSCC_CONFIG_DIR`.
+- The SPA fallback serves `index.html` with HTTP 200.
+
+## Web UI
+
+- Profile deletion asks for confirmation and retargets the selection first.
+- Rename stays reachable with a single controller connected.
+- The redline row no longer mirrors the main lightbar controls.
+- Copy actions fall back to a download when the clipboard write is rejected.
+- The setup guide follows the game's Telemetry Adapter protocol.
+
+## Tray
+
+- The tray health check is hardened and deep links use canonical hashes.
+
+## Development
+
+- Architecture docs refreshed; perf checks wired into the web scripts; rumble
+  policy semantics documented and tested; WebSocket upgrades forwarded through
+  the Vite dev proxy; the dev:mock update check is served from the mock API.
+- Dependency updates across the Rust workspace, web toolchain, and CI actions.
+
 # DualSense Command Center 0.4.1
 
 Release date: 2026-06-11
