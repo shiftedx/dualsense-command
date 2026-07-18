@@ -1,5 +1,88 @@
 use super::support::*;
 use super::*;
+use dscc_core::input_bridge::DsccBridgeCommand;
+
+async fn seed_cycle_profiles(state: &AgentState, ids: &[&str], active: Option<&str>) {
+    let mut inner = state.inner.write().await;
+    inner.profiles = ids
+        .iter()
+        .map(|id| ProfileSummary {
+            id: id.to_string(),
+            name: id.to_string(),
+            built_in: false,
+            active: Some(*id) == active,
+            game_id: None,
+        })
+        .collect();
+    inner.active_profile_id = active.map(str::to_string);
+}
+
+async fn active_profile_id(state: &AgentState) -> Option<String> {
+    state.inner.read().await.active_profile_id.clone()
+}
+
+fn drain_saw_cycle_invalidation(events: &mut broadcast::Receiver<RealtimeMessage>) -> bool {
+    let mut saw = false;
+    while let Ok(message) = events.try_recv() {
+        if message.message.as_deref() == Some("input-bridge-profile-cycled") {
+            saw = true;
+        }
+    }
+    saw
+}
+
+#[tokio::test]
+async fn dispatch_bridge_command_profile_next_activates_next_profile() {
+    let state = AgentState::mock();
+    seed_cycle_profiles(&state, &["alpha", "bravo", "charlie"], Some("alpha")).await;
+    let mut events = state.subscribe_events();
+
+    dispatch_bridge_command(&state, DsccBridgeCommand::ProfileNext).await;
+
+    assert_eq!(active_profile_id(&state).await.as_deref(), Some("bravo"));
+    assert!(
+        drain_saw_cycle_invalidation(&mut events),
+        "profile cycle must broadcast an input-bridge-profile-cycled invalidation"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_bridge_command_profile_previous_activates_previous_profile() {
+    let state = AgentState::mock();
+    seed_cycle_profiles(&state, &["alpha", "bravo", "charlie"], Some("alpha")).await;
+
+    dispatch_bridge_command(&state, DsccBridgeCommand::ProfilePrevious).await;
+
+    assert_eq!(
+        active_profile_id(&state).await.as_deref(),
+        Some("charlie"),
+        "ProfilePrevious must cycle backward, not forward"
+    );
+}
+
+#[tokio::test]
+async fn dispatch_bridge_command_is_noop_with_single_profile() {
+    let state = AgentState::mock();
+    seed_cycle_profiles(&state, &["solo"], Some("solo")).await;
+    let mut events = state.subscribe_events();
+
+    dispatch_bridge_command(&state, DsccBridgeCommand::ProfileNext).await;
+
+    assert_eq!(active_profile_id(&state).await.as_deref(), Some("solo"));
+    assert!(!drain_saw_cycle_invalidation(&mut events));
+}
+
+#[tokio::test]
+async fn dispatch_bridge_command_ignores_shift_layer() {
+    let state = AgentState::mock();
+    seed_cycle_profiles(&state, &["alpha", "bravo"], Some("alpha")).await;
+    let mut events = state.subscribe_events();
+
+    dispatch_bridge_command(&state, DsccBridgeCommand::ShiftLayer).await;
+
+    assert_eq!(active_profile_id(&state).await.as_deref(), Some("alpha"));
+    assert!(!drain_saw_cycle_invalidation(&mut events));
+}
 
 #[tokio::test]
 async fn input_bridge_status_route_reports_mock_backend() {
