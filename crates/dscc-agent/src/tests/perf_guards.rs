@@ -49,6 +49,12 @@ fn perf_input() -> ControllerInputState {
                 pressed: false,
                 value: 0.0,
             },
+            ControllerInputButtonState {
+                id: "edge_fn_left",
+                label: "Fn Left",
+                pressed: true,
+                value: 1.0,
+            },
         ],
     }
 }
