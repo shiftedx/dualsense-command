@@ -1,8 +1,8 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use dscc_core::input_bridge::{
-    InputBridgeConfig, InputBridgeSource, InputBridgeTarget, VirtualAxis,
+    DsccBridgeCommand, InputBridgeConfig, InputBridgeSource, InputBridgeTarget, VirtualAxis,
 };
 use dscc_device::ControllerInputState;
 #[cfg(any(test, debug_assertions, feature = "test-mocks"))]
@@ -392,17 +392,60 @@ fn public_virtual_output_error(error: &VirtualOutputError) -> String {
     }
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct BridgeFrame {
+    pub(crate) state: VirtualGamepadState,
+    pub(crate) shift_held: bool,
+    pub(crate) profile_next: bool,
+    pub(crate) profile_prev: bool,
+}
+
 pub(crate) fn virtual_state_from_input(
     input: &ControllerInputState,
     config: &InputBridgeConfig,
 ) -> VirtualGamepadState {
-    let mut state = VirtualGamepadState::neutral();
+    bridge_frame_from_input(input, config).state
+}
+
+pub(crate) fn bridge_frame_from_input(
+    input: &ControllerInputState,
+    config: &InputBridgeConfig,
+) -> BridgeFrame {
     let input_view = BridgeInputView::new(input);
+    let shift_held = config.bindings.iter().any(|binding| {
+        binding.target == InputBridgeTarget::Command(DsccBridgeCommand::ShiftLayer)
+            && source_pressed(&input_view, &binding.source)
+    });
+    let shifted_sources: BTreeSet<&InputBridgeSource> = if shift_held {
+        config
+            .shift_bindings
+            .iter()
+            .map(|binding| &binding.source)
+            .collect()
+    } else {
+        BTreeSet::new()
+    };
+
+    let mut state = VirtualGamepadState::neutral();
     let mut buttons = BTreeMap::new();
-    for binding in &config.bindings {
+    let mut profile_next = false;
+    let mut profile_prev = false;
+    let normal_layer = config
+        .bindings
+        .iter()
+        .filter(|binding| !shift_held || !shifted_sources.contains(&binding.source));
+    let shift_layer = config.shift_bindings.iter().filter(|_| shift_held);
+    for binding in normal_layer.chain(shift_layer) {
         match binding.target {
-            InputBridgeTarget::Disabled | InputBridgeTarget::Command(_) => {}
-            InputBridgeTarget::PassThrough => {}
+            InputBridgeTarget::Disabled | InputBridgeTarget::PassThrough => {}
+            InputBridgeTarget::Command(command) => {
+                let pressed = source_pressed(&input_view, &binding.source);
+                match command {
+                    DsccBridgeCommand::ShiftLayer => {}
+                    DsccBridgeCommand::ProfileNext => profile_next |= pressed,
+                    DsccBridgeCommand::ProfilePrevious => profile_prev |= pressed,
+                }
+            }
             InputBridgeTarget::Button(button) => {
                 let pressed = source_pressed(&input_view, &binding.source);
                 *buttons.entry(button.id().to_string()).or_insert(false) |= pressed;
@@ -414,7 +457,37 @@ pub(crate) fn virtual_state_from_input(
         }
     }
     state.buttons = VirtualButtonState { buttons };
-    state
+    BridgeFrame {
+        state,
+        shift_held,
+        profile_next,
+        profile_prev,
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct BridgeCommandEdges {
+    profile_next: bool,
+    profile_prev: bool,
+}
+
+impl BridgeCommandEdges {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn rising(&mut self, frame: &BridgeFrame) -> Vec<DsccBridgeCommand> {
+        let mut fired = Vec::new();
+        if frame.profile_next && !self.profile_next {
+            fired.push(DsccBridgeCommand::ProfileNext);
+        }
+        if frame.profile_prev && !self.profile_prev {
+            fired.push(DsccBridgeCommand::ProfilePrevious);
+        }
+        self.profile_next = frame.profile_next;
+        self.profile_prev = frame.profile_prev;
+        fired
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -543,9 +616,143 @@ fn apply_axis(state: &mut VirtualGamepadState, axis: VirtualAxis, value: f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dscc_core::input_bridge::{InputBridgeBindingConfig, VirtualButton};
+    use dscc_core::input_bridge::{DsccBridgeCommand, InputBridgeBindingConfig, VirtualButton};
     use dscc_device::{ControllerInputButtonState, ControllerInputStickState};
     use dscc_virtual_output::VirtualOutputBackendStatus;
+
+    fn pressed_button(id: &'static str) -> ControllerInputButtonState {
+        ControllerInputButtonState {
+            id,
+            label: id,
+            pressed: true,
+            value: 1.0,
+        }
+    }
+
+    #[test]
+    fn shift_held_routes_dpad_to_profile_commands() {
+        let input = test_input(vec![pressed_button("edge_fn_left"), pressed_button("dpad_right")]);
+        let config = InputBridgeConfig::default().normalized();
+
+        let frame = bridge_frame_from_input(&input, &config);
+
+        assert!(frame.shift_held);
+        assert!(frame.profile_next);
+        assert!(!frame.profile_prev);
+        assert_ne!(
+            frame.state.buttons.buttons.get("dpad_right"),
+            Some(&true),
+            "shifted source must not emit its normal virtual button"
+        );
+    }
+
+    #[test]
+    fn unshifted_dpad_passes_through_without_commands() {
+        let input = test_input(vec![pressed_button("dpad_right")]);
+        let config = InputBridgeConfig::default().normalized();
+
+        let frame = bridge_frame_from_input(&input, &config);
+
+        assert!(!frame.shift_held);
+        assert!(!frame.profile_next);
+        assert_eq!(frame.state.buttons.buttons.get("dpad_right"), Some(&true));
+    }
+
+    #[test]
+    fn unshifted_sources_keep_normal_targets_while_shift_held() {
+        let input = test_input(vec![pressed_button("edge_fn_right"), pressed_button("cross")]);
+        let config = InputBridgeConfig::default().normalized();
+
+        let frame = bridge_frame_from_input(&input, &config);
+
+        assert!(frame.shift_held);
+        assert_eq!(frame.state.buttons.buttons.get("a"), Some(&true));
+    }
+
+    #[test]
+    fn shift_layer_output_targets_replace_normal_outputs() {
+        let input = test_input(vec![
+            pressed_button("edge_fn_left"),
+            pressed_button("dpad_up"),
+            pressed_button("cross"),
+        ]);
+        let config = InputBridgeConfig {
+            shift_bindings: vec![
+                InputBridgeBindingConfig {
+                    source: InputBridgeSource::Button("dpad_up".to_string()),
+                    target: InputBridgeTarget::Button(VirtualButton::Y),
+                },
+                InputBridgeBindingConfig {
+                    source: InputBridgeSource::Button("cross".to_string()),
+                    target: InputBridgeTarget::Axis(VirtualAxis::LeftTrigger),
+                },
+            ],
+            ..InputBridgeConfig::default()
+        }
+        .normalized();
+
+        let frame = bridge_frame_from_input(&input, &config);
+
+        assert!(frame.shift_held);
+        assert_eq!(
+            frame.state.buttons.buttons.get("y"),
+            Some(&true),
+            "shift-layer button target must be emitted while shift is held"
+        );
+        assert_ne!(
+            frame.state.buttons.buttons.get("dpad_up"),
+            Some(&true),
+            "shifted source must not emit its normal virtual button"
+        );
+        assert_ne!(
+            frame.state.buttons.buttons.get("a"),
+            Some(&true),
+            "shifted source must not emit its normal virtual button"
+        );
+        assert_eq!(
+            frame.state.triggers.l2, 1.0,
+            "shift-layer axis target must be driven by the shifted source"
+        );
+    }
+
+    #[test]
+    fn normal_layer_command_binding_dispatches_without_shift() {
+        let input = test_input(vec![pressed_button("mute")]);
+        let config = InputBridgeConfig {
+            bindings: vec![InputBridgeBindingConfig {
+                source: InputBridgeSource::Button("mute".to_string()),
+                target: InputBridgeTarget::Command(DsccBridgeCommand::ProfileNext),
+            }],
+            ..InputBridgeConfig::default()
+        }
+        .normalized();
+
+        let frame = bridge_frame_from_input(&input, &config);
+
+        assert!(!frame.shift_held);
+        assert!(frame.profile_next);
+    }
+
+    #[test]
+    fn command_edges_fire_once_per_press() {
+        let mut edges = BridgeCommandEdges::new();
+        let config = InputBridgeConfig::default().normalized();
+
+        let held = bridge_frame_from_input(
+            &test_input(vec![pressed_button("edge_fn_left"), pressed_button("dpad_right")]),
+            &config,
+        );
+        assert_eq!(edges.rising(&held), vec![DsccBridgeCommand::ProfileNext]);
+        assert_eq!(edges.rising(&held), Vec::<DsccBridgeCommand>::new());
+
+        // Releasing shift while dpad_right stays held: level drops, nothing fires.
+        let shift_released =
+            bridge_frame_from_input(&test_input(vec![pressed_button("dpad_right")]), &config);
+        assert_eq!(edges.rising(&shift_released), Vec::<DsccBridgeCommand>::new());
+
+        // Fresh shifted press fires again.
+        assert_eq!(edges.rising(&held), vec![DsccBridgeCommand::ProfileNext]);
+    }
 
     fn test_input(buttons: Vec<ControllerInputButtonState>) -> ControllerInputState {
         ControllerInputState {
