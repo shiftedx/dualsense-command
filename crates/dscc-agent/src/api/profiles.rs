@@ -322,10 +322,27 @@ pub(crate) async fn delete_profile(
     }))
 }
 
-pub(crate) async fn activate_profile(
-    Path(id): Path<String>,
-    State(state): State<AgentState>,
-) -> Result<Json<ActionAccepted>, StatusCode> {
+pub(crate) fn cycled_profile_id(
+    profiles: &[ProfileSummary],
+    active_profile_id: Option<&str>,
+    forward: bool,
+) -> Option<String> {
+    if profiles.len() < 2 {
+        return None;
+    }
+    let current = active_profile_id
+        .and_then(|active| profiles.iter().position(|profile| profile.id == active))
+        .unwrap_or(0);
+    let len = profiles.len();
+    let target = if forward {
+        (current + 1) % len
+    } else {
+        (current + len - 1) % len
+    };
+    Some(profiles[target].id.clone())
+}
+
+pub(crate) async fn activate_profile_by_id(state: &AgentState, id: &str) -> Result<(), StatusCode> {
     let to_save = {
         let mut inner = state.inner.write().await;
         if !inner.profiles.iter().any(|profile| profile.id == id) {
@@ -335,15 +352,22 @@ pub(crate) async fn activate_profile(
         for profile in &mut inner.profiles {
             profile.active = profile.id == id;
         }
-        inner.active_profile_id = Some(id.clone());
+        inner.active_profile_id = Some(id.to_string());
         inner.effect_revision = inner.effect_revision.saturating_add(1);
 
-        apply_profile_selection_config(&mut inner, &id);
+        apply_profile_selection_config(&mut inner, id);
 
         build_persist_snapshot(&inner)
     };
-    persist_snapshot(&state, to_save).await;
+    persist_snapshot(state, to_save).await;
+    Ok(())
+}
 
+pub(crate) async fn activate_profile(
+    Path(id): Path<String>,
+    State(state): State<AgentState>,
+) -> Result<Json<ActionAccepted>, StatusCode> {
+    activate_profile_by_id(&state, &id).await?;
     Ok(Json(ActionAccepted {
         accepted: true,
         message: format!("Activated profile {id}"),
