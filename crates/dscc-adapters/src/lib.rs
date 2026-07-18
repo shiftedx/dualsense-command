@@ -43,7 +43,7 @@ pub fn built_in_adapters() -> &'static [BuiltInAdapter] {
             display_name: "Forza Data Out",
             protocol: AdapterProtocol::Udp,
             default_port: Some(5300),
-            packet_formats: &["sled", "dash"],
+            packet_formats: &["sled", "dash", "horizon", "extended_dash"],
             setup_hint: "Enable UDP Race Telemetry in-game, set the target IP to localhost or this PC's LAN IP, and match the configured port.",
             setup_url: Some("https://support.forzamotorsport.net/hc/en-us/articles/21742934024211-Forza-Motorsport-Data-Out-Documentation"),
             enabled_by_default: false,
