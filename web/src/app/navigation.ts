@@ -30,19 +30,7 @@ export const viewTooltips: Record<AppView, string> = {
   advancedEdgeSlots: 'Manage DualSense Edge onboard profile slots.'
 };
 
-/** Old routes keep working forever; they land on the new home for that content. */
-const oldRouteRedirects: Record<string, string> = {
-  '#/games': '#/tuning',
-  '#/adaptive-triggers-haptics': '#/tuning',
-  '#/controllers': '#/advanced/controller',
-  '#/button-mapping': '#/advanced/button-mapping'
-};
-
-/** Every hash the router answers to: current view hashes plus old-route redirects. */
-export const knownViewHashes: string[] = [
-  ...appViews.map((item) => item.hash),
-  ...Object.keys(oldRouteRedirects)
-];
+export const knownViewHashes = appViews.map((item) => item.hash);
 
 export function isViewHash(hash: string): boolean {
   return knownViewHashes.includes(hash);
@@ -62,13 +50,11 @@ export function guardView(view: AppView, readiness: ViewReadiness): AppView {
 }
 
 export function viewFromHash(rawHash: string, readiness: ViewReadiness): AppView {
-  const hash = oldRouteRedirects[rawHash] ?? rawHash;
-  const match = appViews.find((item) => item.hash === hash);
+  const match = appViews.find((item) => item.hash === rawHash);
   return guardView(match?.id ?? 'status', readiness);
 }
 
 /** The view a hash is asking for, before readiness guards — null for unknown hashes. */
 export function viewIntentFromHash(rawHash: string): AppView | null {
-  const hash = oldRouteRedirects[rawHash] ?? rawHash;
-  return appViews.find((item) => item.hash === hash)?.id ?? null;
+  return appViews.find((item) => item.hash === rawHash)?.id ?? null;
 }

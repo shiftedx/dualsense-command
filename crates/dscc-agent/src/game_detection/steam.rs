@@ -30,6 +30,8 @@ pub(crate) fn unsupported_steam_game_catalog() -> SteamGameCatalog {
             })
             .collect(),
         artwork_paths: BTreeMap::new(),
+        steam_root: None,
+        steam_stats: BTreeMap::new(),
     }
 }
 
@@ -96,6 +98,8 @@ pub(crate) fn build_supported_steam_game_catalog(
     SteamGameCatalog {
         supported_games,
         artwork_paths,
+        steam_root: Some(steam_root.to_path_buf()),
+        steam_stats,
     }
 }
 
@@ -696,20 +700,6 @@ pub(crate) fn user_game_artwork_for_app(steam_root: &FsPath, app_id: &str) -> Ga
     // only writes is_none() fields, so this preserves the local-cache choices.
     apply_steam_cdn_artwork_fallback(&mut artwork, app_id);
     artwork
-}
-
-/// Locate the configured Steam root (if any) and read per-app stats. Designed
-/// to be run inside `spawn_blocking` so it does not block the async runtime.
-pub(crate) fn steam_root_and_stats_for_user_games(
-) -> (Option<PathBuf>, BTreeMap<String, SteamGameStats>) {
-    let Some(steam_root) = steam_root_candidates()
-        .into_iter()
-        .find(|path| path.join("steamapps").is_dir() || path.join("steam.exe").is_file())
-    else {
-        return (None, BTreeMap::new());
-    };
-    let stats = discover_steam_game_stats(&steam_root);
-    (Some(steam_root), stats)
 }
 
 /// Look up a Steam app manifest by app_id across the entire library set.

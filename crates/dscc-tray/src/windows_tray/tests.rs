@@ -1,6 +1,37 @@
 use super::*;
 
 #[test]
+fn owned_child_can_exit_from_private_stop_pipe() {
+    let mut child = Command::new("cmd.exe")
+        .args(["/C", "set /p DSCC_TEST_STOP="])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    stop_owned_child(&mut child, Duration::from_secs(2));
+    assert!(child.try_wait().unwrap().unwrap().success());
+}
+
+#[test]
+fn unresponsive_owned_child_is_killed_and_reaped() {
+    let mut child = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Start-Sleep -Seconds 30",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    let start = Instant::now();
+    stop_owned_child(&mut child, Duration::from_millis(100));
+    assert!(start.elapsed() < Duration::from_secs(3));
+    assert!(!child.try_wait().unwrap().unwrap().success());
+}
+
+#[test]
 fn decodes_classic_tray_messages() {
     assert_eq!(
         tray_icon_action(TRAY_ICON_ID as WPARAM, WM_RBUTTONUP as LPARAM),

@@ -367,7 +367,10 @@ fn cross_origin_websocket_origin_guard_rejects_host_mismatch() {
     headers.insert(header::HOST, "127.0.0.1:43473".parse().unwrap());
     headers.insert(header::ORIGIN, "http://evil.example".parse().unwrap());
 
-    assert!(!request_origin_matches_host(&headers));
+    assert!(!request_origin_matches_host(
+        &headers,
+        default_agent_bind_addr()
+    ));
 }
 
 #[test]
@@ -375,7 +378,135 @@ fn absent_origin_is_allowed_for_loopback_local_tools() {
     let mut headers = HeaderMap::new();
     headers.insert(header::HOST, "127.0.0.1:43473".parse().unwrap());
 
-    assert!(request_origin_matches_host(&headers));
+    assert!(request_origin_matches_host(
+        &headers,
+        default_agent_bind_addr()
+    ));
+}
+
+#[tokio::test]
+async fn loopback_api_rejects_dns_rebinding_hosts() {
+    for (method, uri) in [
+        (Method::GET, "/api/status"),
+        (Method::PUT, "/api/app-settings"),
+    ] {
+        for origin in [None, Some("http://evil.example:43473")] {
+            let mut request = Request::builder()
+                .method(method.clone())
+                .uri(uri)
+                .header("host", "evil.example:43473")
+                .header("content-type", "application/json");
+            if let Some(origin) = origin {
+                request = request.header("origin", origin);
+            }
+            let response = app(AgentState::mock())
+                .oneshot(
+                    request
+                        .body(Body::from(r#"{"listenOnAllInterfaces":false}"#))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::FORBIDDEN,
+                "{uri}: {origin:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn browser_origin_guard_accepts_local_and_explicit_lan_hosts() {
+    for (bind, host, origin) in [
+        (
+            "127.0.0.1:43473",
+            "127.0.0.1:43473",
+            "http://127.0.0.1:43473",
+        ),
+        (
+            "127.0.0.1:43473",
+            "localhost:43473",
+            "http://localhost:43473",
+        ),
+        // Vite forwards the browser Host/Origin, including its dev-server port.
+        ("127.0.0.1:43473", "127.0.0.1:5173", "http://127.0.0.1:5173"),
+        ("[::1]:43473", "[::1]:43473", "http://[::1]:43473"),
+        ("[::1]:43473", "localhost:43473", "http://localhost:43473"),
+        ("0.0.0.0:43473", "dscc.home:43473", "http://dscc.home:43473"),
+        ("192.168.1.5:43473", "dscc.home", "https://dscc.home"),
+    ] {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, host.parse().unwrap());
+        headers.insert(header::ORIGIN, origin.parse().unwrap());
+        assert!(
+            request_origin_matches_host(&headers, bind.parse().unwrap()),
+            "{bind} {origin}"
+        );
+    }
+}
+
+#[test]
+fn browser_origin_guard_rejects_invalid_or_forged_authorities() {
+    for (host, origin) in [
+        ("evil.example:43473", "http://evil.example:43473"),
+        (
+            "localhost.evil.example:43473",
+            "http://localhost.evil.example:43473",
+        ),
+        ("127.0.0.1:43473", "http://127.0.0.1:5173"),
+        ("127.0.0.1:43473", "null"),
+        ("127.0.0.1:43473", ""),
+        ("127.0.0.1:43473", "http://127.0.0.1:43473/forged"),
+        ("127.0.0.1:43473", "http://evil.example@127.0.0.1:43473"),
+        ("localhost:bad", "http://localhost:bad"),
+        ("localhost:65536", "http://localhost:65536"),
+    ] {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, host.parse().unwrap());
+        headers.insert(header::ORIGIN, origin.parse().unwrap());
+        assert!(
+            !request_origin_matches_host(&headers, default_agent_bind_addr()),
+            "{host} {origin}"
+        );
+    }
+    let mut headers = HeaderMap::new();
+    headers.insert(header::HOST, "127.0.0.1:43473".parse().unwrap());
+    headers.insert(
+        header::ORIGIN,
+        axum::http::HeaderValue::from_bytes(&[0xff]).unwrap(),
+    );
+    assert!(!request_origin_matches_host(
+        &headers,
+        default_agent_bind_addr()
+    ));
+}
+
+#[tokio::test]
+async fn same_origin_local_mutations_and_cli_calls_remain_allowed() {
+    for (host, origin) in [
+        ("localhost:43473", Some("http://localhost:43473")),
+        ("127.0.0.1:5173", Some("http://127.0.0.1:5173")),
+        ("127.0.0.1:43473", None),
+    ] {
+        let mut request = Request::builder()
+            .method(Method::PUT)
+            .uri("/api/app-settings")
+            .header("host", host)
+            .header("content-type", "application/json");
+        if let Some(origin) = origin {
+            request = request.header("origin", origin);
+        }
+        let response = app(AgentState::mock())
+            .oneshot(
+                request
+                    .body(Body::from(r#"{"listenOnAllInterfaces":false}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{host} {origin:?}");
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]

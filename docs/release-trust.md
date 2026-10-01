@@ -1,41 +1,46 @@
-# Release Trust
+# Release trust
 
-DSCC publishes unsigned Windows beta installers. The project does not currently
-sign MSIs because there is no paid code-signing certificate.
+Stable Windows releases require a certificate and verified executable/MSI
+signatures. Unsigned builds require an explicit prerelease tag; local packaging
+uses `-UnsignedPrerelease`. See [open validation gates](production-readiness-plan.md).
 
-## What We Do Instead
+| Artifact | Choose when |
+| --- | --- |
+| Standard | Normal Windows use; no broker bundled |
+| Bridge | Experimental non-Steam forwarding; self-contained .NET |
+| Bridge framework-dependent | Bridge testing with the matching x64 .NET runtime installed |
+| Linux archive | Native Linux beta testing |
 
-- Build releases in GitHub Actions from a tag.
-- Publish SHA256 checksum files next to every artifact.
-- Keep Standard, Bridge, and Bridge Framework-Dependent installer flavors
-  separate.
-- Assert that Standard builds do not bundle the HIDMaestro broker.
-- Pin the external HIDMaestro release URL and SHA256 used for Bridge builds.
-- Install the HIDMaestro MIT license notice beside the bundled Bridge broker.
-- Keep release artifacts, signing keys, private captures, and installer
-  intermediates out of Git.
+## Install or update
 
-## What Users Should Download
+Quit the running tray app, then install the Standard MSI. Profiles and settings
+are retained. Leave **Start with Windows** unchecked: local MSI logs and native
+registry reads disagree, so startup registration/removal is not verified.
 
-- Use `standard` unless you need DSCC Input Bridge for local non-Steam apps.
-- Use `bridge` only for non-Steam bridge testing and expect a larger download.
-- Use `bridge-framework-dependent` only when the matching x64 .NET runtime is
-  already installed.
+## Cut a release
 
-## Verify A Download
+1. Align package/crate/lockfile/MSI versions and add an exact tag section to `CHANGELOG.md`.
+2. Run `npm run check`, `npm run check:notices`, and
+   `node tools/check-release.mjs --tag v<version> --distribution`.
+3. Merge reviewed changes, then tag the tested commit. CI builds all flavors,
+   preserves notices, verifies the pinned HIDMaestro archive, and publishes
+   SHA256 checksums. Record validation limits.
+4. Verify the download against the corresponding checksum file:
 
 ```powershell
-Get-FileHash .\DualSenseCommandCenter-<version>-standard.msi -Algorithm SHA256
+Get-FileHash .\<artifact> -Algorithm SHA256
 Get-Content .\SHA256SUMS-windows.txt
 ```
 
-The hash from `Get-FileHash` must match the entry in the checksum file.
+## Signing
 
-## Not Yet Provided
+Set repository secrets `DSCC_SIGNING_PFX_BASE64` and `DSCC_SIGNING_PASSWORD`.
+CI stores the PFX under runner temporary storage, signs with SHA256 and an
+RFC3161 timestamp, verifies Authenticode, then deletes the temporary key in
+`finally`. Never commit certificates, keys, captures, or generated artifacts.
+See [SignTool](https://learn.microsoft.com/en-us/windows/win32/seccrypto/using-signtool-to-sign-a-file).
 
-- Code-signed MSI files.
-- Hardware-backed release attestations.
-- A signed updater.
-
-Do not add auto-update install behavior until release signing and rollback
-rules are in place.
+Regenerate `DEPENDENCY_LICENSES.txt` with `npm run generate:notices` after locked
+updates. Preserve license texts and source links; self-contained Bridge also
+requires exact restored runtime notices. Do not add an updater until signing
+and rollback are verified.

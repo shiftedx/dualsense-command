@@ -7,7 +7,12 @@ use dscc_core::input_bridge::DsccBridgeCommand;
 pub(crate) async fn get_input_bridge_status(
     State(state): State<AgentState>,
 ) -> Json<InputBridgeStatusResponse> {
-    Json(state.input_bridge.status_response())
+    Json(
+        state
+            .input_bridge
+            .run_blocking(|bridge| bridge.status_response())
+            .await,
+    )
 }
 
 pub(crate) async fn get_input_bridge_session(
@@ -73,24 +78,30 @@ pub(crate) async fn start_input_bridge_session(
     if existing.state == InputBridgeSessionState::Active {
         return Ok(Json(existing));
     }
-    let summary = state
+    let start_controller_id = controller_id.clone();
+    let (summary, started) = state
         .input_bridge
-        .start_session(
-            &controller_id,
-            VirtualOutputKind::Xbox360,
-            current_timestamp_millis(),
-        )
+        .run_blocking(move |bridge| {
+            bridge.start_session(
+                &start_controller_id,
+                VirtualOutputKind::Xbox360,
+                current_timestamp_millis(),
+            )
+        })
+        .await
         .map_err(|error| {
             (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(serde_json::json!({"error": error})),
             )
         })?;
-    let loop_state = state.clone();
-    let loop_controller_id = controller_id.clone();
-    tokio::spawn(async move {
-        run_input_bridge_session_loop(loop_state, loop_controller_id).await;
-    });
+    if started {
+        let loop_state = state.clone();
+        let loop_controller_id = controller_id.clone();
+        tokio::spawn(async move {
+            run_input_bridge_session_loop(loop_state, loop_controller_id).await;
+        });
+    }
     let _ = state.event_tx.send(RealtimeMessage {
         kind: "snapshot_invalidated".to_string(),
         controller: None,
@@ -103,9 +114,7 @@ pub(crate) async fn stop_input_bridge_session(
     Path(controller_id): Path<String>,
     State(state): State<AgentState>,
 ) -> Json<InputBridgeSessionSummary> {
-    let summary = state
-        .input_bridge
-        .stop_session(&controller_id, current_timestamp_millis());
+    let summary = stop_bridge_session(&state, &controller_id).await;
     let _ = state.event_tx.send(RealtimeMessage {
         kind: "snapshot_invalidated".to_string(),
         controller: None,
@@ -135,16 +144,14 @@ pub(crate) async fn run_input_bridge_session_loop(state: AgentState, controller_
         {
             let inner = state.inner.read().await;
             let Some(detail) = inner.controllers.detail(&controller_id) else {
-                state
-                    .input_bridge
-                    .stop_session(&controller_id, current_timestamp_millis());
+                drop(inner);
+                stop_bridge_session(&state, &controller_id).await;
                 send_input_bridge_invalidation(&state, "input-bridge-controller-disconnected");
                 break;
             };
             if !detail.connected {
-                state
-                    .input_bridge
-                    .stop_session(&controller_id, current_timestamp_millis());
+                drop(inner);
+                stop_bridge_session(&state, &controller_id).await;
                 send_input_bridge_invalidation(&state, "input-bridge-controller-disconnected");
                 break;
             }
@@ -156,9 +163,8 @@ pub(crate) async fn run_input_bridge_session_loop(state: AgentState, controller_
             if config.input_mode != ControllerInputMode::DsccInputBridge
                 || !config.input_bridge.enabled
             {
-                state
-                    .input_bridge
-                    .stop_session(&controller_id, current_timestamp_millis());
+                drop(inner);
+                stop_bridge_session(&state, &controller_id).await;
                 send_input_bridge_invalidation(&state, "input-bridge-config-disabled");
                 break;
             }
@@ -174,16 +180,12 @@ pub(crate) async fn run_input_bridge_session_loop(state: AgentState, controller_
                 .cached_game_detection_with_ttl(HARDWARE_GAME_DETECTION_INTERVAL)
                 .await;
             if !detection_allows_input_bridge(&detection) {
-                state
-                    .input_bridge
-                    .stop_session(&controller_id, current_timestamp_millis());
+                stop_bridge_session(&state, &controller_id).await;
                 send_input_bridge_invalidation(&state, "input-bridge-local-app-inactive");
                 break;
             }
             if !local_app_execution_verified_for_input_bridge(&state, &detection).await {
-                state
-                    .input_bridge
-                    .stop_session(&controller_id, current_timestamp_millis());
+                stop_bridge_session(&state, &controller_id).await;
                 send_input_bridge_invalidation(&state, "input-bridge-local-app-unverified");
                 break;
             }
@@ -205,17 +207,27 @@ pub(crate) async fn run_input_bridge_session_loop(state: AgentState, controller_
                 }
                 last_submitted_sequence = Some(sample.sequence);
                 let frame = bridge_frame_from_input(&sample.state, config);
+                let submit_controller_id = controller_id.clone();
+                let virtual_state = frame.state.clone();
                 if state
                     .input_bridge
-                    .submit_virtual_state(&controller_id, &frame.state, current_timestamp_millis())
+                    .run_blocking(move |bridge| {
+                        bridge.submit_virtual_state(
+                            &submit_controller_id,
+                            &virtual_state,
+                            current_timestamp_millis(),
+                        )
+                    })
+                    .await
                     .is_err()
                 {
-                    state.input_bridge.neutralize_session(
+                    neutralize_bridge_session(
+                        &state,
                         &controller_id,
                         InputBridgeSessionState::Faulted,
                         "DSCC Input Bridge backend fault; virtual output was neutralized.",
-                        current_timestamp_millis(),
-                    );
+                    )
+                    .await;
                     tracing::warn!(controller_id = %controller_id, "DSCC Input Bridge backend fault");
                     send_input_bridge_invalidation(&state, "input-bridge-backend-fault");
                     break;
@@ -226,23 +238,25 @@ pub(crate) async fn run_input_bridge_session_loop(state: AgentState, controller_
             }
             Ok(None) => {
                 if last_input_at.elapsed() >= INPUT_BRIDGE_STALE_AFTER {
-                    state.input_bridge.neutralize_session(
+                    neutralize_bridge_session(
+                        &state,
                         &controller_id,
                         InputBridgeSessionState::Stale,
                         "DSCC Input Bridge neutralized output after stale controller input.",
-                        current_timestamp_millis(),
-                    );
+                    )
+                    .await;
                     send_input_bridge_invalidation(&state, "input-bridge-input-stale");
                     last_input_at = Instant::now();
                 }
             }
             Err(_) => {
-                state.input_bridge.neutralize_session(
+                neutralize_bridge_session(
+                    &state,
                     &controller_id,
                     InputBridgeSessionState::Faulted,
                     "DSCC Input Bridge input read failed; virtual output was neutralized.",
-                    current_timestamp_millis(),
-                );
+                )
+                .await;
                 tracing::warn!(controller_id = %controller_id, "DSCC Input Bridge input read failed");
                 send_input_bridge_invalidation(&state, "input-bridge-input-fault");
                 break;
@@ -273,6 +287,34 @@ pub(crate) async fn dispatch_bridge_command(state: &AgentState, command: DsccBri
             tracing::debug!(profile_id = %target_id, "DSCC Input Bridge cycle target profile vanished before activation");
         }
     }
+}
+
+async fn stop_bridge_session(state: &AgentState, controller_id: &str) -> InputBridgeSessionSummary {
+    let controller_id = controller_id.to_string();
+    state
+        .input_bridge
+        .run_blocking(move |bridge| bridge.stop_session(&controller_id, current_timestamp_millis()))
+        .await
+}
+
+async fn neutralize_bridge_session(
+    state: &AgentState,
+    controller_id: &str,
+    session_state: InputBridgeSessionState,
+    message: &'static str,
+) {
+    let controller_id = controller_id.to_string();
+    state
+        .input_bridge
+        .run_blocking(move |bridge| {
+            bridge.neutralize_session(
+                &controller_id,
+                session_state,
+                message,
+                current_timestamp_millis(),
+            )
+        })
+        .await;
 }
 
 fn send_input_bridge_invalidation(state: &AgentState, message: &str) {

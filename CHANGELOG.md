@@ -1,3 +1,28 @@
+# DualSense Command Center 0.5.1
+
+Release date: 2026-09-30
+
+Reliability, performance and documentation cleanup. Remaining validation limits
+are listed in [readiness](docs/production-readiness-plan.md).
+
+- Bounded discovery, watchdog and broker work; cached game metadata and prepared
+  profiles reduce hot-path scanning and allocation.
+- Ordered atomic saves and graceful tray/agent shutdown protect state and clear
+  controller output before exit. Edge Bluetooth effects and neutralization were
+  physically confirmed on the audit build.
+- Hardened loopback Host/origin checks; patched Rust and npm advisories.
+- Removed unverified bundled controller artwork and game glyphs. Shipped original
+  SVG diagrams, verified asset hashes, and exact dependency notices. Optional
+  game glyph installation requires a user-supplied archive.
+- Shortened docs, added task-to-module navigation and tracked agent guidance.
+- Fixed installer reinstall launch; added bounded smoke tests and config-retention
+  evidence. Startup registration remains unresolved on the audit host.
+
+Windows: choose Standard. Bridge flavors are experimental; Linux remains beta.
+Unsigned artifacts may trigger Windows trust prompts. Complete hardware,
+clean-account upgrade, startup, and signed-artifact checks before claiming full
+production validation.
+
 # DualSense Command Center 0.5.0
 
 Release date: 2026-07-17

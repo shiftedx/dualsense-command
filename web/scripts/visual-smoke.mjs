@@ -19,8 +19,6 @@ const routeChecks = [
   // toolbar on the previously loaded page, so this check must stay LAST.
   { hash: '#/advanced/button-mapping', pattern: /Button Mapping|Default mirror/i }
 ];
-// Old routes keep working forever; each lands on the new home for its content.
-const oldRouteRedirectChecks = [{ from: '#/games', to: '#/tuning' }];
 const viewports = [
   { width: 1366, height: 768 },
   { width: 1440, height: 900 },
@@ -141,14 +139,6 @@ async function main() {
         }
       }
 
-      for (const redirect of oldRouteRedirectChecks) {
-        await page.goto(`${baseUrl}/${redirect.from}`, { waitUntil: 'domcontentloaded' });
-        await page.waitForTimeout(300);
-        const finalHash = await page.evaluate(() => location.hash);
-        if (finalHash !== redirect.to) {
-          failures.push(`${viewport.width}x${viewport.height} ${redirect.from}: redirected to ${finalHash}, expected ${redirect.to}`);
-        }
-      }
       if (consoleErrors.length) {
         failures.push(`${viewport.width}x${viewport.height}: console errors: ${consoleErrors.slice(0, 5).join(' | ')}`);
       }

@@ -36,6 +36,10 @@ pub enum ControllerTransportKind {
 pub enum ConnectionState {
     Connected,
     Disconnected,
+    /// Present in an OS device registry (e.g. a Bluetooth pairing record)
+    /// without an open input/output session; configuration is available but
+    /// the controller is not live.
+    Detected,
     Unknown,
 }
 
@@ -420,28 +424,39 @@ fn evaluate_value_points(points: &[ValuePoint], input: f64) -> Option<f64> {
         return None;
     }
 
-    let mut normalized: Vec<ValuePoint> = points
+    let normalized = if points
         .iter()
-        .copied()
-        .filter(|point| point.input.is_finite() && point.output.is_finite())
-        .map(|point| ValuePoint {
-            input: point.input.clamp(0.0, 1.0),
-            output: point.output.clamp(0.0, 1.0),
-        })
-        .collect();
-    if normalized.is_empty() {
-        return None;
-    }
-
-    normalized.sort_by(|a, b| a.input.total_cmp(&b.input));
-    normalized.dedup_by(|a, b| {
-        if (a.input - b.input).abs() < f64::EPSILON {
-            b.output = a.output;
-            true
-        } else {
-            false
+        .all(|point| (0.0..=1.0).contains(&point.input) && (0.0..=1.0).contains(&point.output))
+        && points
+            .windows(2)
+            .all(|pair| pair[1].input - pair[0].input >= f64::EPSILON)
+    {
+        std::borrow::Cow::Borrowed(points)
+    } else {
+        let mut normalized: Vec<ValuePoint> = points
+            .iter()
+            .copied()
+            .filter(|point| point.input.is_finite() && point.output.is_finite())
+            .map(|point| ValuePoint {
+                input: point.input.clamp(0.0, 1.0),
+                output: point.output.clamp(0.0, 1.0),
+            })
+            .collect();
+        if normalized.is_empty() {
+            return None;
         }
-    });
+
+        normalized.sort_by(|a, b| a.input.total_cmp(&b.input));
+        normalized.dedup_by(|a, b| {
+            if (a.input - b.input).abs() < f64::EPSILON {
+                b.output = a.output;
+                true
+            } else {
+                false
+            }
+        });
+        std::borrow::Cow::Owned(normalized)
+    };
 
     let x = input.clamp(0.0, 1.0);
     if x <= normalized[0].input {
@@ -1026,6 +1041,91 @@ fn non_negative(value: f64) -> f64 {
 mod tests {
     use super::*;
     use dscc_telemetry::{SignalName, SignalUpdate};
+
+    #[test]
+    fn value_points_preserve_normalization_and_interpolation() {
+        let cases = [
+            (vec![(0.0, 0.0), (0.5, 0.25), (1.0, 1.0)], 0.75, Some(0.625)),
+            (vec![(0.5, 0.25)], -1.0, Some(0.25)),
+            (
+                vec![(1.0, 1.0), (-1.0, -1.0), (0.5, 0.25)],
+                0.75,
+                Some(0.625),
+            ),
+            (
+                vec![(0.0, 0.0), (0.5, 0.2), (0.5, 0.8), (1.0, 1.0)],
+                0.5,
+                Some(0.8),
+            ),
+            (
+                vec![(0.0, 0.0), (f64::EPSILON / 2.0, 0.8), (1.0, 1.0)],
+                0.0,
+                Some(0.8),
+            ),
+            (
+                vec![(f64::NAN, 0.0), (0.5, 0.4), (1.0, f64::INFINITY)],
+                1.0,
+                Some(0.4),
+            ),
+            (vec![(f64::NAN, 0.0)], 0.5, None),
+            (vec![(0.0, 0.0), (1.0, 1.0)], f64::NAN, None),
+        ];
+        for (points, input, expected) in cases {
+            let points: Vec<_> = points
+                .into_iter()
+                .map(|(input, output)| ValuePoint { input, output })
+                .collect();
+            assert_eq!(
+                evaluate_value_points(&points, input),
+                expected,
+                "points={points:?}, input={input}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "manual normalized curve timing"]
+    fn normalized_curve_timing() {
+        use std::hint::black_box;
+        let points = [
+            ValuePoint {
+                input: 0.0,
+                output: 0.0,
+            },
+            ValuePoint {
+                input: 0.25,
+                output: 0.1,
+            },
+            ValuePoint {
+                input: 0.5,
+                output: 0.3,
+            },
+            ValuePoint {
+                input: 0.75,
+                output: 0.7,
+            },
+            ValuePoint {
+                input: 1.0,
+                output: 1.0,
+            },
+        ];
+        let mut times = Vec::new();
+        for _ in 0..7 {
+            let start = Instant::now();
+            for i in 0..100_000 {
+                black_box(evaluate_value_points(
+                    black_box(&points),
+                    black_box((i % 1000) as f64 / 1000.0),
+                ));
+            }
+            times.push(start.elapsed().as_micros());
+        }
+        times.sort_unstable();
+        println!(
+            "normalized curve median: {}us / 100000 evaluations",
+            times[3]
+        );
+    }
 
     #[test]
     fn maps_brake_and_throttle_to_trigger_resistance() {

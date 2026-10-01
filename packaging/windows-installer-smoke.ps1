@@ -23,7 +23,7 @@ param(
     [int]$TimeoutSeconds = 120,
     [string]$LogDirectory,
     [ValidateSet("0", "1")]
-    [string]$StartWithWindows = "1",
+    [string]$StartWithWindows = "0",
     [ValidateSet("0", "1")]
     [string]$CreateDesktopShortcut = "0",
     [ValidateSet("0", "1")]
@@ -259,7 +259,12 @@ function Invoke-MsiAction {
 
     Write-Step ("{0} {1}" -f $Action, $Path)
     Write-Host ("  Log: {0}" -f $LogPath)
-    $process = Start-Process -FilePath $msiexec -ArgumentList $argumentLine -Wait -PassThru -WindowStyle Hidden
+    $process = Start-Process -FilePath $msiexec -ArgumentList $argumentLine -PassThru -WindowStyle Hidden
+    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+        $process.Kill()
+        $process.WaitForExit(5000) | Out-Null
+        throw "$Action exceeded $TimeoutSeconds seconds. See $LogPath; inspect Windows Installer state before retrying."
+    }
     $exitCode = $process.ExitCode
 
     if ($exitCode -eq 0) {
@@ -292,6 +297,7 @@ function Assert-InstalledPayload {
         (Join-Path $installFolder "Backup DSCC State.cmd"),
         (Join-Path $installFolder "README_TESTING.txt"),
         (Join-Path $installFolder "LICENSE.txt"),
+        (Join-Path $installFolder "THIRD_PARTY_NOTICES.txt"),
         (Join-Path $installFolder "web\dist\index.html")
     )
 
@@ -327,6 +333,13 @@ function Assert-InstalledPayload {
     Write-Step "Installed payload checks passed."
 }
 
+function Assert-RetainedConfigProbe {
+    param([string]$Path, [string]$ExpectedHash)
+    if (-not (Test-Path -LiteralPath $Path) -or (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ne $ExpectedHash) {
+        throw "Installer did not retain the isolated configuration probe."
+    }
+}
+
 function Assert-UninstalledPayload {
     $installFolder = Get-DsccInstallFolder
     $startMenuFolder = Get-DsccStartMenuFolder
@@ -338,6 +351,7 @@ function Assert-UninstalledPayload {
         (Join-Path $installFolder "dscc-tray.exe"),
         (Join-Path $installFolder "dscc-cli.exe"),
         (Join-Path $installFolder "LICENSE.txt"),
+        (Join-Path $installFolder "THIRD_PARTY_NOTICES.txt"),
         (Join-Path $installFolder "web\dist\index.html")
     )) {
         if (Test-Path -LiteralPath $path) {
@@ -517,6 +531,10 @@ $installProperties = @{
     DSCC_LAUNCH_AFTER_INSTALL = $LaunchAfterInstall
 }
 
+$previousOutputSafety = $env:DSCC_DISABLE_HARDWARE_OUTPUT
+$env:DSCC_DISABLE_HARDWARE_OUTPUT = '1'
+$configProbe = $null
+try {
 Invoke-MsiAction -Action Install -Path $baselineMsi.Path -LogPath (Join-Path $LogDirectory "01-install.log") -Properties $installProperties
 $installedMsi = $baselineMsi
 Assert-InstalledPayload -ExpectedStartWithWindows $StartWithWindows -ExpectedDesktopShortcut $CreateDesktopShortcut
@@ -525,10 +543,20 @@ if (-not $SkipLaunchCheck -and $LaunchAfterInstall -eq "1") {
     Assert-DsccProcessesRunFromInstallFolder
 }
 
+$paths = (& (Join-Path (Get-DsccInstallFolder) "dscc-cli.exe") paths --json) | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($paths.config_dir)) {
+    throw "Installed CLI could not resolve its configuration directory."
+}
+New-Item -ItemType Directory -Path $paths.config_dir -Force | Out-Null
+$configProbe = Join-Path $paths.config_dir (".installer-smoke-{0}.txt" -f [Guid]::NewGuid().ToString('N'))
+Set-Content -LiteralPath $configProbe -Value 'DSCC installer retention probe' -Encoding ASCII
+$configProbeHash = (Get-FileHash -LiteralPath $configProbe -Algorithm SHA256).Hash
+
 if (-not $SkipUpgrade) {
     Invoke-MsiAction -Action Install -Path $currentMsi.Path -LogPath (Join-Path $LogDirectory "02-upgrade.log") -Properties $installProperties
     $installedMsi = $currentMsi
     Assert-InstalledPayload -ExpectedStartWithWindows $StartWithWindows -ExpectedDesktopShortcut $CreateDesktopShortcut
+    Assert-RetainedConfigProbe -Path $configProbe -ExpectedHash $configProbeHash
     if (-not $SkipLaunchCheck -and $LaunchAfterInstall -eq "1") {
         Wait-ForDsccProcesses -Names @("dscc-tray", "dscc-agent") -TimeoutSeconds $TimeoutSeconds | Out-Null
         Assert-DsccProcessesRunFromInstallFolder
@@ -541,8 +569,33 @@ if (-not $KeepInstalled) {
     Invoke-MsiAction -Action Uninstall -Path $installedMsi.Path -LogPath (Join-Path $LogDirectory "03-uninstall.log")
     Assert-UninstalledPayload
     Wait-ForNoDsccProcesses -TimeoutSeconds $TimeoutSeconds
+    Assert-RetainedConfigProbe -Path $configProbe -ExpectedHash $configProbeHash
 } else {
     Write-Warning "Leaving DSCC installed because -KeepInstalled was supplied."
 }
 
-Write-Step "Smoke completed successfully. Logs: $LogDirectory"
+$complete = -not ($SkipUpgrade -or $SkipLaunchCheck -or $KeepInstalled -or $AllowExistingInstall -or $AllowExistingProcesses) -and $LaunchAfterInstall -eq '1' -and $baselineMsi.Sha256 -ne $currentMsi.Sha256
+$evidence = [ordered]@{
+    schemaVersion = 1
+    recordedAt = [DateTime]::UtcNow.ToString('o')
+    status = $(if ($complete) { 'passed' } else { 'partial' })
+    currentArtifact = @{ name = $currentMsi.Name; sha256 = $currentMsi.Sha256 }
+    baselineArtifact = @{ name = $baselineMsi.Name; sha256 = $baselineMsi.Sha256 }
+    osVersion = [Environment]::OSVersion.Version.ToString()
+    dryHardwareOutput = $true
+    cleanAccount = -not ($AllowExistingInstall -or $AllowExistingProcesses)
+    upgrade = -not $SkipUpgrade
+    previousVersionUpgrade = $baselineMsi.Sha256 -ne $currentMsi.Sha256
+    launch = -not $SkipLaunchCheck -and $LaunchAfterInstall -eq '1'
+    uninstall = -not $KeepInstalled
+    configRetention = $true
+    options = @{ startWithWindows = $StartWithWindows; desktopShortcut = $CreateDesktopShortcut; launchAfterInstall = $LaunchAfterInstall }
+}
+$evidence | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $LogDirectory 'evidence.json') -Encoding UTF8
+Write-Step "Smoke completed ($($evidence.status)). Logs and evidence: $LogDirectory"
+} finally {
+    $env:DSCC_DISABLE_HARDWARE_OUTPUT = $previousOutputSafety
+    if ($configProbe -and (Test-Path -LiteralPath $configProbe)) {
+        Remove-Item -LiteralPath $configProbe -Force
+    }
+}

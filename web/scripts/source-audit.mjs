@@ -14,6 +14,7 @@ const trackedFiles = execFileSync(git, ['ls-files'], {
   .filter(Boolean);
 
 const publicRootFiles = new Set([
+  'AGENTS.md',
   'CHANGELOG.md',
   'CONTEXT.md',
   'PRODUCT.md',
@@ -44,9 +45,7 @@ const files = Array.from(new Set(execFileSync(git, ['ls-files', '--cached', '--m
   .filter((file) => existsSync(path.join(repoRoot, file)));
 
 const selfAuditScript = /web\/scripts\/source-audit\.mjs$/;
-const allowedTrackedArtifacts = new Set([
-  'crates/dscc-agent/assets/forza/ControllerIcons.zip'
-]);
+const allowedTrackedArtifacts = new Set();
 const forbiddenTrackedArtifactPattern = /\.(msi|exe|dll|pdb|cab|wixobj|wixpdb|pfx|p12|pem|key|zip|7z|rar)$/i;
 
 const rules = [
@@ -99,7 +98,14 @@ const rules = [
   {
     name: 'local agent tooling surface',
     pattern: /\b(mattpocock|setup-matt-pocock-skills|superpowers:|\.superpowers\/|Generated with \[Claude Code\]|docs\/agents\/|skills-lock\.json|AGENTS\.md|PROVENANCE\.md|WINDOWS_HANDOFF_PROMPT|AFK agent|impeccable skill)\b/i,
-    allow: [selfAuditScript]
+    // Shared contributor guidance is intentional; product copy stays clean.
+    allow: [
+      /^AGENTS\.md$/,
+      /^docs\/architecture\.md$/,
+      /^docs\/agents\//,
+      /^docs\/(sources|contributing|README|production-readiness-plan)\.md$/,
+      selfAuditScript
+    ]
   },
   {
     name: 'external user-attachment asset',

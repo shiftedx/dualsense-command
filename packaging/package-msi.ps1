@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.4.1",
+    [string]$Version = "0.5.1",
     [string]$TargetTriple,
     [switch]$SkipWebBuild,
     [switch]$AllowDebugAgent,
@@ -9,9 +9,10 @@ param(
     [string]$BrokerPublishPath,
     [string]$CertificatePath,
     [string]$CertificatePassword,
+    [switch]$UnsignedPrerelease,
     [string]$TimestampUrl = 'http://timestamp.digicert.com',
     [ValidateSet("0", "1")]
-    [string]$DefaultStartWithWindows = "1",
+    [string]$DefaultStartWithWindows = "0",
     [ValidateSet("0", "1")]
     [string]$DefaultCreateDesktopShortcut = "0",
     [ValidateSet("0", "1")]
@@ -19,6 +20,13 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($CertificatePath) -and -not $UnsignedPrerelease) {
+    throw "Production MSI requires -CertificatePath. Use -UnsignedPrerelease only for explicitly labeled prerelease or local validation artifacts."
+}
+if ($UnsignedPrerelease -and -not [string]::IsNullOrWhiteSpace($CertificatePath)) {
+    throw "Choose a signed artifact or -UnsignedPrerelease, not both."
+}
 
 function Resolve-RepoRoot {
     $scriptDir = Split-Path -Parent $PSCommandPath
@@ -53,7 +61,26 @@ function Add-TextFile([string]$Path, [string]$Content) {
     Set-Content -LiteralPath $Path -Value $Content -Encoding ASCII
 }
 
+function Assert-InstallerTargetPath([string]$Path) {
+    $resolved = [IO.Path]::GetFullPath($Path)
+    $allowed = [IO.Path]::GetFullPath($targetRoot).TrimEnd('\') + '\'
+    if ((Test-Path -LiteralPath $targetRoot) -and ((Get-Item -LiteralPath $targetRoot -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw "Refusing installer cleanup under redirected target root."
+    }
+    if (-not $resolved.StartsWith($allowed, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing filesystem cleanup outside installer target: $resolved"
+    }
+    $ancestor = $resolved
+    while ($ancestor -and $ancestor.StartsWith($allowed, [StringComparison]::OrdinalIgnoreCase)) {
+        if ((Test-Path -LiteralPath $ancestor) -and ((Get-Item -LiteralPath $ancestor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "Refusing installer cleanup through redirected path: $ancestor"
+        }
+        $ancestor = Split-Path -Parent $ancestor
+    }
+}
+
 function Copy-DirectoryClean([string]$Source, [string]$Destination) {
+    Assert-InstallerTargetPath $Destination
     if (Test-Path $Destination) {
         Remove-Item -LiteralPath $Destination -Recurse -Force
     }
@@ -62,6 +89,7 @@ function Copy-DirectoryClean([string]$Source, [string]$Destination) {
 }
 
 function Copy-FilesClean([string[]]$Files, [string]$Destination) {
+    Assert-InstallerTargetPath $Destination
     if (Test-Path $Destination) {
         Remove-Item -LiteralPath $Destination -Recurse -Force
     }
@@ -140,6 +168,7 @@ function Ensure-Wix3([string]$TargetRoot) {
     Assert-FileSha256 -Path $zipPath -ExpectedHash $wixSha256
 
     if (Test-Path $toolDir) {
+        Assert-InstallerTargetPath $toolDir
         Remove-Item -LiteralPath $toolDir -Recurse -Force
     }
     New-Item -ItemType Directory -Path $toolDir -Force | Out-Null
@@ -204,6 +233,10 @@ function Invoke-Signtool {
     if ($LASTEXITCODE -ne 0) {
         throw "signtool failed for '$FilePath' with exit code $LASTEXITCODE."
     }
+    & $SignTool verify /pa /all /tw $FilePath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Signature verification failed for '$FilePath'."
+    }
 }
 
 function Write-DirectoryXml {
@@ -260,6 +293,9 @@ $repoRoot = Resolve-RepoRoot
 $webRoot = Join-Path $repoRoot "web"
 $licensePath = Join-Path $repoRoot "LICENSE"
 $thirdPartyNoticesPath = Join-Path $repoRoot "THIRD_PARTY_NOTICES.md"
+$dependencyNoticesPath = Join-Path $repoRoot "DEPENDENCY_LICENSES.txt"
+& node (Join-Path $repoRoot 'tools/check-release.mjs') --distribution
+if ($LASTEXITCODE -ne 0) { throw 'Redistribution/license checks failed before packaging.' }
 $trayIconPath = Join-Path $repoRoot "crates\dscc-tray\assets\dscc-tray.ico"
 $targetRoot = Join-Path $repoRoot "target"
 $stagingRoot = Join-Path $targetRoot "installer\staging"
@@ -349,6 +385,9 @@ $webDist = Join-Path $webRoot "dist"
 if (-not (Test-Path (Join-Path $webDist "index.html"))) {
     throw "web/dist is missing. Run npm run build first."
 }
+if (Test-Path -LiteralPath (Join-Path $webDist 'dualsense')) {
+    throw "web/dist contains removed, unverified controller PNG assets. Rebuild the web UI before packaging."
+}
 if (-not (Test-Path -LiteralPath $licensePath)) {
     throw "LICENSE is missing."
 }
@@ -391,6 +430,7 @@ if ($includeBroker -and $frameworkDependentBroker) {
 }
 
 if (Test-Path $stagingRoot) {
+    Assert-InstallerTargetPath $stagingRoot
     Remove-Item -LiteralPath $stagingRoot -Recurse -Force
 }
 New-Item -ItemType Directory -Path $stagingRoot | Out-Null
@@ -400,11 +440,17 @@ Copy-Item -LiteralPath $agentExe -Destination (Join-Path $stagingRoot "dscc-agen
 Copy-Item -LiteralPath $trayExe -Destination (Join-Path $stagingRoot "dscc-tray.exe") -Force
 Copy-Item -LiteralPath $cliExe -Destination (Join-Path $stagingRoot "dscc-cli.exe") -Force
 Copy-Item -LiteralPath $licensePath -Destination (Join-Path $stagingRoot "LICENSE.txt") -Force
+Copy-Item -LiteralPath $thirdPartyNoticesPath -Destination (Join-Path $stagingRoot "THIRD_PARTY_NOTICES.txt") -Force
+if (-not (Test-Path -LiteralPath $dependencyNoticesPath)) { throw "Generate DEPENDENCY_LICENSES.txt before packaging." }
+Copy-Item -LiteralPath $dependencyNoticesPath -Destination (Join-Path $stagingRoot "DEPENDENCY_LICENSES.txt") -Force
 Copy-DirectoryClean -Source $webDist -Destination (Join-Path $stagingRoot "web\dist")
 if ($includeBroker) {
     if ($frameworkDependentBroker) {
         Copy-FilesClean -Files @($brokerExe, $brokerDll, $brokerDepsJson, $brokerRuntimeConfigJson, $brokerCoreDll) -Destination (Join-Path $stagingRoot "hidmaestro")
     } else {
+        if (-not (Test-Path -LiteralPath (Join-Path $brokerPublish 'DOTNET_RUNTIME_NOTICES.txt'))) {
+            throw "Self-contained Bridge requires DOTNET_RUNTIME_NOTICES.txt from the exact restored .NET runtime pack licenses."
+        }
         Copy-DirectoryClean -Source $brokerPublish -Destination (Join-Path $stagingRoot "hidmaestro")
     }
     Copy-Item -LiteralPath $thirdPartyNoticesPath -Destination (Join-Path $stagingRoot "hidmaestro\THIRD_PARTY_NOTICES.txt") -Force
@@ -433,15 +479,21 @@ if (-not [string]::IsNullOrWhiteSpace($CertificatePath)) {
         throw "Code signing requested but signtool.exe could not be located. Install the Windows 10/11 SDK or add signtool.exe to PATH."
     }
 
-    foreach ($staged in @((Join-Path $stagingRoot 'dscc-agent.exe'), (Join-Path $stagingRoot 'dscc-tray.exe'), (Join-Path $stagingRoot 'dscc-cli.exe'))) {
+    $signingFiles = @((Join-Path $stagingRoot 'dscc-agent.exe'), (Join-Path $stagingRoot 'dscc-tray.exe'), (Join-Path $stagingRoot 'dscc-cli.exe'))
+    if ($includeBroker) {
+        $signingFiles += Join-Path $stagingRoot 'hidmaestro\dscc-hidmaestro-broker.exe'
+        $brokerAssembly = Join-Path $stagingRoot 'hidmaestro\dscc-hidmaestro-broker.dll'
+        if (Test-Path -LiteralPath $brokerAssembly) { $signingFiles += $brokerAssembly }
+    }
+    foreach ($staged in $signingFiles) {
         Invoke-Signtool -SignTool $signTool -FilePath $staged -CertificatePath $CertificatePath -CertificatePassword $CertificatePassword -TimestampUrl $TimestampUrl
     }
 }
 
 $stopScript = @"
 @echo off
-"%SystemRoot%\System32\taskkill.exe" /IM dscc-agent.exe /F /T >nul 2>nul
-"%SystemRoot%\System32\taskkill.exe" /IM dscc-tray.exe /F /T >nul 2>nul
+"%~dp0dscc-tray.exe" --stop
+exit /b %errorlevel%
 "@
 
 $backupStateScript = @"
@@ -630,15 +682,17 @@ $directoryText
 $componentRefText
     </Feature>
 
-    <CustomAction Id="StopExistingAgent" Directory="TARGETDIR" ExeCommand="&quot;[SystemFolder]taskkill.exe&quot; /IM dscc-agent.exe /F /T" Execute="immediate" Return="ignore" Impersonate="yes" />
-    <CustomAction Id="StopExistingTray" Directory="TARGETDIR" ExeCommand="&quot;[SystemFolder]taskkill.exe&quot; /IM dscc-tray.exe /F /T" Execute="immediate" Return="ignore" Impersonate="yes" />
+    <Binary Id="GracefulStopTray" SourceFile="$(Escape-Xml (Join-Path $stagingRoot 'dscc-tray.exe'))" />
+    <!-- BinaryKey selects the executable. Repeat its name in the command line
+         for CreateProcess argv[0]; otherwise Rust drops the first option.
+         https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw -->
+    <CustomAction Id="StopExistingTray" BinaryKey="GracefulStopTray" ExeCommand="dscc-tray.exe --stop" Execute="immediate" Return="check" Impersonate="yes" />
     <CustomAction Id="BackupPersistedState" Directory="INSTALLFOLDER" ExeCommand="&quot;[INSTALLFOLDER]Backup DSCC State.cmd&quot; &quot;$Version&quot;" Execute="immediate" Return="ignore" Impersonate="yes" />
     <CustomAction Id="LaunchTrayAfterInstall" Directory="INSTALLFOLDER" ExeCommand="&quot;[INSTALLFOLDER]dscc-tray.exe&quot;" Return="asyncNoWait" Impersonate="yes" />
     <InstallExecuteSequence>
-      <Custom Action="StopExistingAgent" Before="InstallValidate">NOT REMOVE</Custom>
-      <Custom Action="StopExistingTray" After="StopExistingAgent">NOT REMOVE</Custom>
+      <Custom Action="StopExistingTray" Before="InstallValidate">1</Custom>
       <Custom Action="BackupPersistedState" After="InstallFinalize">NOT REMOVE</Custom>
-      <Custom Action="LaunchTrayAfterInstall" After="BackupPersistedState">NOT Installed AND DSCC_LAUNCH_AFTER_INSTALL = "1"</Custom>
+      <Custom Action="LaunchTrayAfterInstall" After="BackupPersistedState">NOT REMOVE AND DSCC_LAUNCH_AFTER_INSTALL = "1"</Custom>
     </InstallExecuteSequence>
   </Product>
 </Wix>

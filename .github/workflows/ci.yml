@@ -8,6 +8,18 @@ permissions:
   contents: read
 
 jobs:
+  release-contract:
+    name: Release metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - run: node --test tools/check-release.test.mjs
+      - run: node tools/check-docs.mjs
+      - run: node tools/check-release.mjs
+
   rust:
     name: Rust ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -28,9 +40,13 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --all-features
+      - name: Installer smoke preflight tests
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./packaging/windows-installer-smoke.test.ps1
 
   web:
     name: Web build
@@ -50,7 +66,9 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:source-audit
       - run: npm run test:button-map
+      - run: npm run test:snapshot-map
       - run: npm run test:haptics-graph
       - run: npm run build
       - run: npm run test:release-size
       - run: npm run test:visual-smoke
+      - run: npm run test:curve-drag

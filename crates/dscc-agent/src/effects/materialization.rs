@@ -12,28 +12,31 @@ struct EffectEngineKey {
     controller_id: String,
     profile_id: String,
     revision: u64,
+    racing: bool,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct EffectRuntimeCache {
-    engines: BTreeMap<EffectEngineKey, EffectEngine>,
+    engines: BTreeMap<EffectEngineKey, (Arc<Profile>, EffectEngine)>,
 }
 
 impl EffectRuntimeCache {
     fn evaluate(
         &mut self,
         key: EffectEngineKey,
-        profile: &Profile,
+        prepare: impl FnOnce() -> Profile,
         snapshot: &SignalSnapshot,
-    ) -> ControllerOutputFrame {
+    ) -> (Arc<Profile>, ControllerOutputFrame) {
         if self.engines.len() > 16 {
             self.engines
                 .retain(|existing, _| existing.revision == key.revision);
         }
-        self.engines
+        let (profile, engine) = self
+            .engines
             .entry(key)
-            .or_default()
-            .evaluate(profile, snapshot)
+            .or_insert_with(|| (Arc::new(prepare()), EffectEngine::default()));
+        let output = engine.evaluate(profile, snapshot);
+        (Arc::clone(profile), output)
     }
 }
 
@@ -44,10 +47,10 @@ pub(crate) struct RuntimeLiveEffectMaterializer<'a, 'cache> {
     cache: &'cache mut EffectRuntimeCache,
 }
 
-struct MaterializedRuntimeLiveEffect {
+struct MaterializedRuntimeLiveEffect<'a> {
     resolution: ProfileResolutionResponse,
-    profile: Profile,
-    config: Option<ControllerConfig>,
+    profile: Arc<Profile>,
+    config: Option<std::borrow::Cow<'a, ControllerConfig>>,
     snapshot: SignalSnapshot,
     telemetry_live: bool,
     output: ControllerOutputFrame,
@@ -84,8 +87,8 @@ impl<'a, 'cache> RuntimeLiveEffectMaterializer<'a, 'cache> {
         let effect = self.materialize(resolution, cache_controller_id.as_deref());
         current_effect_response_from_parts(
             effect.resolution,
-            effect.profile,
-            effect.config.as_ref(),
+            &effect.profile,
+            effect.config.as_deref(),
             effect.snapshot,
             effect.telemetry_live,
             effect.output,
@@ -129,7 +132,7 @@ impl<'a, 'cache> RuntimeLiveEffectMaterializer<'a, 'cache> {
         &mut self,
         resolution: ProfileResolutionResponse,
         cache_controller_id: Option<&str>,
-    ) -> MaterializedRuntimeLiveEffect {
+    ) -> MaterializedRuntimeLiveEffect<'a> {
         let config = controller_config_for_resolution(self.inner, &resolution);
         let (snapshot, telemetry_live) = current_effect_snapshot(self.inner, self.game_detection);
         let profile_id = resolution
@@ -138,12 +141,21 @@ impl<'a, 'cache> RuntimeLiveEffectMaterializer<'a, 'cache> {
             .unwrap_or_else(|| DEFAULT_PROFILE_ID.to_string());
         let profile_name =
             profile_name_by_id(self.inner, &profile_id).unwrap_or_else(|| profile_id.clone());
-        let profile = runtime_profile_for(&profile_id, &profile_name, config.as_ref(), &snapshot);
-        let mut output =
-            self.evaluate_runtime_profile(cache_controller_id, &profile_id, &profile, &snapshot);
+        let key = EffectEngineKey {
+            purpose: self.purpose,
+            controller_id: cache_controller_id.unwrap_or("none").to_string(),
+            profile_id: profile_id.clone(),
+            revision: self.inner.effect_revision,
+            racing: is_forza_runtime_profile(&profile_id, &snapshot),
+        };
+        let (profile, mut output) = self.cache.evaluate(
+            key,
+            || runtime_profile_for(&profile_id, &profile_name, config.as_deref(), &snapshot),
+            &snapshot,
+        );
         apply_runtime_output_enhancements(
             &profile_id,
-            config.as_ref(),
+            config.as_deref(),
             &snapshot,
             telemetry_live,
             &mut output,
@@ -158,22 +170,6 @@ impl<'a, 'cache> RuntimeLiveEffectMaterializer<'a, 'cache> {
             telemetry_live,
             output,
         }
-    }
-
-    fn evaluate_runtime_profile(
-        &mut self,
-        controller_id: Option<&str>,
-        profile_id: &str,
-        profile: &Profile,
-        snapshot: &SignalSnapshot,
-    ) -> ControllerOutputFrame {
-        let key = EffectEngineKey {
-            purpose: self.purpose,
-            controller_id: controller_id.unwrap_or("none").to_string(),
-            profile_id: profile_id.to_string(),
-            revision: self.inner.effect_revision,
-        };
-        self.cache.evaluate(key, profile, snapshot)
     }
 }
 
@@ -436,7 +432,7 @@ pub(crate) fn global_lightbar_output(
     resolution: &ProfileResolutionResponse,
 ) -> Option<ControllerOutputFrame> {
     let config = controller_config_for_resolution(inner, resolution)?;
-    let lightbar = config.lightbar.normalized();
+    let lightbar = config.lightbar.clone().normalized();
     let lightbar = lightbar.enabled.then(|| LightbarOutput {
         color: lightbar.rgb(),
         brightness: clamp_unit(f64::from(lightbar.brightness) / 100.0),
@@ -727,7 +723,7 @@ pub(crate) fn current_effect_response(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn current_effect_response_from_parts(
     resolution: ProfileResolutionResponse,
-    profile: Profile,
+    profile: &Profile,
     config: Option<&ControllerConfig>,
     snapshot: SignalSnapshot,
     telemetry_live: bool,
@@ -780,13 +776,103 @@ pub(crate) fn current_effect_response_from_parts(
 
     CurrentEffectResponse {
         controller_id: resolution.controller_id,
-        selected_profile_id: Some(profile.id),
-        selected_profile_name: Some(profile.name),
+        selected_profile_id: Some(profile.id.clone()),
+        selected_profile_name: Some(profile.name.clone()),
         reason: resolution.reason,
         dry_run: !hardware_output_enabled,
         hardware_output_enabled,
         output,
         parity_effects: effect_mapping_statuses(&snapshot, config),
         warnings,
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    #[test]
+    fn resolved_configs_borrow_stored_values_and_own_missing_defaults() {
+        let state = AgentState::mock();
+        let mut inner = state.inner.blocking_write();
+        let mut resolution = profile_resolution(&inner, None);
+        let controller_id = inner.controllers.summaries().first().unwrap().id.clone();
+        let model = inner.controllers.detail(&controller_id).unwrap().model;
+        inner.controller_configs.insert(
+            controller_id.clone(),
+            ControllerConfig::default_for(&controller_id, model),
+        );
+        resolution.controller_id = Some(controller_id.clone());
+        assert!(matches!(
+            controller_config_for_resolution(&inner, &resolution),
+            Some(std::borrow::Cow::Borrowed(_))
+        ));
+        inner.controller_configs.remove(&controller_id);
+        assert!(matches!(
+            controller_config_for_resolution(&inner, &resolution),
+            Some(std::borrow::Cow::Owned(_))
+        ));
+        resolution.controller_id = Some("unknown-controller".into());
+        assert!(controller_config_for_resolution(&inner, &resolution).is_none());
+    }
+
+    #[test]
+    fn prepared_profiles_follow_revision_and_telemetry_kind() {
+        let state = AgentState::from_controller_events([]);
+        let mut inner = state.inner.blocking_write();
+        let mut cache = EffectRuntimeCache::default();
+        let mut resolution = profile_resolution(&inner, None);
+        resolution.selected_profile_id = Some("cache-profile".to_string());
+        let first = RuntimeLiveEffectMaterializer::new(
+            &inner,
+            None,
+            EffectEnginePurpose::Preview,
+            &mut cache,
+        )
+        .materialize(resolution.clone(), Some("cache-controller"));
+        let repeated = RuntimeLiveEffectMaterializer::new(
+            &inner,
+            None,
+            EffectEnginePurpose::Preview,
+            &mut cache,
+        )
+        .materialize(resolution.clone(), Some("cache-controller"));
+        assert!(Arc::ptr_eq(&first.profile, &repeated.profile));
+        let first_profile = first.profile;
+        drop(repeated);
+
+        inner
+            .telemetry
+            .apply_update(signal_update("source.id", FORZA_DATA_OUT_ADAPTER_ID));
+        inner
+            .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+            .mark_packet(324, 1);
+        let racing = RuntimeLiveEffectMaterializer::new(
+            &inner,
+            None,
+            EffectEnginePurpose::Preview,
+            &mut cache,
+        )
+        .materialize(resolution.clone(), Some("cache-controller"));
+        assert!(!Arc::ptr_eq(&first_profile, &racing.profile));
+        let racing_profile = racing.profile;
+
+        inner.effect_revision += 1;
+        let revised = RuntimeLiveEffectMaterializer::new(
+            &inner,
+            None,
+            EffectEnginePurpose::Preview,
+            &mut cache,
+        )
+        .materialize(resolution.clone(), Some("cache-controller"));
+        assert!(!Arc::ptr_eq(&racing_profile, &revised.profile));
+        let uncached = RuntimeLiveEffectMaterializer::new(
+            &inner,
+            None,
+            EffectEnginePurpose::Preview,
+            &mut EffectRuntimeCache::default(),
+        )
+        .materialize(resolution, Some("cache-controller"));
+        assert_eq!(revised.output, uncached.output);
     }
 }

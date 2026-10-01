@@ -42,7 +42,7 @@ pub(crate) async fn update_app_settings(
             .or(persisted_install_path.as_deref())
             .map(|path| resolve_forza_horizon6_install_path(Some(path)));
         let steam_path = supported_game_install_path(
-            &state.cached_steam_game_catalog().await,
+            state.cached_steam_game_catalog().await.as_ref(),
             "forza-horizon-6",
         );
         let install_path = trusted_forza_horizon6_install_path(configured_path, steam_path);

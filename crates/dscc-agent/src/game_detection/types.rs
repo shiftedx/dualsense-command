@@ -4,6 +4,8 @@ use super::*;
 pub(crate) struct SteamGameCatalog {
     pub(crate) supported_games: Vec<SupportedGameSummary>,
     pub(crate) artwork_paths: BTreeMap<(String, String), PathBuf>,
+    pub(crate) steam_root: Option<PathBuf>,
+    pub(crate) steam_stats: BTreeMap<String, SteamGameStats>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

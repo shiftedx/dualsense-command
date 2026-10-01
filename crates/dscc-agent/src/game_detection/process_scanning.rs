@@ -171,7 +171,9 @@ impl GameDetectionSourceDetail for GameDetectionResponse {
 pub(crate) async fn current_process_names() -> io::Result<Vec<String>> {
     #[cfg(target_os = "windows")]
     {
-        windows_process_names()
+        tokio::task::spawn_blocking(windows_process_names)
+            .await
+            .map_err(io::Error::other)?
     }
 
     #[cfg(not(target_os = "windows"))]

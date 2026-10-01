@@ -1,5 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex, MutexGuard,
+};
 
 use dscc_core::input_bridge::{
     DsccBridgeCommand, InputBridgeConfig, InputBridgeSource, InputBridgeTarget, VirtualAxis,
@@ -20,6 +23,8 @@ pub(crate) struct InputBridgeService {
     backend: Arc<dyn VirtualOutputBackend>,
     provider: String,
     sessions: Arc<Mutex<BTreeMap<String, InputBridgeSessionRecord>>>,
+    operations: Arc<tokio::sync::Mutex<()>>,
+    stopping: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Debug)]
@@ -68,11 +73,39 @@ pub struct InputBridgeSessionSummary {
 }
 
 impl InputBridgeService {
+    pub(crate) fn begin_shutdown(&self) {
+        self.stopping.store(true, Ordering::SeqCst);
+    }
+
+    pub(crate) fn shutdown(&self) {
+        self.begin_shutdown();
+        let ids = self.lock().keys().cloned().collect::<Vec<_>>();
+        for id in ids {
+            self.stop_session(&id, 0);
+        }
+    }
+
+    pub(crate) async fn run_blocking<T: Send + 'static>(
+        &self,
+        operation: impl FnOnce(Self) -> T + Send + 'static,
+    ) -> T {
+        let service = self.clone();
+        let guard = self.operations.clone().lock_owned().await;
+        tokio::task::spawn_blocking(move || {
+            let _guard = guard;
+            operation(service)
+        })
+        .await
+        .expect("Input Bridge worker panicked")
+    }
+
     pub(crate) fn production() -> Self {
         Self {
             backend: Arc::new(HidMaestroBrokerBackend::from_env_or_default()),
             provider: "hidmaestro".to_string(),
             sessions: Arc::new(Mutex::new(BTreeMap::new())),
+            operations: Arc::new(tokio::sync::Mutex::new(())),
+            stopping: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -82,6 +115,8 @@ impl InputBridgeService {
             backend: Arc::new(MockVirtualOutputBackend::new()),
             provider: "mock".to_string(),
             sessions: Arc::new(Mutex::new(BTreeMap::new())),
+            operations: Arc::new(tokio::sync::Mutex::new(())),
+            stopping: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -123,7 +158,10 @@ impl InputBridgeService {
         controller_id: &str,
         output_kind: VirtualOutputKind,
         updated_at_ms: u64,
-    ) -> Result<InputBridgeSessionSummary, String> {
+    ) -> Result<(InputBridgeSessionSummary, bool), String> {
+        if self.stopping.load(Ordering::SeqCst) {
+            return Err("agent is shutting down".to_string());
+        }
         let old_target = {
             let mut sessions = self.lock();
             if let Some(record) = sessions.get(controller_id) {
@@ -131,7 +169,7 @@ impl InputBridgeService {
                     record.state,
                     InputBridgeSessionState::Active | InputBridgeSessionState::Starting
                 ) {
-                    return Ok(session_record_summary(record));
+                    return Ok((session_record_summary(record), false));
                 }
             }
             let old_target = sessions
@@ -178,7 +216,7 @@ impl InputBridgeService {
         };
         let summary = session_record_summary(&record);
         sessions.insert(controller_id.to_string(), record);
-        Ok(summary)
+        Ok((summary, true))
     }
 
     pub(crate) fn is_active(&self, controller_id: &str) -> bool {
@@ -193,6 +231,9 @@ impl InputBridgeService {
         state: &VirtualGamepadState,
         updated_at_ms: u64,
     ) -> Result<InputBridgeSessionSummary, String> {
+        if self.stopping.load(Ordering::SeqCst) {
+            return Err("agent is shutting down".to_string());
+        }
         let target = self
             .lock()
             .get(controller_id)
@@ -853,7 +894,8 @@ mod tests {
         let service = InputBridgeService::mock();
         let first = service
             .start_session("controller-1", VirtualOutputKind::Xbox360, 1)
-            .unwrap();
+            .unwrap()
+            .0;
         assert_eq!(first.state, InputBridgeSessionState::Active);
         let first_session_id = first.session_id.clone();
 
@@ -864,7 +906,8 @@ mod tests {
 
         let second = service
             .start_session("controller-1", VirtualOutputKind::Xbox360, 3)
-            .unwrap();
+            .unwrap()
+            .0;
         assert_eq!(second.state, InputBridgeSessionState::Active);
         assert_ne!(second.session_id, first_session_id);
     }
@@ -872,16 +915,47 @@ mod tests {
     #[test]
     fn duplicate_start_reuses_active_session() {
         let service = InputBridgeService::mock();
-        let first = service
+        let (first, started) = service
             .start_session("controller-1", VirtualOutputKind::Xbox360, 1)
             .unwrap();
-        let second = service
+        let (second, reused) = service
             .start_session("controller-1", VirtualOutputKind::Xbox360, 2)
             .unwrap();
 
+        assert!(started);
+        assert!(!reused, "only the creator owns the input loop");
         assert_eq!(second.state, InputBridgeSessionState::Active);
         assert_eq!(second.session_id, first.session_id);
         assert_eq!(second.updated_at_ms, first.updated_at_ms);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn backend_work_runs_off_the_runtime_thread() {
+        let service = InputBridgeService::mock();
+        let runtime_thread = std::thread::current().id();
+        let worker_thread = service.run_blocking(|_| std::thread::current().id()).await;
+        assert_ne!(runtime_thread, worker_thread);
+    }
+
+    #[tokio::test]
+    async fn concurrent_starts_have_one_input_loop_owner() {
+        let service = InputBridgeService::mock();
+        let (first, second) = tokio::join!(
+            service.run_blocking(|bridge| bridge.start_session(
+                "controller-1",
+                VirtualOutputKind::Xbox360,
+                1
+            )),
+            service.run_blocking(|bridge| bridge.start_session(
+                "controller-1",
+                VirtualOutputKind::Xbox360,
+                2
+            )),
+        );
+        let (first, first_owner) = first.unwrap();
+        let (second, second_owner) = second.unwrap();
+        assert_ne!(first_owner, second_owner);
+        assert_eq!(first.session_id, second.session_id);
     }
 
     #[test]
@@ -890,12 +964,15 @@ mod tests {
             backend: Arc::new(PrivateIdBackend),
             provider: "hidmaestro".to_string(),
             sessions: Arc::new(Mutex::new(BTreeMap::new())),
+            operations: Arc::new(tokio::sync::Mutex::new(())),
+            stopping: Arc::new(AtomicBool::new(false)),
         };
 
         let status = service.status_response();
         let summary = service
             .start_session("controller-1", VirtualOutputKind::Xbox360, 1)
-            .unwrap();
+            .unwrap()
+            .0;
 
         assert_eq!(status.backend_id, "virtual-output");
         assert_eq!(summary.session_id.as_deref(), Some("virtual-session"));

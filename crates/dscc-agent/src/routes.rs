@@ -107,7 +107,10 @@ pub fn app(state: AgentState) -> Router {
         .route("/api/diagnostics/support-bundle", get(get_support_bundle))
         .route("/api/support-bundle", get(get_support_bundle))
         .route("/api/ws", get(ws_handler))
-        .layer(middleware::from_fn(reject_cross_origin_mutations))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            reject_cross_origin_mutations,
+        ))
         .fallback_service(static_assets)
         .with_state(state)
 }

@@ -278,16 +278,6 @@
   justify-self: end;
 }
 
-.dm-mapping-tray-message {
-  margin: 0 8px 0 0;
-  color: var(--ink-muted);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 1.25;
-  max-width: 240px;
-  overflow-wrap: anywhere;
-}
-
 .dm-mapping-action {
   height: 36px;
   min-width: 96px;

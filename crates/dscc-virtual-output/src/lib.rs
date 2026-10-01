@@ -1,8 +1,9 @@
-use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Write};
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::process::{Child, Command, Stdio};
+use std::sync::{mpsc, Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -103,6 +104,8 @@ pub trait VirtualOutputBackend: Send + Sync + 'static {
 
 const HIDMAESTRO_BROKER_ENV: &str = "DSCC_HIDMAESTRO_BROKER";
 const BROKER_PROTOCOL: &str = "dev.dscc.hidmaestro-broker.v1";
+const BROKER_IO_TIMEOUT: Duration = Duration::from_secs(2);
+const MAX_BROKER_RESPONSE_BYTES: u64 = 64 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct HidMaestroBrokerBackend {
@@ -119,9 +122,16 @@ struct BrokerCommand {
 #[derive(Debug)]
 struct BrokerProcess {
     child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    io: mpsc::Sender<BrokerIoRequest>,
+    failed: bool,
     next_id: u64,
+    sessions: BTreeSet<String>,
+}
+
+struct BrokerIoRequest {
+    bytes: Vec<u8>,
+    response: bool,
+    reply: mpsc::Sender<Result<Option<String>, VirtualOutputError>>,
 }
 
 #[derive(Serialize)]
@@ -217,7 +227,19 @@ impl HidMaestroBrokerBackend {
         };
         let mut guard = self.lock();
         let process = ensure_broker_process(&mut guard, command)?;
-        process.request(command_name, controller_id, session_id, kind)
+        let response = process.request(command_name, controller_id, session_id, kind)?;
+        if response.ok {
+            if command_name == "create" {
+                if let Some(id) = &response.session_id {
+                    process.sessions.insert(id.clone());
+                }
+            } else if command_name == "destroy" {
+                if let Some(id) = session_id {
+                    process.sessions.remove(id);
+                }
+            }
+        }
+        Ok(response)
     }
 
     fn broker_update(
@@ -330,14 +352,17 @@ impl BrokerProcess {
         kind: Option<VirtualOutputKind>,
     ) -> Result<BrokerResponse, VirtualOutputError> {
         let id = self.next_request_id();
-        self.write_request(id, command, controller_id, session_id, kind)?;
-        let mut line = String::new();
-        self.stdout
-            .read_line(&mut line)
-            .map_err(|_| broker_fault("HIDMaestro broker response read failed"))?;
-        if line.trim().is_empty() {
-            return Err(broker_fault("HIDMaestro broker closed its response stream"));
-        }
+        let request = BrokerRequest {
+            protocol: BROKER_PROTOCOL,
+            id,
+            command,
+            controller_id,
+            session_id,
+            kind: kind.map(output_kind_wire),
+        };
+        let line = self
+            .exchange(&request, true)?
+            .ok_or_else(|| broker_fault("HIDMaestro broker closed its response stream"))?;
         let response: BrokerResponse = serde_json::from_str(&line)
             .map_err(|_| broker_fault("HIDMaestro broker returned invalid JSON"))?;
         if response.id != id {
@@ -354,8 +379,12 @@ impl BrokerProcess {
         kind: VirtualOutputKind,
         state: &VirtualGamepadState,
     ) -> Result<(), VirtualOutputError> {
+        if !self.sessions.contains(session_id) {
+            return Err(VirtualOutputError::SessionNotFound(session_id.to_string()));
+        }
         let id = self.next_request_id();
-        self.write_update_frame(id, session_id, kind, state)
+        let frame = BrokerUpdateFrame::from_state(id, session_id, kind, state);
+        self.exchange(&frame, false).map(|_| ())
     }
 
     fn next_request_id(&mut self) -> u64 {
@@ -364,52 +393,47 @@ impl BrokerProcess {
         id
     }
 
-    fn write_request(
+    fn exchange(
         &mut self,
-        id: u64,
-        command: &str,
-        controller_id: Option<&str>,
-        session_id: Option<&str>,
-        kind: Option<VirtualOutputKind>,
-    ) -> Result<(), VirtualOutputError> {
-        let request = BrokerRequest {
-            protocol: BROKER_PROTOCOL,
-            id,
-            command,
-            controller_id,
-            session_id,
-            kind: kind.map(output_kind_wire),
-        };
-        serde_json::to_writer(&mut self.stdin, &request)
+        request: &impl Serialize,
+        response: bool,
+    ) -> Result<Option<String>, VirtualOutputError> {
+        if self.failed {
+            return Err(broker_fault("HIDMaestro broker connection failed"));
+        }
+        let mut bytes = serde_json::to_vec(request)
             .map_err(|_| broker_fault("HIDMaestro broker request serialization failed"))?;
-        self.stdin
-            .write_all(b"\n")
-            .and_then(|_| self.stdin.flush())
-            .map_err(|_| broker_fault("HIDMaestro broker request write failed"))
-    }
-
-    fn write_update_frame(
-        &mut self,
-        id: u64,
-        session_id: &str,
-        kind: VirtualOutputKind,
-        state: &VirtualGamepadState,
-    ) -> Result<(), VirtualOutputError> {
-        let frame = BrokerUpdateFrame::from_state(id, session_id, kind, state);
-        serde_json::to_writer(&mut self.stdin, &frame)
-            .map_err(|_| broker_fault("HIDMaestro broker update serialization failed"))?;
-        self.stdin
-            .write_all(b"\n")
-            .and_then(|_| self.stdin.flush())
-            .map_err(|_| broker_fault("HIDMaestro broker update write failed"))
+        bytes.push(b'\n');
+        let (reply, receiver) = mpsc::channel();
+        self.io
+            .send(BrokerIoRequest {
+                bytes,
+                response,
+                reply,
+            })
+            .map_err(|_| broker_fault("HIDMaestro broker I/O worker stopped"))?;
+        match receiver.recv_timeout(BROKER_IO_TIMEOUT) {
+            Ok(Ok(result)) => Ok(result),
+            result => {
+                self.failed = true;
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                match result {
+                    Ok(Err(error)) => Err(error),
+                    _ => Err(broker_fault("HIDMaestro broker I/O timed out")),
+                }
+            }
+        }
     }
 }
 
 impl Drop for BrokerProcess {
     fn drop(&mut self) {
-        let _ = self.request("cleanup", None, None, None);
-        let _ = self.request("shutdown", None, None, None);
+        if !self.failed {
+            let _ = self.request("shutdown", None, None, None);
+        }
         let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
@@ -439,7 +463,7 @@ fn spawn_broker_process(command: &BrokerCommand) -> Result<BrokerProcess, Virtua
         .stderr(Stdio::null())
         .spawn()
         .map_err(|_| broker_fault("HIDMaestro broker could not be started"))?;
-    let stdin = child
+    let mut stdin = child
         .stdin
         .take()
         .ok_or_else(|| broker_fault("HIDMaestro broker stdin was unavailable"))?;
@@ -447,11 +471,43 @@ fn spawn_broker_process(command: &BrokerCommand) -> Result<BrokerProcess, Virtua
         .stdout
         .take()
         .ok_or_else(|| broker_fault("HIDMaestro broker stdout was unavailable"))?;
+    let (io, requests) = mpsc::channel::<BrokerIoRequest>();
+    std::thread::spawn(move || {
+        let mut stdout = BufReader::new(stdout);
+        for request in requests {
+            let result = (|| {
+                stdin
+                    .write_all(&request.bytes)
+                    .and_then(|_| stdin.flush())
+                    .map_err(|_| broker_fault("HIDMaestro broker request write failed"))?;
+                if !request.response {
+                    return Ok(None);
+                }
+                let mut line = String::new();
+                stdout
+                    .by_ref()
+                    .take(MAX_BROKER_RESPONSE_BYTES)
+                    .read_line(&mut line)
+                    .map_err(|_| broker_fault("HIDMaestro broker response read failed"))?;
+                if !line.ends_with('\n') {
+                    return Err(broker_fault(
+                        "HIDMaestro broker response was incomplete or too large",
+                    ));
+                }
+                Ok(Some(line))
+            })();
+            let failed = result.is_err();
+            if request.reply.send(result).is_err() || failed {
+                break;
+            }
+        }
+    });
     let mut process = BrokerProcess {
         child,
-        stdin,
-        stdout: BufReader::new(stdout),
+        io,
+        failed: false,
         next_id: 1,
+        sessions: BTreeSet::new(),
     };
     let response = process.request("hello", None, None, None)?;
     if response.ok {
@@ -738,6 +794,83 @@ impl VirtualOutputBackend for MockVirtualOutputBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn stalled_broker_handshake_has_a_deadline() {
+        let command = BrokerCommand {
+            program: PathBuf::from("powershell.exe"),
+            args: vec![
+                "-NoProfile".into(),
+                "-NonInteractive".into(),
+                "-Command".into(),
+                "[void][Console]::ReadLine(); Start-Sleep -Seconds 4".into(),
+            ],
+        };
+        let started = std::time::Instant::now();
+        assert!(spawn_broker_process(&command).is_err());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(3),
+            "stalled broker must be killed without waiting for its response"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn stalled_broker_shutdown_has_a_deadline() {
+        let command = BrokerCommand {
+            program: PathBuf::from("powershell.exe"),
+            args: vec!["-NoProfile".into(), "-NonInteractive".into(), "-Command".into(),
+                "[void][Console]::ReadLine(); [Console]::WriteLine('{\"id\":1,\"ok\":true}'); [void][Console]::ReadLine(); Start-Sleep -Seconds 4".into()],
+        };
+        let process = spawn_broker_process(&command).unwrap();
+        let started = std::time::Instant::now();
+        drop(process);
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn blocked_broker_write_has_a_deadline() {
+        let command = BrokerCommand {
+            program: PathBuf::from("powershell.exe"),
+            args: vec!["-NoProfile".into(), "-NonInteractive".into(), "-Command".into(),
+                "[void][Console]::ReadLine(); [Console]::WriteLine('{\"id\":1,\"ok\":true}'); Start-Sleep -Seconds 4".into()],
+        };
+        let mut process = spawn_broker_process(&command).unwrap();
+        let started = std::time::Instant::now();
+        // Larger than the pipe buffer: the worker cannot finish until the child reads or exits.
+        assert!(process.exchange(&"x".repeat(1024 * 1024), false).is_err());
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn restarted_broker_rejects_targets_from_previous_process() {
+        let command = BrokerCommand {
+            program: PathBuf::from("powershell.exe"),
+            args: vec!["-NoProfile".into(), "-NonInteractive".into(), "-Command".into(),
+                "while ($line = [Console]::ReadLine()) { $r = $line | ConvertFrom-Json; [Console]::WriteLine((@{id=$r.id;ok=$true;available=$true;sessionId='dscc-fixture'} | ConvertTo-Json -Compress)); if ($r.command -eq 'shutdown') { break } }".into()],
+        };
+        let backend = HidMaestroBrokerBackend {
+            command: Some(command),
+            inner: Arc::new(Mutex::new(None)),
+        };
+        let target = backend
+            .create_session("controller-1", VirtualOutputKind::Xbox360)
+            .unwrap();
+        {
+            let mut guard = backend.lock();
+            let process = guard.as_mut().unwrap();
+            process.child.kill().unwrap();
+            process.child.wait().unwrap();
+        }
+        assert!(matches!(
+            backend.submit_state(&target, &VirtualGamepadState::neutral()),
+            Err(VirtualOutputError::SessionNotFound(_))
+        ));
+        assert_eq!(backend.status().state, VirtualOutputBackendState::Available);
+    }
 
     #[test]
     fn mock_backend_records_state_and_neutralizes() {

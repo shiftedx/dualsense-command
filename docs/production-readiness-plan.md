@@ -1,142 +1,35 @@
-# Production Readiness
+# Release readiness
 
-Last updated: 2026-06-18
+Version: **0.5.1**. Audit: September 30, 2026.
+Engineering checks pass; full production validation remains open.
 
-DSCC `0.4.1` is a public unsigned Windows release candidate. The repository is
-kept release-facing: local agent notes, private hardware logs, generated build
-output, and unverified redistributable assets must stay out of tracked source.
-
-## Current Status
-
-- Windows x86_64 MSI is the main release path.
-- DSCC Standard is the recommended Windows installer for most users.
-- Bridge installers are opt-in for non-Steam DSCC Input Bridge testing.
-- The MSI and binaries are unsigned. README and troubleshooting docs explain the
-  SmartScreen warning.
-- Linux artifacts are beta archives with bundled web UI assets.
-- Updates are check-and-link only. DSCC does not auto-install updates.
-- Profiles/settings are stored in the user config folder and are backed up
-  before install/upgrade.
-
-## Public Beta Messaging
-
-Keep these points visible in README, troubleshooting, issue templates, and
-support replies:
-
-- The Windows installer is unsigned and may trigger SmartScreen.
-- Standard is the default download. Bridge builds are larger compatibility
-  options for non-Steam game testing.
-- DSCC does not auto-install updates.
-- Hardware claims should point to the Windows hardware matrix and say whether a
-  controller/transport cell is verified or pending.
-- DualSense Edge onboard sync only reports synced after HID acknowledgement and
-  typed readback verification.
-- Support requests should include a sanitized support bundle when possible.
-- Setup questions, tuning ideas, and "is this expected?" reports belong in
-  GitHub Discussions before becoming tracked bugs.
-
-## Already In Place
-
-- GitHub release workflow builds Standard, Bridge, and Bridge
-  framework-dependent Windows MSIs, Windows raw binaries, Linux beta archives
-  with `web/dist`, and SHA256 checksum files.
-- Release packaging reuses the checked `web/dist` artifact instead of rebuilding
-  the web UI separately for Windows and Linux.
-- Release workflow runs Rust and web checks before packaging.
-- Windows MSI install/upgrade/uninstall smoke guidance is tracked in
-  [Windows Installer Smoke](windows-installer-smoke.md).
-- GitHub Releases update checks exist and are link-only.
-- Tray routes open dashboard, haptics, and button mapping.
-- Tray dashboard opening is debounced.
-- Trigger input polling only runs on the visible haptics view.
-- Game trigger/rumble output requires supported-game detection, an active
-  profile, and fresh telemetry.
-- Supported-game detection may set the lightbar before telemetry.
-- Manual tests are time-limited.
-- Profile Save As, import, export, rename, delete, and activation exist.
-- Point-based trigger curves and Forza brake/throttle tuning are implemented.
-- Forza Data Out and Assetto Corsa Rally telemetry paths are live.
-- DualSense Edge onboard slots can be read and written over guarded USB or
-  Bluetooth HID feature-report paths, with default-slot protection and readback
-  verification.
-- Public Windows hardware matrix and release-candidate validation checklist are
-  tracked in [Windows Hardware Matrix](hardware-matrix.md).
-- A sanitized support bundle is available from the app Support panel and
-  `dscc-cli support-bundle`.
-- First-run onboarding is available in the app and can be reopened from the
-  header Guide button after dismissal.
-
-## Still Needed Before Calling It Production-Ready
-
-- Complete the public Windows hardware matrix physical runs:
-  - DualSense Edge USB current-release pass.
-  - DualSense Edge Bluetooth current-release runtime/read/stage pass.
-  - DualSense USB current-release pass.
-  - DualSense Bluetooth current-release pass.
-- Keep Linux marked beta until HID permissions and hardware smoke tests are
-  documented across common Ubuntu setups.
-- Keep the public [Linux Beta Guide](linux-beta.md) and Linux artifact README in
-  sync whenever the archive layout, udev guidance, or launch command changes.
-- Run clean-user install, upgrade, uninstall, and orphan-process smoke tests for
-  each release.
-- Improve beginner support docs and issue templates as feedback arrives.
-- Keep public hardware claims backed by tracked docs or release notes.
-
-## Release Checklist
-
-Run this before public releases unless the change is docs-only:
-
-```powershell
-cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
-cargo +stable-x86_64-pc-windows-gnu test --workspace --all-features
-cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warnings
-npm.cmd --prefix web run typecheck
-npm.cmd --prefix web run test:source-audit
-npm.cmd --prefix web run build
-npm.cmd --prefix web run test:button-map
-npm.cmd --prefix web run test:release-size
-npm.cmd --prefix web run test:visual-smoke
+```mermaid
+flowchart LR
+    Source[Reviewed source] --> Checks[Tests + notices + asset hashes]
+    Checks --> Install[User installer release]
+    Install --> Physical[Complete hardware + installer matrix]
+    Physical --> Signed[Verified signed artifacts]
 ```
 
-Also confirm:
+| Gate | Evidence | Next action |
+| --- | --- | --- |
+| Source | Atomic persistence; bounded broker/discovery; guarded shutdown; loopback security; concise task/agent guides | Run [checks](contributing.md#validation) on the merged version |
+| Redistribution | Original SVG replacements; verified asset hashes; exact notices for 219 Rust/browser versions | Regenerate notices after lock changes; run the [distribution gate](release-trust.md) |
+| Hardware | User confirmed Edge Bluetooth L2/R2, rumble, blue lightbar and neutralization on the 0.5.0 audit working tree; graceful exit took 10ms | Complete the exact-version [matrix](hardware-matrix.md): USB, reconnect, telemetry, session end and onboard settings |
+| Standard MSI | Existing-account install, reinstall launch, shortcuts, uninstall, config retention and process cleanup pass **with startup disabled** | Verify startup, clean-account install and distinct-version upgrade using [Installer Smoke](windows-installer-smoke.md) |
+| Startup | MSI reports a registry write that independent native reads cannot see; speculative helpers were removed | Resolve the discrepancy in a clean Windows account; leave startup unchecked meanwhile |
+| Bridge | Dependency/runtime notices required; no local .NET SDK validation | Build both flavors in release CI; validate actual broker payloads and lifecycle |
+| Signing | Signing policy implemented; no certificate configured | Configure [credentials](release-trust.md) and verify an actual signed artifact |
+| Linux | Source/packaging implemented; native hardware evidence pending | Keep [beta](linux-beta.md) claims until native HID checks pass |
 
-- GitHub CI is green.
-- Web release-size budget is still passing and any large new assets are
-  intentional.
-- No local agent plans, private research notes, generated release artifacts, or
-  personal paths are tracked.
-- Version metadata matches the tag, crates, web package, root package, MSI, and
-  changelog.
-- README and troubleshooting docs mention that the MSI is unsigned.
-- Standard, Bridge, Bridge framework-dependent, archives, and checksum files
-  are uploaded.
-- The final MSI installs, launches, upgrades, and uninstalls cleanly.
-  Use `packaging\windows-installer-smoke.ps1` for the repeatable Windows smoke.
-- Hardware-matrix entries used in release notes are marked Verified or listed
-  as pending physical validation.
+## Audit checks
 
-## Security Checklist
+- Rust: format, all-feature Clippy and 361 workspace tests pass; two manual tests ignored.
+- Web: typecheck, source/snapshot/haptics checks, build, 12 visual cases and drag budget pass.
+- Mapping p95: lookup 0.047ms / chips 0.039ms / parse 0.004ms. Drag: 16.7ms p95,
+  13.7 mutations/move. Synthetic results do not measure native HID latency.
+- Bundle: 784.2 KiB raw / 438.0 KiB gzip. npm and Cargo advisory scans report zero
+  known vulnerabilities. Repeat scans before release.
 
-- API defaults to `127.0.0.1:43473`.
-- Forza Data Out defaults to `127.0.0.1:5300`.
-- LAN Access is off unless the user enables it.
-- Direct `dscc-agent` non-loopback binding requires `DSCC_ENABLE_LAN_API=1`.
-- Forza UDP non-loopback binding requires `DSCC_ENABLE_LAN_FORZA=1`.
-- Cross-origin mutating HTTP requests and WebSocket upgrades are rejected.
-- No raw HID-byte HTTP route exists.
-- Controller output flows through typed frame/profile paths.
-- Steam Input writes stay under guarded `controller_*.vdf` paths with backups.
-- Forza glyph writes stay under trusted install roots with backups.
-
-## No-Ship Conditions
-
-Do not publish a beta if:
-
-- A controller can remain tensioned after telemetry stops, the game exits, the
-  route changes, or a manual test ends.
-- Unsupported games or Global Profile can produce game trigger/rumble output.
-- The packaged Games page is sluggish or unresponsive.
-- The tray opens duplicate dashboard tabs or blocks while opening the menu.
-- The MSI cannot install, upgrade, or uninstall cleanly.
-- CI or local release gates fail.
-- README or troubleshooting docs omit the unsigned-installer warning.
+Treat historical audit results separately from current CI. Publish validation
+limits in release notes; compilation and mocks cannot close physical gates.
