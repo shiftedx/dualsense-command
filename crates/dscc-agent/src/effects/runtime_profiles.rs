@@ -36,20 +36,19 @@ pub(crate) fn controller_output_target_or_reason(
     ))
 }
 
-pub(crate) fn controller_config_for_resolution(
-    inner: &AgentStateInner,
+pub(crate) fn controller_config_for_resolution<'a>(
+    inner: &'a AgentStateInner,
     resolution: &ProfileResolutionResponse,
-) -> Option<ControllerConfig> {
+) -> Option<std::borrow::Cow<'a, ControllerConfig>> {
     let controller_id = resolution.controller_id.as_deref()?;
     inner
         .controller_configs
         .get(controller_id)
-        .cloned()
+        .map(std::borrow::Cow::Borrowed)
         .or_else(|| {
-            inner
-                .controllers
-                .detail(controller_id)
-                .map(|detail| ControllerConfig::default_for(controller_id, detail.model))
+            inner.controllers.detail(controller_id).map(|detail| {
+                std::borrow::Cow::Owned(ControllerConfig::default_for(controller_id, detail.model))
+            })
         })
 }
 
@@ -244,11 +243,11 @@ pub(crate) fn forza_runtime_profile(
         };
     }
 
-    let brake_tuning = forza.brake.clone().normalized();
-    let throttle_tuning = forza.throttle.clone().normalized();
-    let abs_tuning = forza.abs.clone().normalized();
-    let shift_tuning = forza.shift.clone().normalized();
-    let rev_tuning = forza.rev_limiter.clone().normalized();
+    let brake_tuning = &forza.brake;
+    let throttle_tuning = &forza.throttle;
+    let abs_tuning = &forza.abs;
+    let shift_tuning = &forza.shift;
+    let rev_tuning = &forza.rev_limiter;
     // Derived trigger geometry now lives behind one pure, testable interface;
     // destructure it back into the local names the rule builders already use.
     let TriggerPositions {
@@ -266,7 +265,7 @@ pub(crate) fn forza_runtime_profile(
         r2_has_overtravel_guard,
         abs_brake_threshold,
         ..
-    } = compute_trigger_positions(trigger, &brake_tuning, &throttle_tuning, &abs_tuning);
+    } = compute_trigger_positions(trigger, brake_tuning, throttle_tuning, abs_tuning);
     let l2_curve_points = trigger
         .map(|trigger| trigger_curve_value_points(&trigger.l2_curve_points))
         .unwrap_or_else(|| trigger_curve_value_points(&default_l2_trigger_curve_points()));
@@ -505,9 +504,9 @@ pub(crate) fn forza_runtime_profile(
             ),
             frequency_hz: ValueSource::constant(rev_tuning.frequency_hz),
         },
-        &rev_tuning,
+        rev_tuning,
     );
-    push_shift_thump_rules(&mut rules, &shift, shift_amplitude, &shift_tuning);
+    push_shift_thump_rules(&mut rules, &shift, shift_amplitude, shift_tuning);
 
     if throttle.scalar() > 0.0 && route_has_r2(&throttle.route) {
         rules.push(EffectRule {
@@ -947,7 +946,7 @@ pub(crate) fn effect_mapping_statuses(
     let slip = snapshot.number("wheel.slip.max").unwrap_or_default();
     let front_slip = snapshot.number("wheel.slip.front_max").unwrap_or_default();
     let tire_slip = snapshot.number("tire.slip_ratio.max").unwrap_or_default();
-    let abs_tuning = forza.abs.clone().normalized();
+    let abs_tuning = &forza.abs;
     let abs_signal = match abs_tuning.slip_source.as_str() {
         "front" => front_slip,
         "tire" => tire_slip,
@@ -956,7 +955,7 @@ pub(crate) fn effect_mapping_statuses(
     };
     let handbrake = snapshot.number("input.handbrake").unwrap_or_default();
     let rpm_ratio = snapshot.number("vehicle.rpm_ratio").unwrap_or_default();
-    let rev_tuning = forza.rev_limiter.clone().normalized();
+    let rev_tuning = &forza.rev_limiter;
     let shift = snapshot.text("drivetrain.shift_event").unwrap_or("none");
     let rumble_strip = snapshot
         .number("surface.rumble_strip.max")

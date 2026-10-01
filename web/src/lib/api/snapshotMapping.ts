@@ -45,27 +45,17 @@ export interface ControllerDto {
   permission?: 'unknown' | 'granted' | 'denied';
   diagnostic_state?: ControllerStatus['diagnosticState'];
   power_diagnostics?: ControllerPowerDiagnosticsDto | null;
-  powerDiagnostics?: ControllerPowerDiagnostics | null;
 }
 
 interface ControllerPowerDiagnosticsDto {
-  written_reports?: number | null;
   writtenReports?: number | null;
-  output_write_rate_hz?: number | null;
   outputWriteRateHz?: number | null;
-  output_cadence_ms?: number | null;
   outputCadenceMs?: number | null;
-  suppressed_redundant_reports?: number | null;
   suppressedRedundantReports?: number | null;
-  keepalive_interval_ms?: number | null;
   keepaliveIntervalMs?: number | null;
-  last_write_age_ms?: number | null;
   lastWriteAgeMs?: number | null;
-  last_suppressed_age_ms?: number | null;
   lastSuppressedAgeMs?: number | null;
-  native_rumble_passthrough?: boolean | null;
   nativeRumblePassthrough?: boolean | null;
-  adaptive_triggers_retained?: boolean | null;
   adaptiveTriggersRetained?: boolean | null;
 }
 
@@ -74,7 +64,6 @@ export interface ProfileDto {
   name: string;
   built_in: boolean;
   game_id?: string | null;
-  gameId?: string | null;
   active: boolean;
 }
 
@@ -232,9 +221,7 @@ const FALLBACK_APP_SETTINGS: AppSettingsResponse = {
   restartRequired: false
 };
 
-export function mapSnapshotDto(dto: AgentSnapshotDto | AppSnapshot): AppSnapshot {
-  if (isAppSnapshot(dto)) return normalizeAppSnapshot(dto);
-
+export function mapSnapshotDto(dto: AgentSnapshotDto): AppSnapshot {
   const snapshot = mapAgentSnapshot(
     dto.status ?? FALLBACK_AGENT_STATUS,
     dto.appSettings ?? FALLBACK_APP_SETTINGS,
@@ -281,36 +268,18 @@ export function classifySnapshotFrame(raw: unknown): SnapshotFrame {
   return { kind: 'ignore' };
 }
 
-function normalizeAppSnapshot(snapshot: AppSnapshot): AppSnapshot {
-  return {
-    ...snapshot,
-    inputBridge: snapshot.inputBridge ?? FALLBACK_INPUT_BRIDGE,
-    gameDetection: normalizeGameDetection(snapshot.gameDetection),
-    partialErrors: normalizePartialErrors(snapshot.partialErrors)
-  };
-}
-
 function normalizePartialErrors(errors: SnapshotPartialError[] | undefined): SnapshotPartialError[] {
   return Array.isArray(errors) ? errors : [];
 }
 
-function isAppSnapshot(value: unknown): value is AppSnapshot {
-  if (!value || typeof value !== 'object') return false;
-  const snapshot = value as Partial<AppSnapshot>;
-  return Boolean(
-    snapshot.status &&
-      typeof snapshot.status.uptime === 'string' &&
-      Array.isArray(snapshot.controllerProfileAssignments) &&
-      snapshot.effectState
-  );
-}
-
-function isCompleteSnapshotPayload(value: unknown): value is AgentSnapshotDto | AppSnapshot {
-  if (isAppSnapshot(value)) return true;
+function isCompleteSnapshotPayload(value: unknown): value is AgentSnapshotDto {
   if (!value || typeof value !== 'object') return false;
   const snapshot = value as Record<string, unknown>;
+  const status = snapshot.status as Partial<AgentStatusDto> | undefined;
   return Boolean(
-    snapshot.status &&
+    status &&
+      typeof status.uptime_seconds === 'number' &&
+      Number.isFinite(status.uptime_seconds) &&
       Array.isArray(snapshot.controllers) &&
       snapshot.appSettings &&
       Array.isArray(snapshot.profiles) &&
@@ -433,7 +402,7 @@ export function mapController(controller: ControllerDto): ControllerStatus {
       controller.diagnostic_state ??
       (controller.connected || controller.connection_state === 'connected' ? 'ok' : 'disconnected'),
     capabilities: ['adaptive triggers', 'lightbar', 'player leds', 'rumble'],
-    powerDiagnostics: mapControllerPowerDiagnostics(controller.power_diagnostics ?? controller.powerDiagnostics)
+    powerDiagnostics: mapControllerPowerDiagnostics(controller.power_diagnostics)
   };
 }
 
@@ -442,21 +411,15 @@ function mapControllerPowerDiagnostics(
 ): ControllerPowerDiagnostics | null {
   if (!diagnostics) return null;
   const normalized: ControllerPowerDiagnostics = {
-    writtenReports: optionalNumber(diagnostics.written_reports ?? diagnostics.writtenReports),
-    outputWriteRateHz: optionalNumber(diagnostics.output_write_rate_hz ?? diagnostics.outputWriteRateHz),
-    outputCadenceMs: optionalNumber(diagnostics.output_cadence_ms ?? diagnostics.outputCadenceMs),
-    suppressedRedundantReports: optionalNumber(
-      diagnostics.suppressed_redundant_reports ?? diagnostics.suppressedRedundantReports
-    ),
-    keepaliveIntervalMs: optionalNumber(diagnostics.keepalive_interval_ms ?? diagnostics.keepaliveIntervalMs),
-    lastWriteAgeMs: optionalNumber(diagnostics.last_write_age_ms ?? diagnostics.lastWriteAgeMs),
-    lastSuppressedAgeMs: optionalNumber(diagnostics.last_suppressed_age_ms ?? diagnostics.lastSuppressedAgeMs),
-    nativeRumblePassthrough: optionalBoolean(
-      diagnostics.native_rumble_passthrough ?? diagnostics.nativeRumblePassthrough
-    ),
-    adaptiveTriggersRetained: optionalBoolean(
-      diagnostics.adaptive_triggers_retained ?? diagnostics.adaptiveTriggersRetained
-    )
+    writtenReports: optionalNumber(diagnostics.writtenReports),
+    outputWriteRateHz: optionalNumber(diagnostics.outputWriteRateHz),
+    outputCadenceMs: optionalNumber(diagnostics.outputCadenceMs),
+    suppressedRedundantReports: optionalNumber(diagnostics.suppressedRedundantReports),
+    keepaliveIntervalMs: optionalNumber(diagnostics.keepaliveIntervalMs),
+    lastWriteAgeMs: optionalNumber(diagnostics.lastWriteAgeMs),
+    lastSuppressedAgeMs: optionalNumber(diagnostics.lastSuppressedAgeMs),
+    nativeRumblePassthrough: optionalBoolean(diagnostics.nativeRumblePassthrough),
+    adaptiveTriggersRetained: optionalBoolean(diagnostics.adaptiveTriggersRetained)
   };
 
   return Object.values(normalized).some((value) => value !== null && value !== undefined) ? normalized : null;
@@ -471,7 +434,7 @@ function optionalBoolean(value: unknown): boolean | null {
 }
 
 export function mapProfile(profile: ProfileDto): ProfileSummary {
-  const gameId = profile.game_id ?? profile.gameId ?? null;
+  const gameId = profile.game_id ?? null;
   const stockGlobal = profile.built_in && profile.id === 'global';
   return {
     id: profile.id,

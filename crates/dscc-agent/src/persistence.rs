@@ -1,5 +1,34 @@
 use super::*;
 use directories::ProjectDirs;
+use std::sync::{atomic::AtomicU64, Mutex};
+
+static NEXT_SAVE: AtomicU64 = AtomicU64::new(1);
+// ponytail: one serialized writer is sufficient for this desktop app's small settings file.
+// Allocate sequence numbers under the state lock; discard saves overtaken after that lock is released.
+static COMPLETED_SAVES: Mutex<BTreeMap<PathBuf, u64>> = Mutex::new(BTreeMap::new());
+
+pub(crate) struct PendingSave {
+    store: PersistenceStore,
+    snapshot: PersistedAgentState,
+    sequence: u64,
+}
+
+impl PendingSave {
+    fn save(self) -> io::Result<()> {
+        let mut completed = COMPLETED_SAVES
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if completed
+            .get(&self.store.state_file)
+            .is_some_and(|sequence| *sequence > self.sequence)
+        {
+            return Ok(());
+        }
+        self.store.save_snapshot(&self.snapshot)?;
+        completed.insert(self.store.state_file, self.sequence);
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct PersistenceStore {
@@ -65,11 +94,12 @@ impl PersistenceStore {
         let contents = serde_json::to_string_pretty(snapshot)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let temp_file = temp_path_for(&self.state_file);
-        fs::write(&temp_file, contents)?;
-        if self.state_file.exists() {
-            fs::remove_file(&self.state_file)?;
-        }
-        fs::rename(temp_file, &self.state_file)
+        use std::io::Write;
+        let mut file = fs::File::create(&temp_file)?;
+        file.write_all(contents.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        replace_state_file(&temp_file, &self.state_file)
     }
 }
 
@@ -240,23 +270,50 @@ pub(crate) fn temp_path_for(path: &FsPath) -> PathBuf {
     temp
 }
 
-pub(crate) fn build_persist_snapshot(
-    inner: &AgentStateInner,
-) -> Option<(PersistenceStore, PersistedAgentState)> {
-    inner
-        .storage
-        .clone()
-        .map(|store| (store, PersistedAgentState::from_inner(inner)))
+#[cfg(not(windows))]
+fn replace_state_file(source: &FsPath, destination: &FsPath) -> io::Result<()> {
+    fs::rename(source, destination)
 }
 
-pub(crate) async fn persist_snapshot(
-    state: &AgentState,
-    to_save: Option<(PersistenceStore, PersistedAgentState)>,
-) {
-    let Some((store, snapshot)) = to_save else {
+#[cfg(windows)]
+fn replace_state_file(source: &FsPath, destination: &FsPath) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    // Both paths are owned, NUL-terminated buffers that live through the call.
+    if unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+pub(crate) fn build_persist_snapshot(inner: &AgentStateInner) -> Option<PendingSave> {
+    inner.storage.clone().map(|store| PendingSave {
+        store,
+        snapshot: PersistedAgentState::from_inner(inner),
+        sequence: NEXT_SAVE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+    })
+}
+
+pub(crate) async fn persist_snapshot(state: &AgentState, to_save: Option<PendingSave>) {
+    let Some(save) = to_save else {
         return;
     };
-    let result = tokio::task::spawn_blocking(move || store.save_snapshot(&snapshot)).await;
+    let result = tokio::task::spawn_blocking(move || save.save()).await;
     let save_error = match result {
         Ok(Ok(())) => return,
         Ok(Err(error)) => error.to_string(),
@@ -265,4 +322,68 @@ pub(crate) async fn persist_snapshot(
     state
         .log_warn(format!("Could not persist DSCC state: {save_error}"))
         .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_store() -> PersistenceStore {
+        PersistenceStore {
+            state_file: std::env::temp_dir()
+                .join(format!(
+                    "dscc-persistence-{}-{}",
+                    std::process::id(),
+                    NEXT_SAVE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                ))
+                .join("state.json"),
+        }
+    }
+
+    #[test]
+    fn delayed_older_save_cannot_replace_newer_state() {
+        let store = test_store();
+        let older = PendingSave {
+            store: store.clone(),
+            snapshot: PersistedAgentState {
+                active_profile_id: Some("older".into()),
+                ..Default::default()
+            },
+            sequence: NEXT_SAVE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        };
+        let newer = PendingSave {
+            store: store.clone(),
+            snapshot: PersistedAgentState {
+                active_profile_id: Some("newer".into()),
+                ..Default::default()
+            },
+            sequence: NEXT_SAVE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        };
+        newer.save().unwrap();
+        older.save().unwrap();
+        assert_eq!(
+            store.load().unwrap().active_profile_id.as_deref(),
+            Some("newer")
+        );
+        fs::remove_dir_all(store.state_file.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn failed_temp_write_preserves_previous_state() {
+        let store = test_store();
+        let original = PersistedAgentState {
+            active_profile_id: Some("original".into()),
+            ..Default::default()
+        };
+        store.save_snapshot(&original).unwrap();
+        fs::create_dir(temp_path_for(&store.state_file)).unwrap();
+        assert!(store
+            .save_snapshot(&PersistedAgentState::default())
+            .is_err());
+        assert_eq!(
+            store.load().unwrap().active_profile_id,
+            original.active_profile_id
+        );
+        fs::remove_dir_all(store.state_file.parent().unwrap()).unwrap();
+    }
 }

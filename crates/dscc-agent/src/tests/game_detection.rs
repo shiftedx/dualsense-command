@@ -350,6 +350,7 @@ fn game_detection_is_enriched_with_supported_steam_game_selection() {
             SteamGameStats::default(),
         )],
         artwork_paths: BTreeMap::new(),
+        ..SteamGameCatalog::default()
     };
 
     let detection = detect_running_game_from_processes(["ForzaHorizon5.exe"]);
@@ -384,6 +385,7 @@ fn installed_supported_games_do_not_become_selected_without_detection() {
             )
         }],
         artwork_paths: BTreeMap::new(),
+        ..SteamGameCatalog::default()
     };
 
     let enriched = enrich_game_detection(no_game_detection("none"), &catalog);
@@ -524,14 +526,21 @@ async fn cached_hardware_game_detection_refreshes_after_hardware_interval() {
 
     {
         let mut catalog = state.discovery_cache.steam_game_catalog.lock().await;
-        catalog.store(SteamGameCatalog::default(), Instant::now());
+        catalog.store(Arc::new(SteamGameCatalog::default()), Instant::now());
     }
     {
         let mut cache = state.discovery_cache.game_detection.lock().await;
         cache.store(cached, cached_at);
     }
 
-    let _detection = state.cached_hardware_game_detection().await;
+    assert!(state.hardware_game_detection_snapshot().is_none());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while state.hardware_game_detection_snapshot().is_none() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
     let refreshed_at = {
         let cache = state.discovery_cache.game_detection.lock().await;
         cache.refreshed_at

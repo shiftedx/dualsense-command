@@ -313,7 +313,7 @@
         </p>
       {/if}
       <div class="dm-steam-controller-art">
-        <img class="dm-controller-base" src="/dualsense/controller_front.png" alt="DualSense controller front view" />
+        <img class="dm-controller-base" src="/controller-diagram/controller.svg" alt="Controller front diagram" />
       </div>
       {#each centerMirrorGroups as group (group.key)}
         <section class="dm-steam-group center" aria-label={group.label}>

@@ -1,121 +1,63 @@
 # Game Module Guide
 
-Use this guide when adding support for a game or profile pack. Start each PR
-from [Game Module PR Template](game-module-template.md) so detection, profile,
-telemetry, provenance, and validation work stay visible.
-
-## The Two Pieces
-
-- **Game module**: names the game, detects it, assigns profiles, and tells the
-  UI what to show.
-- **Adapter module**: reads telemetry and publishes normalized signals.
-
-Current live adapters:
-
-- `forza-data-out`
-- `assetto-shared-memory`
-
-Other adapter entries are catalog metadata until a Rust runtime/parser is added.
+Start with the [PR template](game-module-template.md) and
+[provenance policy](provenance-policy.md). A **Game Module** identifies/detects a
+game (`moduleId`); a **Telemetry Adapter** reads a source and publishes normalized
+signals (`adapterId`). Sharing an adapter does not merge game identity.
 
 ## Pick The Right Path
 
-1. **Profile pack**
-   Use this when the game already works through a built-in adapter and you only
-   want to add profiles, labels, metadata, or licensed assets.
+| Need | Path |
+| --- | --- |
+| Tuning/metadata/licensed assets using an existing adapter | Data-only profile pack; [draft manifest](module-manifest-format.md). |
+| Built-in detection, default profile or detection lightbar | Declarative Game Module. |
+| New parser, shared memory, SDK or telemetry runtime | Built-in Rust Telemetry Adapter. |
+| Custom Steam/local-app profile auto-load | **Add Game** UI; adds no telemetry or manifest loader. |
 
-2. **Built-in game module**
-   Use this when DSCC should detect the game, show it as supported, assign a
-   default profile, or set the lightbar when the process is detected.
-
-3. **Built-in adapter module**
-   Use this when DSCC must parse new UDP packets, read shared memory, call an
-   SDK, or run new telemetry logic.
-
-The current **Add Game** UI only creates local custom Steam entries for profile
-auto-load. It does not add telemetry support.
-
-## Checklist
-
-1. Record public sources or original experiments in the PR before using process
-   names, app ids, packet layouts, shared-memory names, or telemetry fields.
-2. Add adapter metadata and runtime registration if a new telemetry source is
-   needed. Metadata alone does not parse packets.
-3. Add game metadata in `crates/dscc-agent/src/game_modules.rs`.
-4. Add or map a built-in profile in the agent.
-5. Normalize telemetry into existing signals whenever possible.
-6. Add tests for detection, metadata, adapter status, profile resolution, stale
-   telemetry, and parser behavior.
-7. Keep output gated: detection may set the lightbar, but triggers and rumble
-   require fresh telemetry.
-8. Run Rust and web validation before opening a PR.
-
-Do not inspect or derive packet layouts, tuning values, comments, or code from
-incompatible implementations.
+Live adapters are `forza-data-out` and `assetto-shared-memory`. Catalog metadata
+alone starts no parser/listener. Community modules remain data-only under
+[ADR 0006](adr/0006-keep-community-modules-data-only.md).
 
 ## Contributor Map
 
-Use this map before opening files. A small game-support PR should usually touch
-only one row unless it is adding a brand-new telemetry source.
-
-| Task | Files |
+| Task | Owner |
 | --- | --- |
-| Add a game that reuses existing telemetry | `crates/dscc-agent/src/game_modules.rs`, `crates/dscc-agent/src/profiles.rs`, route/profile tests |
-| Add local-app-only profile support | `crates/dscc-agent/src/game_detection/local_apps.rs`, profile tests |
-| Add Steam discovery or art behavior | `crates/dscc-agent/src/game_detection/steam.rs`, Steam/game detection tests |
-| Add a UDP telemetry parser | `crates/dscc-adapters/src/lib.rs`, parser tests, PR provenance notes per `docs/provenance-policy.md` |
-| Add a shared-memory telemetry source | `crates/dscc-agent/src/assetto_shared_memory.rs` or a new runtime module, platform-gated tests, PR provenance notes per `docs/provenance-policy.md` |
-| Add haptic/profile defaults | `crates/dscc-agent/src/profiles.rs`, `crates/dscc-agent/src/effects/`, effect tests |
+| Game metadata | `crates/dscc-agent/src/game_modules.rs` (`GameModule` fields/types). |
+| Profile defaults/effects | `crates/dscc-agent/src/built_in_presets.rs`, `profiles.rs`, `effects/`. |
+| Local-app / Steam discovery | `crates/dscc-agent/src/game_detection/local_apps.rs` / `steam.rs`. |
+| UDP parsing | `crates/dscc-adapters/src/lib.rs`. |
+| Windows shared memory | `crates/dscc-agent/src/assetto_shared_memory.rs`; platform-gated tests. |
 
-Keep game modules declarative: id, display name, process names, store ids,
-adapter id, default profile, and detection presentation. Put parsing,
-filesystem writes, and runtime state in adapter/runtime modules, not in the game
-catalog.
+Keep catalog entries declarative: ids, names, processes, store ids, adapter,
+profile and presentation. Parsing, filesystem access and effect state belong in
+adapter/runtime owners. Detection uses process/catalog metadata, never injection,
+hooks or memory scanning.
 
-## Built-In Game Module Fields
+## Checklist
 
-Each `GameModule` entry defines these fields:
+1. Record approved public sources/original experiments for ids, processes,
+   telemetry fields and assets in the [source ledger](sources.md) and PR.
+2. Reuse normalized signals/adapters where possible; register runtime and metadata
+   together when adding a source.
+3. Add distinct game metadata and conservative profile defaults.
+4. Test detection/profile resolution, metadata/status and malformed/short data.
+5. Verify missing/stale telemetry keeps triggers/rumble neutral; detection may
+   set only the lightbar. Preserve the 2s stale cutoff.
+6. Run [change-specific validation](contributing.md#validation); record actual
+   commands/results and separate physical evidence from mocks.
 
-- `id`: stable lowercase id used by profile resolution and API responses.
-- `display_name`: UI label.
-- `adapter_id`: telemetry adapter id, such as `forza-data-out`.
-- `default_profile_id`: profile loaded when the game is detected.
-- `process_names`: process-name detection only. No injection, hooks, or memory
-  scanning.
-- `steam_app_ids` and `steam_install_dirs`: optional Steam catalog/art matching.
-- `profile_templates`: labels shown in the module catalog.
-- `detection_lightbar_*`: lightbar-only detection feedback before telemetry is
-  fresh.
+Do not derive code, schemas, layouts, defaults, comments or structure from
+incompatible implementations. Exclude raw captures/private identifiers; document
+asset redistribution rights before bundling.
 
 ## Assetto Corsa Rally Example
 
-Assetto Corsa Rally is the built-in shared-memory reference module:
+| Field | Value |
+| --- | --- |
+| Game / default profile | `assetto-corsa-rally` |
+| Steam app / process hint | `3917090` / `acr.exe` |
+| Adapter / source | `assetto-shared-memory` / read-only Windows shared memory |
+| Signals | Brake, throttle, RPM, slip, shift and surface cues. |
 
-- Game module id: `assetto-corsa-rally`
-- Steam app id: `3917090`
-- Process hint: `acr.exe`
-- Adapter id: `assetto-shared-memory`
-- Default profile id: `assetto-corsa-rally`
-- Telemetry: read-only Windows shared memory
-
-The adapter reads public Assetto-compatible shared-memory pages and publishes
-signals the existing haptic engine can use: brake, throttle, RPM, slip, shift,
-and surface cues.
-
-## Validation
-
-```powershell
-cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
-cargo +stable-x86_64-pc-windows-gnu test --workspace --all-features
-cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warnings
-npm.cmd --prefix web run typecheck
-npm.cmd --prefix web run build
-npm.cmd --prefix web run test:source-audit
-npm.cmd run check:perf
-```
-
-For UI or button-mapping changes:
-
-```powershell
-npm.cmd --prefix web run test:button-map
-npm.cmd --prefix web run test:visual-smoke
-```
+This illustrates built-in ownership; catalog presence alone does not establish
+current physical/game validation.

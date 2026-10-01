@@ -1,102 +1,60 @@
 # Game Module PR Template
 
-Use this template for a supported-game or profile-pack PR. Keep the PR small.
-Split parser/runtime work from tuning-profile work when possible.
+Use for supported-game/profile-pack PRs. Find owners in the
+[contributor map](game-module-contribution-guide.md#contributor-map); split
+parser/runtime work from tuning when practical.
 
-## Scope
+## Scope and Detection
 
-- Game:
-- Store IDs:
-- Process names:
-- Telemetry source:
-- Profile IDs:
+- Game / `moduleId` / display name:
+- Store ids / process names / install hints:
+- `adapterId` / telemetry source / runtime owner:
+- Default profile / profile ids:
+- Detection lightbar:
+- Changed files and responsibilities:
 - Platforms tested:
 
-## Files To Touch
-
-Pick the smallest path that fits the work.
-
-| Goal | Files |
-| --- | --- |
-| Add a game that reuses existing telemetry | `crates/dscc-agent/src/game_modules.rs`, `crates/dscc-agent/src/profiles.rs`, route/profile tests |
-| Add local-app-only profile support | `crates/dscc-agent/src/game_detection/local_apps.rs`, profile tests |
-| Add Steam discovery or art matching | `crates/dscc-agent/src/game_detection/steam.rs`, Steam/game detection tests |
-| Add a UDP parser | `crates/dscc-adapters/src/lib.rs`, parser fixtures, provenance notes |
-| Add shared-memory telemetry | A focused runtime module, platform-gated tests, provenance notes |
-| Add haptic defaults only | `crates/dscc-agent/src/profiles.rs`, `crates/dscc-agent/src/effects/`, effect tests |
+Detection stays process/catalog based; no hooks, private APIs or protected-game
+workarounds. Keep game and adapter identities separate.
 
 ## Clean-Room Notes
 
-- List every public source used for app IDs, process names, packet fields,
-  shared-memory names, or protocol constants.
-- State whether each value came from public docs, public user settings,
-  original packet captures, or local hardware testing.
-- Do not copy implementation details from incompatible projects.
-- Do not include raw HID paths, serials, Bluetooth addresses, Steam account
-  paths, or raw packet captures.
+- Public source or sanitized original experiment for each id, process, field,
+  shared-memory name, protocol value, tuning default and asset:
+- Source-ledger entry / asset redistribution permission:
 
-## Detection
+Apply [Provenance Policy](provenance-policy.md). Exclude incompatible
+implementation details and raw captures, paths, serials, Bluetooth addresses or
+account identifiers.
 
-- Module id:
-- Display name:
-- Adapter id:
-- Default profile id:
-- Process names:
-- Steam app IDs:
-- Install-folder hints:
-- Detection-only lightbar color:
+## Telemetry and Defaults
 
-Detection must stay process-name and catalog based. Do not add hooks, private
-APIs, or protected-game workarounds.
+- Source: UDP / shared memory / SDK / none
+- Existing normalized signals used / new signals justified:
+- Freshness cutoff (preserve 2s) / missing-stale neutralization:
+- Trigger / body haptics / lightbar defaults:
+- Stick/deadzone / button-paddle assumptions:
 
-## Telemetry
+Use conservative defaults. Detection alone may set the lightbar; game triggers
+and rumble require fresh telemetry.
 
-- Source type: UDP / shared memory / SDK / none
-- Runtime module:
-- Freshness cutoff:
-- Stale neutralization behavior:
-- Signals produced:
+## Verification
 
-Normalize to existing DSCC signals first. Add a new signal only when an
-existing one cannot describe the data.
+| Changed behavior | Command / observed result / gap |
+| --- | --- |
+| Catalog and detection/profile resolution | |
+| Adapter status; missing/stale telemetry | |
+| Short/malformed parser input | |
+| Private-data redaction | |
+| Changed UI / visual smoke | |
+| Physical controller/game run, if applicable | |
 
-## Profile Defaults
-
-- Trigger behavior:
-- Body haptics:
-- Lightbar:
-- Stick/deadzone defaults:
-- Button or paddle assumptions:
-
-Defaults should be conservative. A user should be able to install the update,
-open the game, and get useful feedback without aggressive effects.
-
-## Tests
-
-Required checks:
-
-- Game module appears in the catalog.
-- Detection resolves the expected profile.
-- Missing telemetry stays safe.
-- Stale telemetry neutralizes output.
-- Parser rejects short or malformed packets.
-- API responses redact private paths.
-- UI still passes visual smoke if the PR changes game presentation.
-
-Run:
-
-```powershell
-cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
-cargo +stable-x86_64-pc-windows-gnu test --workspace --all-features
-cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warnings
-npm.cmd --prefix web run check
-```
+Use [Contributing](contributing.md#validation) for commands and output suppression.
+Mocks do not prove physical support.
 
 ## User-Facing Notes
 
-- Setup steps:
-- Known limitations:
-- Hardware used:
-- Telemetry source setting the user must enable:
+- Setup / game telemetry setting:
+- Known limitations / remaining checks:
+- Hardware and transport tested:
 - Screenshots or visual checks:
-

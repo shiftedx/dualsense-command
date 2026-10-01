@@ -5,8 +5,23 @@ use std::{
 
 const FORZA_HORIZON6_DEFAULT_INSTALL_PATH: &str =
     r"C:\Program Files (x86)\Steam\steamapps\common\ForzaHorizon6";
-pub(crate) const FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP: &[u8] =
-    include_bytes!("../assets/forza/ControllerIcons.zip");
+fn local_glyph_archive() -> io::Result<Vec<u8>> {
+    use std::io::Read;
+    let path = std::env::var_os("DSCC_FORZA_GLYPH_ARCHIVE").ok_or_else(|| {
+        io::Error::new(io::ErrorKind::NotFound, "Glyph packs are not bundled. Set DSCC_FORZA_GLYPH_ARCHIVE to a local ControllerIcons.zip you are entitled to use.")
+    })?;
+    let mut bytes = Vec::new();
+    fs::File::open(path)?
+        .take(16 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > 16 * 1024 * 1024 || !bytes.starts_with(b"PK\x03\x04") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Glyph archive must be a ZIP no larger than 16 MiB.",
+        ));
+    }
+    Ok(bytes)
+}
 
 pub(crate) fn default_forza_horizon6_install_path() -> PathBuf {
     std::env::var_os("DSCC_FORZA_HORIZON6_INSTALL_DIR")
@@ -102,6 +117,7 @@ pub(crate) fn ensure_forza_icon_target_is_safe(root: &FsPath, target: &FsPath) -
 }
 
 pub(crate) fn install_forza_playstation_glyphs(root: PathBuf) -> io::Result<String> {
+    let glyphs = local_glyph_archive()?;
     let root = canonical_forza_install_root(root)?;
     let mut backup_actions = Vec::new();
     let mut install_targets = Vec::new();
@@ -111,10 +127,8 @@ pub(crate) fn install_forza_playstation_glyphs(root: PathBuf) -> io::Result<Stri
         let backup = forza_controller_icon_backup_path(&target);
         let target_exists = path_exists(&target)?;
         let backup_exists = path_exists(&backup)?;
-        let target_already_playstation =
-            file_matches_bytes(&target, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP)?;
-        let backup_is_playstation =
-            file_matches_bytes(&backup, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP)?;
+        let target_already_playstation = file_matches_bytes(&target, &glyphs)?;
+        let backup_is_playstation = file_matches_bytes(&backup, &glyphs)?;
 
         if target_exists && !target_already_playstation {
             backup_actions.push((target.clone(), backup));
@@ -158,7 +172,7 @@ pub(crate) fn install_forza_playstation_glyphs(root: PathBuf) -> io::Result<Stri
             fs::create_dir_all(parent)?;
         }
         let temp = target.with_extension("zip.dscc-new");
-        fs::write(&temp, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP)?;
+        fs::write(&temp, &glyphs)?;
         if path_exists(&target)? {
             fs::remove_file(&target)?;
         }
@@ -172,6 +186,7 @@ pub(crate) fn install_forza_playstation_glyphs(root: PathBuf) -> io::Result<Stri
 }
 
 pub(crate) fn restore_forza_original_glyphs(root: PathBuf) -> io::Result<String> {
+    let glyphs = local_glyph_archive()?;
     let root = canonical_forza_install_root(root)?;
 
     let mut restore_actions = Vec::new();
@@ -181,10 +196,8 @@ pub(crate) fn restore_forza_original_glyphs(root: PathBuf) -> io::Result<String>
         ensure_forza_icon_target_is_safe(&root, &target)?;
         let backup = forza_controller_icon_backup_path(&target);
         let backup_exists = path_exists(&backup)?;
-        let backup_is_playstation =
-            file_matches_bytes(&backup, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP)?;
-        let target_is_playstation =
-            file_matches_bytes(&target, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP)?;
+        let backup_is_playstation = file_matches_bytes(&backup, &glyphs)?;
+        let target_is_playstation = file_matches_bytes(&target, &glyphs)?;
 
         if backup_exists && backup_is_playstation {
             invalid_backups += 1;

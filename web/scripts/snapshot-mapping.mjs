@@ -61,14 +61,19 @@ assert.ok(Array.isArray(snap.partialErrors));
 assert.equal(snap.controllerProfileAssignments.length, 1);
 assert.equal(snap.controllerProfileAssignments[0].profileId, 'global');
 
-// Dual snake_case / camelCase leaf fields normalize to one shape.
-const snakeDto = baseDto();
-snakeDto.controllers[0].power_diagnostics = { written_reports: 5 };
-assert.equal(mapSnapshotDto(snakeDto).controllers[0].powerDiagnostics.writtenReports, 5);
+// Agent leaf diagnostics use camelCase inside the snake_case controller DTO.
+const diagnosticsDto = baseDto();
+diagnosticsDto.controllers[0].power_diagnostics = { writtenReports: 5, outputWriteRateHz: Infinity };
+assert.equal(mapSnapshotDto(diagnosticsDto).controllers[0].powerDiagnostics.writtenReports, 5);
+assert.equal(mapSnapshotDto(diagnosticsDto).controllers[0].powerDiagnostics.outputWriteRateHz, null);
 
-const camelDto = baseDto();
-camelDto.controllers[0].powerDiagnostics = { writtenReports: 7 };
-assert.equal(mapSnapshotDto(camelDto).controllers[0].powerDiagnostics.writtenReports, 7);
+// UI snapshots and retired field aliases are not agent wire contracts.
+const oldDto = baseDto();
+oldDto.controllers[0].powerDiagnostics = { writtenReports: 7 };
+oldDto.profiles[0].gameId = 'obsolete';
+assert.equal(mapSnapshotDto(oldDto).controllers[0].powerDiagnostics, null);
+assert.equal(mapSnapshotDto(oldDto).profiles[0].gameId, 'all');
+assert.equal(classifySnapshotFrame(JSON.stringify({ type: 'snapshot', snapshot: snap })).kind, 'invalidate');
 
 // classifySnapshotFrame: every routing outcome, including the previously-silent
 // malformed/invalidate split.

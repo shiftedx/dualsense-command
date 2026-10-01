@@ -30,17 +30,6 @@ export type ProfileManagementState = {
   fileBusy: boolean;
 };
 
-export const createProfileManagementState = (): ProfileManagementState => ({
-  renameProfileId: '',
-  renameProfileName: '',
-  renameBusy: false,
-  saveBusy: false,
-  saveAsOpen: false,
-  saveAsName: '',
-  saveAsBusy: false,
-  fileBusy: false
-});
-
 export type ProfileManagementStateStore = {
   get: () => ProfileManagementState;
   set: (next: ProfileManagementState) => void;

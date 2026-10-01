@@ -1,36 +1,20 @@
 # Module Manifest Format
 
-Community modules are planned as data-only profile packs. The installer/loader
-is not implemented yet, so contributors should test profile packs by importing
-the included profiles through DSCC.
-
-This format is separate from the current **Add Game** UI. Add Game only creates
-local custom Steam entries for profile auto-load.
+**Draft, not loadable.** Community modules are planned data-only profile packs;
+test profiles through DSCC's profile import. **Add Game** registers custom
+Steam/local-app profile auto-load, not manifests or telemetry.
 
 ## What A Manifest Can Do
 
-Allowed:
-
-- Describe supported games.
-- Reference exported `dev.dscc.profile.v1` profile files.
-- Include metadata and licensed assets.
-- Document which built-in adapter a profile expects.
-
-Not allowed yet:
-
-- Native code.
-- Packet parsers.
-- Process hooks.
-- Filesystem writers.
-- Runtime telemetry logic.
-
-## Filename
-
-```text
-dscc-module.json
-```
+| Allowed | Not allowed yet |
+| --- | --- |
+| Game descriptions, metadata, licensed assets | Native code, process hooks, filesystem writers |
+| Exported `dev.dscc.profile.v1` files and expected built-in adapters | Packet parsers, runtime telemetry logic |
 
 ## Example
+
+Proposed filename: `dscc-module.json`. This example describes the draft pack
+format, not a supported API or runtime loader.
 
 ```json
 {
@@ -78,30 +62,18 @@ dscc-module.json
 
 ## Field Notes
 
-- `profileTemplates[].profile` points to an exported DSCC profile file.
-- `signals` documents existing DSCC signals used by the profile. It must not
-  define new packet fields or parser behavior.
-- `games[].processNames` are declarative hints only. A manifest does not install
-  a process scanner.
-- `trusted` is not a manifest field. DSCC will decide trust from install source,
-  signing, or review status.
+- `profileTemplates[].profile`: exported DSCC profile file.
+- `signals`: existing normalized signals; no packet definitions or parsers.
+- `games[].processNames`: declarative hints; no installed scanner.
+- `trusted`: absent; trust/signing/review policy remains future work.
 
-Current API mapping:
-
-- `ModuleSummary.kind`: `adapter` or `game`.
-- `ModuleSummary.source`: currently `built_in` or `built_in_game`.
-- `GameDetectionResponse.moduleId`: detected game module id.
-- `GameDetectionResponse.adapterId`: telemetry adapter id.
+Current API uses `ModuleSummary.kind` = `adapter` / `game` and `source` =
+`built_in` / `built_in_game`. Detection distinguishes `moduleId` (game) from
+`adapterId` (telemetry). Draft manifest ids do not replace those API fields.
 
 ## Review Rules
 
-- Use public/approved sources or original experiments for app ids, process
-  names, defaults, and assets.
-- Do not copy constants, schemas, packet layouts, tuning defaults, comments, or
-  structure from incompatible implementations.
-- Do not bundle Sony, game, or third-party assets unless redistribution rights
-  are documented.
-- Target explicit game ids. Do not merge separate games into one module only
-  because they share an adapter.
-
-For a complete built-in example, see [Game Module Guide](game-module-contribution-guide.md).
+Follow [Provenance Policy](provenance-policy.md): approved sources/original
+experiments, no incompatible implementation details and documented asset
+redistribution rights. Target distinct game ids even when sharing an adapter.
+Use the [Game Module Guide](game-module-contribution-guide.md) for built-in work.

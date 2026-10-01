@@ -81,6 +81,7 @@ mod routes;
 mod runtime;
 mod runtime_constants;
 mod runtime_paths;
+mod shutdown;
 mod steam_input;
 mod support_bundle;
 mod telemetry_runtime;
@@ -134,7 +135,7 @@ pub(crate) use env_policy::configured_output_mode;
 #[cfg(test)]
 pub(crate) use forza_glyphs::{
     ensure_forza_icon_target_is_safe, forza_controller_icon_backup_path,
-    forza_controller_icon_targets, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP,
+    forza_controller_icon_targets,
 };
 pub(crate) use forza_glyphs::{
     install_forza_playstation_glyphs, resolve_forza_horizon6_install_path,
@@ -148,9 +149,9 @@ pub(crate) use game_detection::{
     add_custom_game, add_local_game, append_user_games_to_detection, browse_steam_library,
     detect_running_game, detection_allows_input_bridge, discover_steam_game_catalog,
     enrich_game_detection, get_detected_game, get_game_art, get_steam_app_art, list_steam_library,
-    local_app_execution_verified_for_input_bridge, remove_custom_game,
-    steam_root_and_stats_for_user_games, supported_game_install_path, telemetry_game_detection,
-    unsupported_steam_game_catalog, validate_local_game, SteamGameCatalog,
+    local_app_execution_verified_for_input_bridge, remove_custom_game, supported_game_install_path,
+    telemetry_game_detection, unsupported_steam_game_catalog, validate_local_game,
+    SteamGameCatalog,
 };
 #[cfg(test)]
 pub(crate) use game_detection::{
@@ -246,6 +247,7 @@ pub struct AgentState {
     #[cfg(test)]
     input_overrides: Arc<Mutex<BTreeMap<String, ControllerInputState>>>,
     output_runtime: Arc<Mutex<HardwareOutputRuntime>>,
+    shutdown: Arc<shutdown::ShutdownGate>,
     discovery_cache: Arc<DiscoveryCache>,
     realtime_runtime: Arc<Mutex<RealtimeRuntime>>,
     effect_runtime: Arc<Mutex<EffectRuntimeCache>>,
@@ -604,6 +606,7 @@ impl AgentState {
             #[cfg(test)]
             input_overrides: Arc::new(Mutex::new(BTreeMap::new())),
             output_runtime: Arc::new(Mutex::new(HardwareOutputRuntime::default())),
+            shutdown: Arc::new(shutdown::ShutdownGate::default()),
             discovery_cache: Arc::new(DiscoveryCache::default()),
             realtime_runtime: Arc::new(Mutex::new(RealtimeRuntime::default())),
             effect_runtime: Arc::new(Mutex::new(EffectRuntimeCache::default())),
@@ -702,9 +705,11 @@ impl AgentState {
     }
 
     fn hardware_output_enabled(&self) -> bool {
-        self.output_manager
-            .as_ref()
-            .is_some_and(|manager| manager.hardware_writes_enabled())
+        !self.shutdown.is_stopping()
+            && self
+                .output_manager
+                .as_ref()
+                .is_some_and(|manager| manager.hardware_writes_enabled())
     }
 
     fn app_settings_response(&self, settings: &AppSettings) -> AppSettingsResponse {
@@ -990,12 +995,27 @@ impl AgentState {
         };
         let transport = target.transport;
         let frame_for_write = frame.clone();
-        let write =
-            tokio::task::spawn_blocking(move || manager.write_frame(&target, &frame_for_write))
-                .await
-                .map_err(|error| format!("HID output task failed: {error}"))?
-                .map_err(|error| error.to_string())?;
-        self.record_output_frame_write(controller_id, frame, transport, Instant::now());
+        let shutdown = self.shutdown.clone();
+        let state = self.clone();
+        let controller_id = controller_id.to_string();
+        let write = tokio::task::spawn_blocking(move || {
+            shutdown.write(|| {
+                let result = manager.write_frame(&target, &frame_for_write);
+                if result.is_ok() {
+                    state.record_output_frame_write(
+                        &controller_id,
+                        &frame_for_write,
+                        transport,
+                        Instant::now(),
+                    );
+                }
+                result
+            })
+        })
+        .await
+        .map_err(|error| format!("HID output task failed: {error}"))?
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
         Ok(write)
     }
 
@@ -1474,9 +1494,19 @@ impl AgentState {
         steam_input: &SteamInputStatus,
         game_detection: &GameDetectionResponse,
     ) -> DiagnosticsResponse {
+        let bridge = self
+            .input_bridge
+            .run_blocking(|bridge| bridge.status_response())
+            .await;
         let inner = self.inner.read().await;
         let hardware_output_enabled = self.hardware_output_enabled();
-        self.diagnostics_from_inner(&inner, steam_input, game_detection, hardware_output_enabled)
+        self.diagnostics_from_inner(
+            &inner,
+            steam_input,
+            game_detection,
+            hardware_output_enabled,
+            &bridge,
+        )
     }
 
     fn diagnostics_from_inner(
@@ -1485,6 +1515,7 @@ impl AgentState {
         steam_input: &SteamInputStatus,
         game_detection: &GameDetectionResponse,
         hardware_output_enabled: bool,
+        bridge: &InputBridgeStatusResponse,
     ) -> DiagnosticsResponse {
         let mut checks = vec![
             HealthCheck {
@@ -1553,7 +1584,6 @@ impl AgentState {
                 "Steam install not found in standard locations".to_string()
             },
         });
-        let bridge = self.input_bridge.status_response();
         checks.push(HealthCheck {
             name: "input-bridge".to_string(),
             status: if bridge.available {
@@ -1603,12 +1633,17 @@ impl AgentState {
         let steam_input = self.cached_steam_input_status_or_refresh().await;
         let hardware_output_enabled = self.hardware_output_enabled();
         let output_diagnostics = self.output_diagnostics_snapshot();
+        let input_bridge = self
+            .input_bridge
+            .run_blocking(|bridge| bridge.status_response())
+            .await;
         let inner = self.inner.read().await;
         let diagnostics = self.diagnostics_from_inner(
             &inner,
             &steam_input,
             &game_detection,
             hardware_output_enabled,
+            &input_bridge,
         );
         let status = self.status_from_inner(&inner, Some(&game_detection));
         let profile_resolution = profile_resolution(&inner, Some(&game_detection));
@@ -1634,7 +1669,7 @@ impl AgentState {
             ),
             modules: module_summaries(),
             steam_input,
-            input_bridge: self.input_bridge.status_response(),
+            input_bridge,
             game_detection: game_detection.clone(),
             profile_resolution,
             effect_state,
@@ -1656,28 +1691,59 @@ pub async fn serve(addr: SocketAddr) -> anyhow::Result<()> {
     init_tracing();
     let listener = TcpListener::bind(addr).await?;
     let state = hid_agent_state().with_bind_addr(addr);
+    let mut producers = Vec::new();
     for adapter in built_in_udp_adapters() {
         let bind_addr = udp_adapter_bind_addr(adapter);
-        tokio::spawn(udp_telemetry_adapter_loop(
+        producers.push(tokio::spawn(udp_telemetry_adapter_loop(
             state.clone(),
             *adapter,
             bind_addr,
-        ));
+        )));
     }
     #[cfg(target_os = "windows")]
-    tokio::spawn(assetto_shared_memory_adapter_loop(state.clone()));
+    producers.push(tokio::spawn(assetto_shared_memory_adapter_loop(
+        state.clone(),
+    )));
     #[cfg(not(target_os = "windows"))]
     mark_assetto_shared_memory_unavailable(&state).await;
-    tokio::spawn(output_watchdog_loop(
+    producers.push(tokio::spawn(output_watchdog_loop(
         state.clone(),
         Duration::from_millis(250),
-    ));
-    tokio::spawn(hardware_output_loop(
+    )));
+    producers.push(tokio::spawn(hardware_output_loop(
         state.clone(),
         HARDWARE_OUTPUT_INTERVAL,
-    ));
+    )));
     info!(%addr, "dscc-agent listening");
-    axum::serve(listener, app(state)).await?;
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
+    let router = app(state.clone());
+    let mut server = tokio::spawn(async move {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async {
+                let _ = stop_rx.await;
+            })
+            .await
+    });
+    let server_result = tokio::select! {
+        result = &mut server => Some(result),
+        _ = shutdown::requested() => None,
+    };
+    state.shutdown.begin();
+    let _ = stop_tx.send(());
+    for producer in producers {
+        producer.abort();
+    }
+    state.shutdown_outputs().await;
+    if !server.is_finished()
+        && tokio::time::timeout(Duration::from_secs(1), &mut server)
+            .await
+            .is_err()
+    {
+        server.abort();
+    }
+    if let Some(result) = server_result {
+        result??;
+    }
     Ok(())
 }
 

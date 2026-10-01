@@ -24,26 +24,21 @@ pub(crate) fn enrich_game_detection(
 /// list. Built-in modules sort first; user games sort alphabetically after.
 pub(crate) fn append_user_games_to_detection(
     detection: &mut GameDetectionResponse,
-    user_games: &BTreeMap<String, UserGameConfig>,
-    steam_root: Option<&FsPath>,
-    steam_stats: &BTreeMap<String, SteamGameStats>,
+    user_games: &[SupportedGameSummary],
 ) {
     if user_games.is_empty() {
         return;
     }
 
     let active_game_id = detection.active_game_id.clone();
-    let mut user_entries: Vec<SupportedGameSummary> = user_games
-        .values()
-        .map(|game| {
-            let stats = steam_stats.get(&game.app_id).cloned().unwrap_or_default();
-            let mut summary = user_game_to_supported_summary(game, steam_root, stats);
+    let user_entries: Vec<SupportedGameSummary> = user_games
+        .iter()
+        .cloned()
+        .map(|mut summary| {
             summary.running = active_game_id.as_deref() == Some(summary.game_id.as_str());
             summary
         })
         .collect();
-    user_entries.sort_by_key(|game| game.name.to_ascii_lowercase());
-
     detection.supported_games.extend(user_entries);
 
     if let Some(active_id) = active_game_id.as_deref() {

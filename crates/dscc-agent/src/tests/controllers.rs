@@ -469,6 +469,70 @@ async fn windows_pnp_fallback_does_not_create_hid_output_target() {
 }
 
 #[cfg(target_os = "windows")]
+#[tokio::test]
+async fn windows_pnp_fallback_reports_detected_not_connected() {
+    let state = AgentState::from_controller_events(windows_pnp_controller_events_from_text(
+        "DualSense Edge Wireless Controller\tHID\\VID_054C&PID_0DF2",
+    ));
+
+    let controllers = state.inner.read().await.controllers.summaries();
+    assert_eq!(controllers.len(), 1);
+    assert_eq!(controllers[0].id, "windows-pnp-dualsense-edge");
+    assert!(
+        !controllers[0].connected,
+        "a paired-but-offline PnP record must not report as connected"
+    );
+    assert_eq!(controllers[0].connection_state, ConnectionState::Detected);
+    assert_eq!(
+        controllers[0].diagnostic_state,
+        ControllerDiagnosticState::Detected
+    );
+}
+
+#[cfg(target_os = "windows")]
+#[tokio::test]
+async fn windows_pnp_reattach_is_redundant_and_silent() {
+    let events = windows_pnp_controller_events_from_text(
+        "DualSense Edge Wireless Controller\tHID\\VID_054C&PID_0DF2",
+    );
+    let state = AgentState::from_controller_events(events.clone());
+
+    let mut rx = state.subscribe_events();
+    for event in events {
+        state.apply_controller_event(event).await;
+    }
+
+    assert!(
+        rx.try_recv().is_err(),
+        "re-attaching an unchanged PnP fallback record must not broadcast"
+    );
+    let controllers = state.inner.read().await.controllers.summaries();
+    assert_eq!(controllers.len(), 1);
+}
+
+#[cfg(target_os = "windows")]
+#[tokio::test]
+async fn real_controller_replaces_detected_windows_pnp_fallback() {
+    let state = AgentState::from_controller_events(windows_pnp_controller_events_from_text(
+        "DualSense Edge Wireless Controller\tHID\\VID_054C&PID_0DF2",
+    ));
+
+    state
+        .apply_controller_event(attach_event(
+            "controller-0001",
+            ControllerFamily::DualSenseEdge,
+            ControllerTransportKind::Bluetooth,
+            Some(100),
+        ))
+        .await;
+
+    let controllers = state.inner.read().await.controllers.summaries();
+    assert_eq!(controllers.len(), 1);
+    assert_eq!(controllers[0].id, "controller-0001");
+    assert!(controllers[0].connected);
+}
+
+#[cfg(target_os = "windows")]
 #[test]
 fn windows_setupapi_multisz_hardware_id_feeds_pnp_classifier() {
     let mut units = Vec::new();

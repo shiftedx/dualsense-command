@@ -185,8 +185,16 @@ enum WatchEventKind {
     Status,
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let result = runtime.block_on(run());
+    runtime.shutdown_timeout(std::time::Duration::from_millis(250));
+    result
+}
+
+async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {

@@ -1,219 +1,84 @@
 # Contributing
 
-Thanks for helping DSCC. Keep changes focused, avoid broad rewrites, and do not
-copy implementation details from incompatible projects.
+Start with `git status --short --ignored`; preserve unrelated edits. Read
+[AGENTS](../AGENTS.md) for safety/timing contracts and [Architecture](architecture.md#change-entry-points)
+for source owners. Search with `rg` / `rg --files`.
 
-## Before You Start
+Before HID, telemetry, Steam Input, broker or asset changes, read the
+[provenance policy](provenance-policy.md) and [source ledger](sources.md).
+Record public references or sanitized experiments; keep private notes, captures,
+builds, installers and assistant state out of commits.
 
-```powershell
-git status --short --ignored
-```
+## Setup and local modes
 
-- Use `rg` or `rg --files` when searching.
-- Do not revert unrelated local changes.
-- Do not commit private notes, raw captures, build output, MSI files, or local
-  agent instructions.
-- If you touch HID reports, telemetry packet layouts, controller assets, Sony
-  tooling, Steam Input, or protocol constants, document the public source or
-  original experiment in the PR.
-- Use `docs/provenance-policy.md` before adding protocol constants, packet
-  fields, HID offsets, Steam Input assumptions, or provider behavior.
-- Use `docs/game-module-template.md` for game, parser, or profile-pack PRs.
+Install Rust and Node.js 24. Windows uses the GNU Rust toolchain plus native
+C compiler/linker; Linux needs `libudev-dev` for `hidapi`. In PowerShell use
+`npm.cmd` to avoid `npm.ps1` execution-policy blocks. Root scripts select GNU
+Rust automatically; direct commands use `cargo +stable-x86_64-pc-windows-gnu`.
 
-## Setup
-
-Install Rust, Node.js 24, and the Windows GNU Rust target/toolchain used by the
-project. On Linux, install `libudev-dev` for `hidapi`.
-
-```powershell
-npm.cmd --prefix web ci
-```
-
-Useful root commands:
-
-```powershell
-npm.cmd run dev
-npm.cmd run check
-npm.cmd run check:perf
-npm.cmd run check:web
-npm.cmd run check:rust
-```
-
-PowerShell note: use `npm.cmd`; `npm.ps1` may be blocked by execution policy.
-
-On this Windows host, plain `cargo` may fail because MSVC `link.exe` is not on
-`PATH`. Use:
-
-```powershell
-cargo +stable-x86_64-pc-windows-gnu fmt --all -- --check
-cargo +stable-x86_64-pc-windows-gnu test --workspace
-cargo +stable-x86_64-pc-windows-gnu clippy --workspace --all-targets -- -D warnings
-```
-
-## Local Modes
-
-Run the full local app:
-
-```powershell
-npm.cmd run dev
-```
-
-Run only the agent:
-
-```powershell
-cargo +stable-x86_64-pc-windows-gnu run -p dscc-cli -- serve --addr 127.0.0.1:43473
-```
-
-Run UI-only mock mode:
-
-```powershell
-npm.cmd --prefix web run dev:mock
-```
-
-Mock mode is for development only. Production builds ignore mock toggles and do
-not include the fixture bundle.
-
-Run without writing to real controller hardware:
+**Real output defaults on. Set the write-disable flag before diagnostics or
+smoke tests, in every terminal that launches the agent:**
 
 ```powershell
 $env:DSCC_DISABLE_HARDWARE_OUTPUT='1'
-# or
-$env:DSCC_ENABLE_HARDWARE_OUTPUT='0'
+npm.cmd --prefix web ci
+npm.cmd run dev
 ```
 
-## LAN Policy
+Alternative write-disable flag: `DSCC_ENABLE_HARDWARE_OUTPUT=0`.
 
-Normal users enable LAN Access in the app. Direct agent launches that bind to a
-non-loopback address require explicit opt-in:
+| Mode | Command |
+| --- | --- |
+| Agent + web | `npm.cmd run dev` |
+| UI-only fixtures | `npm.cmd --prefix web run dev:mock` |
+| Separate agent terminal | `cargo +stable-x86_64-pc-windows-gnu run -p dscc-cli -- serve --addr 127.0.0.1:43473` |
+| Separate web terminal | `npm.cmd --prefix web run dev` |
 
-```powershell
-$env:DSCC_ENABLE_LAN_API='1'
-$env:DSCC_ENABLE_LAN_FORZA='1'
-```
+Production builds ignore mock toggles and exclude fixtures. For browser checks,
+install Chromium: `npm.cmd --prefix web exec playwright install chromium`.
 
-The tray may pass `DSCC_ENABLE_LAN_API=1` so the UI can save the LAN setting,
-but the saved `listenOnAllInterfaces` setting still controls actual exposure.
+## Boundary checklist
 
-## Frontend Changes
+| Change | Preserve |
+| --- | --- |
+| UI | Svelte 5 event attributes, existing Lucide icons, lifecycle teardown, dense accessible screens; filesystem scans off render paths. |
+| Profiles | Global controller-only tuning; game telemetry controls require Game Profile selection. Controller aliases are display names. |
+| API / persistence | Typed validation before side effects, same-origin guards, locked snapshot capture and ordered atomic persistence. |
+| Output | Typed frames/profiles → output manager → device encoding/clamping → guarded HID transport. Time-limited tests; stale game telemetry neutralizes triggers/rumble. |
+| Edge | Protected default slot, confirmation, acknowledgement/readback, local staging when writes are unavailable. |
+| Steam Input | Canonical roots; `controller_*.vdf` only, reject `controller_base*.vdf`; 256KB limit, dry-run and backups. Match group, source, mode, input and activator. |
+| Modules | Separate `moduleId` / `adapterId`; FH5/FH6/Motorsport remain distinct. Community packs are data-only. |
 
-- Keep `App.svelte` as the shell and state coordinator.
-- Put feature code in `web/src/lib/features/<feature>/` when possible.
-- Keep API calls in `web/src/lib/api.ts`.
-- Keep shared UI types in `web/src/lib/types.ts`.
-- Use Svelte 5 event attributes such as `onclick` and `oninput`.
-- Use `@lucide/svelte` icons when adding controls.
-- Clean up timers, sockets, listeners, and polling.
-- Keep expensive Steam or filesystem work out of render paths.
-- Preserve the dense app UI style. This is an operational tool, not a landing
-  page.
-
-Global Profile is controller-only tuning. Do not show telemetry streams, RPM
-controls, adapter packet status, or game-signal routing until a supported game
-profile is selected.
-
-## Documentation Prose
-
-Use direct release and support copy:
-
-- State the fact first. Skip setup phrases.
-- Name the actor when describing security, install, or hardware behavior.
-- Use active voice.
-- Cut filler, softeners, and broad claims.
-- Prefer two precise bullets over three vague ones.
-- Avoid long dash punctuation in committed docs.
-
-## Backend/API Changes
-
-- Add typed request/response structs.
-- Validate input before touching state, hardware, or the filesystem.
-- Keep mutating routes behind the same-origin guard.
-- Persist durable changes with existing state helpers.
-- Add route tests for success and failure paths.
-- Add cross-origin rejection tests for security-sensitive mutations.
-
-Do not add raw HID-byte routes. Hardware output routes must accept high-level
-intent and use typed output/profile paths.
-
-## Game Or Telemetry Changes
-
-DSCC has two module layers:
-
-- **Game modules** identify games and profiles.
-- **Adapter modules** read telemetry.
-
-Use a profile pack when the game already works through an existing adapter. Add
-a built-in Rust adapter when new parsing, shared memory, filesystem access, or
-runtime behavior is needed.
-
-Rules:
-
-- Keep `moduleId` as the game module id and `adapterId` as the telemetry adapter
-  id.
-- Forza Horizon 5, Forza Horizon 6, and Forza Motorsport remain separate game
-  modules even when they share `forza-data-out`.
-- Assetto Corsa Rally uses `assetto-shared-memory`.
-- Community modules are data-only until DSCC has a sandbox/signing model.
-
-See [Game Module Contribution Guide](game-module-contribution-guide.md).
-
-## Controller Output Changes
-
-Controller output has a hard boundary:
-
-- Frame model: `crates/dscc-core`
-- Encoding/clamping: `crates/dscc-device/src/output.rs`
-- HID transport: `crates/dscc-device/src/hidapi_transport.rs`
-- Runtime write path: `ControllerOutputManager` and agent output loops
-
-Keep these promises:
-
-- No raw report bytes in the API.
-- Manual tests are time-limited.
-- Stale/no-telemetry game state keeps triggers and rumble neutral.
-- Supported-game detection may emit lightbar-only output.
-- DualSense Edge onboard writes use guarded USB or Bluetooth HID feature-report
-  paths and only report synced after acknowledgement plus typed readback.
-  Unavailable hardware paths stage locally.
-
-## Steam Input Changes
-
-Steam Input writes touch user files. Preserve these guards:
-
-- Write only guarded `controller_*.vdf` files.
-- Never write `controller_base*.vdf`.
-- Keep canonical Steam root checks.
-- Keep the 256 KB layout file limit.
-- Honor `dryRun`.
-- Create backups before real writes.
-- Preserve `groupId`, source, source mode, input id, and activator identity.
-
-Run the button mapping guard when changing this area:
-
-```powershell
-npm.cmd --prefix web run test:button-map
-```
-
-Run the source audit when changing API routes, diagnostics, support bundles,
-installer packaging, or bridge/provider copy:
-
-```powershell
-npm.cmd --prefix web run test:source-audit
-```
+Reuse existing adapters for profile packs. New parsers, shared-memory readers or
+runtime behavior belong in built-in Rust adapters: [contribution guide](game-module-contribution-guide.md),
+[PR template](game-module-template.md). Keep docs factual and active; use tables
+for comparisons and diagrams for flows.
 
 ## Validation
 
-For docs-only changes, inspect the diff. For code changes, run the smallest
-validation set that covers the risk:
+Run the matching suite while editing, then the full suite before a PR.
+For docs-only changes, inspect the diff, verify commands and run `check:docs`.
 
-```powershell
-npm.cmd run check:web
-npm.cmd run check:rust
-npm.cmd run check
-```
+| Suite | Command | Coverage |
+| --- | --- | --- |
+| Full | `npm.cmd run check` | Docs, release, web and Rust gates. |
+| Docs | `npm.cmd run check:docs` | Repository-local links; rejects ignored targets. |
+| Release | `npm.cmd run check:release` | Metadata tests, versions, assets and dependency notices. |
+| Rust | `npm.cmd run check:rust` | Format, all-feature workspace tests, Clippy. |
+| Web | `npm.cmd run check:web` | Types, source audit, mapping/DTO/haptics, build, size, visual smoke, curve drag. |
+| Performance | `npm.cmd run check:perf` | Rust perf guards and button-map p95 budget. |
 
-For UI changes, also open the local app and verify the affected screen.
-Layout-affecting changes should run the mock visual smoke guard:
+| Changed area | Focused check / evidence |
+| --- | --- |
+| Steam Input / mapping | `npm.cmd --prefix web run test:button-map` |
+| Snapshot DTOs | `npm.cmd --prefix web run test:snapshot-map` |
+| Haptics math | `npm.cmd --prefix web run test:haptics-graph` |
+| Telemetry / detection | Rust: malformed packets, stale output, profile resolution. |
+| Persistence / filesystem | Rust: isolated temp paths, ordering, replacement, path guards. |
+| HID / Edge / Bridge | Rust + sanitized physical evidence; mocks do not establish hardware support. |
+| API / diagnostics / packaging / provider copy | `npm.cmd --prefix web run test:source-audit` |
+| UI / layout | Inspect the affected screen with writes disabled; `npm.cmd --prefix web run test:visual-smoke`. |
+| Curves | `npm.cmd --prefix web run test:curve-drag`: 240 moves, frame p95 ≤50ms, mutations/move ≤32. |
 
-```powershell
-npm.cmd --prefix web run test:visual-smoke
-```
+Record actual commands/results and unavailable checks. Release acceptance is
+tracked in [Production readiness](production-readiness-plan.md).

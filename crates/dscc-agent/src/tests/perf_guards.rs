@@ -1,3 +1,4 @@
+use super::support::attach_event;
 use super::*;
 use crate::input_bridge::virtual_state_from_input;
 use dscc_device::{ControllerInputButtonState, ControllerInputStickState};
@@ -177,5 +178,50 @@ fn telemetry_materialization_perf_guard() {
         "telemetry output materialization",
         start.elapsed().as_millis(),
         900,
+    );
+}
+
+#[test]
+#[ignore = "manual runtime materialization timing"]
+fn runtime_materialization_timing() {
+    let state = AgentState::from_controller_events([attach_event(
+        "perf-controller",
+        ControllerFamily::DualSense,
+        ControllerTransportKind::Usb,
+        Some(50),
+    )]);
+    let mut inner = state.inner.blocking_write();
+    inner.telemetry = SignalSnapshot::from_updates([
+        signal_update("source.id", FORZA_DATA_OUT_ADAPTER_ID),
+        signal_update("vehicle.rpm_ratio", 0.86),
+        signal_update("input.brake", 0.35),
+        signal_update("input.throttle", 0.78),
+        signal_update("wheel.slip.max", 0.28),
+    ]);
+    inner
+        .adapter_runtime_mut(FORZA_DATA_OUT_ADAPTER_ID)
+        .mark_packet(324, 1);
+    let detection = detect_running_game_from_processes(["ForzaHorizon6.exe"]);
+    let mut cache = EffectRuntimeCache::default();
+    let mut times = Vec::new();
+    for _ in 0..7 {
+        let start = Instant::now();
+        for _ in 0..5_000 {
+            black_box(
+                RuntimeLiveEffectMaterializer::new(
+                    &inner,
+                    Some(&detection),
+                    EffectEnginePurpose::Hardware,
+                    &mut cache,
+                )
+                .output_frame_for_current_resolution(),
+            );
+        }
+        times.push(start.elapsed().as_micros());
+    }
+    times.sort_unstable();
+    println!(
+        "runtime materialization median: {}us / 5000 frames",
+        times[3]
     );
 }

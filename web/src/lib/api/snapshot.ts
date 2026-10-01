@@ -14,7 +14,7 @@ export type AppSnapshotSocketCallbacks = {
 
 export async function getAppSnapshot(): Promise<AppSnapshot> {
   if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).getMockAppSnapshot();
-  return mapSnapshotDto(await apiFetch<AgentSnapshotDto | AppSnapshot>('/snapshot'));
+  return mapSnapshotDto(await apiFetch<AgentSnapshotDto>('/snapshot'));
 }
 
 export function connectAppSnapshotSocket(callbacks: AppSnapshotSocketCallbacks): () => void {

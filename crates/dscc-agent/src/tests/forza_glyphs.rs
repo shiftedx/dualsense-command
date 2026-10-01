@@ -1,6 +1,40 @@
 use super::support::*;
 use super::*;
 
+const TEST_GLYPHS: &[u8] = b"PK\x03\x04original-dscc-test-fixture";
+fn glyph_archive_env() -> TestEnv {
+    let env = TestEnv::new(&["DSCC_FORZA_GLYPH_ARCHIVE"]);
+    let path = std::env::temp_dir().join(format!("dscc-glyph-fixture-{}.zip", std::process::id()));
+    fs::write(&path, TEST_GLYPHS).expect("local archive fixture");
+    std::env::set_var("DSCC_FORZA_GLYPH_ARCHIVE", path);
+    env
+}
+
+#[test]
+fn forza_glyph_installer_requires_an_explicit_local_archive() {
+    let _env = TestEnv::new(&["DSCC_FORZA_GLYPH_ARCHIVE"]);
+    std::env::remove_var("DSCC_FORZA_GLYPH_ARCHIVE");
+    let error = install_forza_playstation_glyphs(PathBuf::from("unused"))
+        .expect_err("no embedded glyph pack");
+    assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    assert!(error.to_string().contains("DSCC_FORZA_GLYPH_ARCHIVE"));
+}
+
+#[test]
+fn forza_glyph_installer_rejects_invalid_and_oversized_local_archives() {
+    let _env = glyph_archive_env();
+    let path = std::env::var_os("DSCC_FORZA_GLYPH_ARCHIVE").unwrap();
+    for contents in [
+        b"not a zip".to_vec(),
+        [b"PK\x03\x04".as_slice(), &vec![0; 16 * 1024 * 1024]].concat(),
+    ] {
+        fs::write(&path, contents).unwrap();
+        let error = install_forza_playstation_glyphs(PathBuf::from("unused"))
+            .expect_err("archive must be bounded and recognizable");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+}
+
 #[test]
 fn forza_trusted_install_path_ignores_untrusted_configured_path_without_steam_catalog() {
     let _env = TestEnv::new(&["DSCC_FORZA_HORIZON6_INSTALL_DIR"]);
@@ -54,6 +88,7 @@ fn forza_icon_target_guard_rejects_paths_outside_install_root() {
 
 #[test]
 fn forza_glyph_installer_backs_up_and_restores_controller_icons() {
+    let _env = glyph_archive_env();
     let root = std::env::temp_dir().join(format!("dscc-forza-glyph-test-{}", std::process::id()));
     if root.exists() {
         fs::remove_dir_all(&root).expect("old temp glyph test dir should be removable");
@@ -70,7 +105,7 @@ fn forza_glyph_installer_backs_up_and_restores_controller_icons() {
     for (index, target) in targets.iter().enumerate() {
         assert_eq!(
             fs::read(target).expect("installed icon should be readable"),
-            FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP
+            TEST_GLYPHS
         );
         assert!(
             forza_controller_icon_backup_path(target).exists(),
@@ -96,6 +131,7 @@ fn forza_glyph_installer_backs_up_and_restores_controller_icons() {
 
 #[test]
 fn forza_glyph_installer_refuses_to_install_without_originals() {
+    let _env = glyph_archive_env();
     let root = std::env::temp_dir().join(format!(
         "dscc-forza-glyph-missing-originals-test-{}",
         std::process::id()
@@ -125,6 +161,7 @@ fn forza_glyph_installer_refuses_to_install_without_originals() {
 
 #[test]
 fn forza_glyph_installer_recovers_bad_playstation_backups_after_verify() {
+    let _env = glyph_archive_env();
     let root = std::env::temp_dir().join(format!(
         "dscc-forza-glyph-recovery-test-{}",
         std::process::id()
@@ -138,11 +175,8 @@ fn forza_glyph_installer_recovers_bad_playstation_backups_after_verify() {
         fs::create_dir_all(target.parent().expect("target has parent"))
             .expect("target parent should be creatable");
         fs::write(target, format!("xbox-icons-{index}")).expect("seed icon should be writable");
-        fs::write(
-            forza_controller_icon_backup_path(target),
-            FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP,
-        )
-        .expect("stale PlayStation backup should be writable");
+        fs::write(forza_controller_icon_backup_path(target), TEST_GLYPHS)
+            .expect("stale PlayStation backup should be writable");
     }
 
     install_forza_playstation_glyphs(root.clone()).expect("glyph install should succeed");
@@ -160,6 +194,7 @@ fn forza_glyph_installer_recovers_bad_playstation_backups_after_verify() {
 
 #[test]
 fn forza_glyph_restore_succeeds_when_defaults_are_already_present() {
+    let _env = glyph_archive_env();
     let root = std::env::temp_dir().join(format!(
         "dscc-forza-glyph-defaults-test-{}",
         std::process::id()
@@ -193,6 +228,7 @@ fn forza_glyph_restore_succeeds_when_defaults_are_already_present() {
 
 #[test]
 fn forza_glyph_restore_refuses_unbacked_playstation_files() {
+    let _env = glyph_archive_env();
     let root = std::env::temp_dir().join(format!(
         "dscc-forza-glyph-unbacked-test-{}",
         std::process::id()
@@ -205,8 +241,7 @@ fn forza_glyph_restore_refuses_unbacked_playstation_files() {
     for target in &targets {
         fs::create_dir_all(target.parent().expect("target has parent"))
             .expect("target parent should be creatable");
-        fs::write(target, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP)
-            .expect("PlayStation icon should be writable");
+        fs::write(target, TEST_GLYPHS).expect("PlayStation icon should be writable");
     }
 
     let error = restore_forza_original_glyphs(root.clone())
@@ -215,7 +250,7 @@ fn forza_glyph_restore_refuses_unbacked_playstation_files() {
     for target in &targets {
         assert_eq!(
             fs::read(target).expect("PlayStation icon should remain readable"),
-            FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP
+            TEST_GLYPHS
         );
     }
 
@@ -224,6 +259,7 @@ fn forza_glyph_restore_refuses_unbacked_playstation_files() {
 
 #[test]
 fn forza_glyph_restore_validates_every_target_before_replacing_files() {
+    let _env = glyph_archive_env();
     let root = std::env::temp_dir().join(format!(
         "dscc-forza-glyph-partial-restore-test-{}",
         std::process::id()
@@ -236,8 +272,7 @@ fn forza_glyph_restore_validates_every_target_before_replacing_files() {
     for target in &targets {
         fs::create_dir_all(target.parent().expect("target has parent"))
             .expect("target parent should be creatable");
-        fs::write(target, FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP)
-            .expect("PlayStation icon should be writable");
+        fs::write(target, TEST_GLYPHS).expect("PlayStation icon should be writable");
     }
     fs::write(
         forza_controller_icon_backup_path(&targets[0]),
@@ -251,7 +286,7 @@ fn forza_glyph_restore_validates_every_target_before_replacing_files() {
     for target in &targets {
         assert_eq!(
             fs::read(target).expect("PlayStation icon should remain readable"),
-            FORZA_PLAYSTATION_CONTROLLER_ICONS_ZIP
+            TEST_GLYPHS
         );
     }
 

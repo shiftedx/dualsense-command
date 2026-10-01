@@ -191,12 +191,17 @@ impl AgentState {
         let steam_input = self.cached_steam_input_status_or_refresh().await;
         let hardware_output_enabled = self.hardware_output_enabled();
         let output_diagnostics = self.output_diagnostics_snapshot();
+        let input_bridge = self
+            .input_bridge
+            .run_blocking(|bridge| bridge.status_response())
+            .await;
         let inner = self.inner.read().await;
         let diagnostics = self.diagnostics_from_inner(
             &inner,
             &steam_input,
             &game_detection,
             hardware_output_enabled,
+            &input_bridge,
         );
         let status = self.status_from_inner(&inner, Some(&game_detection));
         let app_settings = self.app_settings_response(&inner.app_settings);
@@ -234,7 +239,7 @@ impl AgentState {
             adapters: support_adapter_summaries(&inner, Some(&game_detection)),
             telemetry: support_telemetry_summary(&inner, Some(&game_detection)),
             steam_input: support_steam_input_summary(&steam_input),
-            input_bridge: support_input_bridge_summary(self.input_bridge.status_response()),
+            input_bridge: support_input_bridge_summary(input_bridge),
             app_settings: support_app_settings_summary(app_settings),
             safety: SupportSafetySummary {
                 hardware_output_enabled,

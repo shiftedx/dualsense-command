@@ -337,8 +337,22 @@ pub(crate) async fn assetto_shared_memory_adapter_loop(state: AgentState) {
     let mut interval = tokio::time::interval(SHARED_MEMORY_TELEMETRY_PROCESS_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut sequence = 0_u64;
+    let mut next_probe = Instant::now();
     loop {
         interval.tick().await;
+        if Instant::now() < next_probe {
+            continue;
+        }
+        let enabled = state
+            .inner
+            .read()
+            .await
+            .adapters
+            .iter()
+            .any(|adapter| adapter.id == ASSETTO_SHARED_MEMORY_ADAPTER_ID && adapter.enabled);
+        if !enabled {
+            continue;
+        }
         sequence = sequence.saturating_add(1);
         let result =
             tokio::task::spawn_blocking(move || read_assetto_shared_memory_snapshot(sequence))
@@ -354,14 +368,18 @@ pub(crate) async fn assetto_shared_memory_adapter_loop(state: AgentState) {
                     )
                     .await;
             }
-            Ok(Ok(None)) => {}
+            Ok(Ok(None)) => {
+                next_probe = Instant::now() + Duration::from_millis(500);
+            }
             Ok(Err(error)) => {
+                next_probe = Instant::now() + Duration::from_millis(500);
                 let mut inner = state.inner.write().await;
                 inner
                     .adapter_runtime_mut(ASSETTO_SHARED_MEMORY_ADAPTER_ID)
                     .last_error = Some(error.to_string());
             }
             Err(error) => {
+                next_probe = Instant::now() + Duration::from_millis(500);
                 let mut inner = state.inner.write().await;
                 inner
                     .adapter_runtime_mut(ASSETTO_SHARED_MEMORY_ADAPTER_ID)

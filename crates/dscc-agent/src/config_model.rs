@@ -647,6 +647,7 @@ impl Default for ForzaBrakeTuningConfig {
 }
 
 impl ForzaBrakeTuningConfig {
+    #[cfg(test)]
     pub(crate) fn normalized(self) -> Self {
         forza_tuning::brake::normalize(self)
     }
@@ -739,6 +740,7 @@ impl Default for ForzaThrottleTuningConfig {
 }
 
 impl ForzaThrottleTuningConfig {
+    #[cfg(test)]
     pub(crate) fn normalized(self) -> Self {
         forza_tuning::throttle::normalize(self)
     }

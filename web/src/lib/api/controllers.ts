@@ -21,19 +21,14 @@ interface EffectTestResponseDto {
 
 interface ControllerInputResponseDto {
   controllerId?: string;
-  controller_id?: string;
   available: boolean;
   source: string;
   message: string;
   sampledAtMs?: number | null;
-  sampled_at_ms?: number | null;
   ageMs?: number | null;
-  age_ms?: number | null;
   axes?: {
     leftStick?: { x?: number; y?: number; magnitude?: number };
-    left_stick?: { x?: number; y?: number; magnitude?: number };
     rightStick?: { x?: number; y?: number; magnitude?: number };
-    right_stick?: { x?: number; y?: number; magnitude?: number };
   };
   triggers?: {
     l2?: number;
@@ -96,16 +91,16 @@ export async function getControllerInput(controllerId?: string | null): Promise<
     ? `/controllers/${encodeURIComponent(controllerId)}/input`
     : '/controllers/current/input';
   const response = await apiFetch<ControllerInputResponseDto>(endpoint);
-  const leftStick = response.axes?.leftStick ?? response.axes?.left_stick;
-  const rightStick = response.axes?.rightStick ?? response.axes?.right_stick;
+  const leftStick = response.axes?.leftStick;
+  const rightStick = response.axes?.rightStick;
 
   return {
-    controllerId: response.controllerId ?? response.controller_id ?? '',
+    controllerId: response.controllerId ?? '',
     available: response.available,
     source: response.source,
     message: response.message,
-    sampledAtMs: response.sampledAtMs ?? response.sampled_at_ms ?? null,
-    ageMs: response.ageMs ?? response.age_ms ?? null,
+    sampledAtMs: response.sampledAtMs ?? null,
+    ageMs: response.ageMs ?? null,
     axes: {
       leftStick: normalizeInputStick(leftStick),
       rightStick: normalizeInputStick(rightStick)
