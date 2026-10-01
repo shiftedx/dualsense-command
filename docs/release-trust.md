@@ -1,8 +1,8 @@
 # Release trust
 
-Stable Windows releases require a certificate and verified executable/MSI
-signatures. Unsigned builds require an explicit prerelease tag; local packaging
-uses `-UnsignedPrerelease`. See [open validation gates](production-readiness-plan.md).
+**0.5.1 is the current unsigned Windows installer release.** Filenames identify
+unsigned MSIs; Windows may show trust prompts. Future stable releases require
+a certificate and verified signatures. Local unsigned packaging uses `-Unsigned`. See [open validation gates](production-readiness-plan.md).
 
 | Artifact | Choose when |
 | --- | --- |

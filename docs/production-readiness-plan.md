@@ -16,10 +16,10 @@ flowchart LR
 | Source | Atomic persistence; bounded broker/discovery; guarded shutdown; loopback security; concise task/agent guides | Run [checks](contributing.md#validation) on the merged version |
 | Redistribution | Original SVG replacements; verified asset hashes; exact notices for 219 Rust/browser versions | Regenerate notices after lock changes; run the [distribution gate](release-trust.md) |
 | Hardware | User confirmed Edge Bluetooth L2/R2, rumble, blue lightbar and neutralization on the 0.5.0 audit working tree; graceful exit took 10ms | Complete the exact-version [matrix](hardware-matrix.md): USB, reconnect, telemetry, session end and onboard settings |
-| Standard MSI | Existing-account install, reinstall launch, shortcuts, uninstall, config retention and process cleanup pass **with startup disabled** | Verify startup, clean-account install and distinct-version upgrade using [Installer Smoke](windows-installer-smoke.md) |
+| Standard MSI | Published 0.5.0 → 0.5.1 upgrade, reinstall launch, shortcuts, uninstall, config retention and process cleanup pass on the existing account **with startup disabled** | Verify startup and clean-account install using [Installer Smoke](windows-installer-smoke.md) |
 | Startup | MSI reports a registry write that independent native reads cannot see; speculative helpers were removed | Resolve the discrepancy in a clean Windows account; leave startup unchecked meanwhile |
 | Bridge | Dependency/runtime notices required; no local .NET SDK validation | Build both flavors in release CI; validate actual broker payloads and lifecycle |
-| Signing | Signing policy implemented; no certificate configured | Configure [credentials](release-trust.md) and verify an actual signed artifact |
+| Signing | 0.5.1 explicitly unsigned; no certificate configured | Configure [credentials](release-trust.md) and verify an actual signed artifact |
 | Linux | Source/packaging implemented; native hardware evidence pending | Keep [beta](linux-beta.md) claims until native HID checks pass |
 
 ## Audit checks

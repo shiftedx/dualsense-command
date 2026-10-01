@@ -280,6 +280,7 @@ function Invoke-MsiAction {
 
 function Assert-InstalledPayload {
     param(
+        [switch]$Baseline,
         [ValidateSet("0", "1")]
         [string]$ExpectedStartWithWindows,
         [ValidateSet("0", "1")]
@@ -297,10 +298,13 @@ function Assert-InstalledPayload {
         (Join-Path $installFolder "Backup DSCC State.cmd"),
         (Join-Path $installFolder "README_TESTING.txt"),
         (Join-Path $installFolder "LICENSE.txt"),
-        (Join-Path $installFolder "THIRD_PARTY_NOTICES.txt"),
         (Join-Path $installFolder "web\dist\index.html")
     )
 
+    # Older release baselines predate this payload; require notices after upgrade.
+    if (-not $Baseline) {
+        $expectedFiles += (Join-Path $installFolder "THIRD_PARTY_NOTICES.txt")
+    }
     $missing = @($expectedFiles | Where-Object { -not (Test-Path -LiteralPath $_) })
     if ($missing.Count -gt 0) {
         throw "Installed payload is missing expected files:`n  $($missing -join "`n  ")"
@@ -537,7 +541,7 @@ $configProbe = $null
 try {
 Invoke-MsiAction -Action Install -Path $baselineMsi.Path -LogPath (Join-Path $LogDirectory "01-install.log") -Properties $installProperties
 $installedMsi = $baselineMsi
-Assert-InstalledPayload -ExpectedStartWithWindows $StartWithWindows -ExpectedDesktopShortcut $CreateDesktopShortcut
+Assert-InstalledPayload -Baseline:($baselineMsi.Sha256 -ne $currentMsi.Sha256) -ExpectedStartWithWindows $StartWithWindows -ExpectedDesktopShortcut $CreateDesktopShortcut
 if (-not $SkipLaunchCheck -and $LaunchAfterInstall -eq "1") {
     Wait-ForDsccProcesses -Names @("dscc-tray", "dscc-agent") -TimeoutSeconds $TimeoutSeconds | Out-Null
     Assert-DsccProcessesRunFromInstallFolder

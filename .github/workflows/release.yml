@@ -199,8 +199,9 @@ jobs:
           DSCC_SIGNING_PASSWORD: ${{ secrets.DSCC_SIGNING_PASSWORD }}
         run: |
           $signing = @{}
-          if ('${{ steps.version.outputs.prerelease }}' -eq 'true') {
-            $signing.UnsignedPrerelease = $true
+          if ('${{ steps.version.outputs.prerelease }}' -eq 'true' -or $env:GITHUB_REF_NAME -eq 'v0.5.1') {
+            # Explicit unsigned 0.5.1 release; future stable tags require a certificate.
+            $signing.Unsigned = $true
           } else {
             if ([string]::IsNullOrWhiteSpace($env:DSCC_SIGNING_PFX_BASE64) -or [string]::IsNullOrWhiteSpace($env:DSCC_SIGNING_PASSWORD)) {
               throw 'Stable Windows releases require configured DSCC_SIGNING_PFX_BASE64 and DSCC_SIGNING_PASSWORD secrets.'
@@ -237,7 +238,7 @@ jobs:
       - name: Stage Windows artifacts and checksums
         shell: pwsh
         run: |
-          $signingLabel = if ('${{ steps.version.outputs.prerelease }}' -eq 'true') { 'unsigned' } else { 'signed' }
+          $signingLabel = if ('${{ steps.version.outputs.prerelease }}' -eq 'true' -or $env:GITHUB_REF_NAME -eq 'v0.5.1') { 'unsigned' } else { 'signed' }
           $suffix = '${{ steps.version.outputs.artifact_suffix }}'
           $artifactRoot = Join-Path $PWD 'target\release-artifacts\windows'
           New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null

@@ -9,7 +9,7 @@ param(
     [string]$BrokerPublishPath,
     [string]$CertificatePath,
     [string]$CertificatePassword,
-    [switch]$UnsignedPrerelease,
+    [switch]$Unsigned,
     [string]$TimestampUrl = 'http://timestamp.digicert.com',
     [ValidateSet("0", "1")]
     [string]$DefaultStartWithWindows = "0",
@@ -21,11 +21,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-if ([string]::IsNullOrWhiteSpace($CertificatePath) -and -not $UnsignedPrerelease) {
-    throw "Production MSI requires -CertificatePath. Use -UnsignedPrerelease only for explicitly labeled prerelease or local validation artifacts."
+if ([string]::IsNullOrWhiteSpace($CertificatePath) -and -not $Unsigned) {
+    throw "MSI packaging requires -CertificatePath or explicit -Unsigned for clearly labeled unsigned artifacts."
 }
-if ($UnsignedPrerelease -and -not [string]::IsNullOrWhiteSpace($CertificatePath)) {
-    throw "Choose a signed artifact or -UnsignedPrerelease, not both."
+if ($Unsigned -and -not [string]::IsNullOrWhiteSpace($CertificatePath)) {
+    throw "Choose a signed artifact or -Unsigned, not both."
 }
 
 function Resolve-RepoRoot {

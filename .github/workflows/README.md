@@ -10,7 +10,7 @@ MinGW. Both use Node.js 24 for web checks. Playwright Chromium is installed in C
 
 Release packaging reuses the checked `web/dist` artifact across Windows and
 Linux. Every installer/archive includes license notices; archives include
-checksums. Stable Windows artifacts require signing secrets; beta tags publish unsigned prereleases and do not become Latest.
+checksums. 0.5.1 is explicitly unsigned and becomes Latest. Future stable Windows artifacts require signing secrets; beta tags remain unsigned prereleases.
 
 | Artifact | Audience |
 | --- | --- |

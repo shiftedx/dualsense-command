@@ -2,6 +2,9 @@
 
 Release date: 2026-09-30
 
+**Install 0.5.1: the current Windows release. Choose the Standard unsigned MSI.**
+Windows may show trust prompts.
+
 Reliability, performance and documentation cleanup. Remaining validation limits
 are listed in [readiness](docs/production-readiness-plan.md).
 
@@ -20,7 +23,7 @@ are listed in [readiness](docs/production-readiness-plan.md).
 
 Windows: choose Standard. Bridge flavors are experimental; Linux remains beta.
 Unsigned artifacts may trigger Windows trust prompts. Complete hardware,
-clean-account upgrade, startup, and signed-artifact checks before claiming full
+clean-account install, startup, and signed-artifact checks before claiming full
 production validation.
 
 # DualSense Command Center 0.5.0

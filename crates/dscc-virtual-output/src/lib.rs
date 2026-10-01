@@ -796,19 +796,54 @@ mod tests {
     use super::*;
 
     #[cfg(windows)]
+    struct BrokerFixture(PathBuf);
+
+    #[cfg(windows)]
+    impl BrokerFixture {
+        fn new(script: &str) -> Self {
+            static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "dscc-broker-{}-{}.js",
+                std::process::id(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            std::fs::write(&path, script).unwrap();
+            Self(path)
+        }
+
+        fn command(&self) -> BrokerCommand {
+            // PowerShell startup can consume the real broker's entire I/O deadline
+            // on busy runners. Windows Script Host exercises the same child pipes
+            // without loading a managed shell or weakening production timeouts.
+            BrokerCommand {
+                program: PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+                    .join("System32/cscript.exe"),
+                args: vec![
+                    "//nologo".into(),
+                    "//E:JScript".into(),
+                    self.0.to_str().unwrap().to_string(),
+                ],
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    impl Drop for BrokerFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    #[cfg(windows)]
     #[test]
     fn stalled_broker_handshake_has_a_deadline() {
-        let command = BrokerCommand {
-            program: PathBuf::from("powershell.exe"),
-            args: vec![
-                "-NoProfile".into(),
-                "-NonInteractive".into(),
-                "-Command".into(),
-                "[void][Console]::ReadLine(); Start-Sleep -Seconds 4".into(),
-            ],
-        };
+        let fixture = BrokerFixture::new("WScript.StdIn.ReadLine(); WScript.Sleep(4000);");
+        let command = fixture.command();
         let started = std::time::Instant::now();
-        assert!(spawn_broker_process(&command).is_err());
+        assert!(matches!(
+            spawn_broker_process(&command),
+            Err(VirtualOutputError::BackendFault(message)) if message.contains("timed out")
+        ));
         assert!(
             started.elapsed() < std::time::Duration::from_secs(3),
             "stalled broker must be killed without waiting for its response"
@@ -818,40 +853,48 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn stalled_broker_shutdown_has_a_deadline() {
-        let command = BrokerCommand {
-            program: PathBuf::from("powershell.exe"),
-            args: vec!["-NoProfile".into(), "-NonInteractive".into(), "-Command".into(),
-                "[void][Console]::ReadLine(); [Console]::WriteLine('{\"id\":1,\"ok\":true}'); [void][Console]::ReadLine(); Start-Sleep -Seconds 4".into()],
-        };
+        let fixture = BrokerFixture::new(
+            r#"WScript.StdIn.ReadLine(); WScript.StdOut.WriteLine('{"id":1,"ok":true}');
+               WScript.StdIn.ReadLine(); WScript.Sleep(4000);"#,
+        );
+        let command = fixture.command();
         let process = spawn_broker_process(&command).unwrap();
         let started = std::time::Instant::now();
         drop(process);
+        assert!(started.elapsed() >= BROKER_IO_TIMEOUT);
         assert!(started.elapsed() < Duration::from_secs(3));
     }
 
     #[cfg(windows)]
     #[test]
     fn blocked_broker_write_has_a_deadline() {
-        let command = BrokerCommand {
-            program: PathBuf::from("powershell.exe"),
-            args: vec!["-NoProfile".into(), "-NonInteractive".into(), "-Command".into(),
-                "[void][Console]::ReadLine(); [Console]::WriteLine('{\"id\":1,\"ok\":true}'); Start-Sleep -Seconds 4".into()],
-        };
+        let fixture = BrokerFixture::new(
+            r#"WScript.StdIn.ReadLine(); WScript.StdOut.WriteLine('{"id":1,"ok":true}');
+               WScript.Sleep(4000);"#,
+        );
+        let command = fixture.command();
         let mut process = spawn_broker_process(&command).unwrap();
         let started = std::time::Instant::now();
         // Larger than the pipe buffer: the worker cannot finish until the child reads or exits.
-        assert!(process.exchange(&"x".repeat(1024 * 1024), false).is_err());
+        assert!(matches!(
+            process.exchange(&"x".repeat(1024 * 1024), false),
+            Err(VirtualOutputError::BackendFault(message)) if message.contains("timed out")
+        ));
         assert!(started.elapsed() < Duration::from_secs(3));
     }
 
     #[cfg(windows)]
     #[test]
     fn restarted_broker_rejects_targets_from_previous_process() {
-        let command = BrokerCommand {
-            program: PathBuf::from("powershell.exe"),
-            args: vec!["-NoProfile".into(), "-NonInteractive".into(), "-Command".into(),
-                "while ($line = [Console]::ReadLine()) { $r = $line | ConvertFrom-Json; [Console]::WriteLine((@{id=$r.id;ok=$true;available=$true;sessionId='dscc-fixture'} | ConvertTo-Json -Compress)); if ($r.command -eq 'shutdown') { break } }".into()],
-        };
+        let fixture = BrokerFixture::new(
+            r#"while (!WScript.StdIn.AtEndOfStream) {
+                var line = WScript.StdIn.ReadLine();
+                var id = /"id":(\d+)/.exec(line)[1];
+                WScript.StdOut.WriteLine('{"id":' + id + ',"ok":true,"available":true,"sessionId":"dscc-fixture"}');
+                if (/"command":"shutdown"/.test(line)) break;
+            }"#,
+        );
+        let command = fixture.command();
         let backend = HidMaestroBrokerBackend {
             command: Some(command),
             inner: Arc::new(Mutex::new(None)),
