@@ -10,8 +10,8 @@ or command line. Linux remains [beta](docs/linux-beta.md).
 
 ## Install and play
 
-[**Download the Windows installer**](https://github.com/shiftedx/dualsense-command/releases/latest)
-— choose **DSCC Standard**, Windows x86_64.
+[**Install 0.5.1 — Windows Standard MSI**](https://github.com/shiftedx/dualsense-command/releases/download/v0.5.1/DualSenseCommandCenter-v0.5.1-windows-x86_64-standard-unsigned.msi)
+Unsigned: Windows may show trust prompts. [Release notes and checksums](https://github.com/shiftedx/dualsense-command/releases/latest).
 
 1. Verify the MSI's SHA256 checksum and signing status using [Release Trust](docs/release-trust.md).
 2. Quit any running DSCC from its tray menu, then run the MSI to install or update. Profiles/settings stay in your user folder. Leave **Start with Windows** unchecked until its [validation caveat](docs/release-trust.md) is resolved.
