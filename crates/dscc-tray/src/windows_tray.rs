@@ -6,7 +6,7 @@ use std::{
     net::{SocketAddr, TcpStream},
     os::windows::{ffi::OsStrExt, process::CommandExt},
     path::{Path, PathBuf},
-    process::{Child, Command},
+    process::{Child, Command, Stdio},
     ptr::{null, null_mut},
     sync::{
         atomic::{AtomicU32, Ordering},
@@ -241,16 +241,15 @@ impl TrayState {
 
     fn stop_agent(&mut self) {
         if let Some(mut child) = self.agent.take() {
-            let _ = child.kill();
-            let _ = child.wait();
+            stop_owned_child(&mut child, Duration::from_secs(4));
         }
         self.request_health_refresh();
     }
 
     fn stop_agent_for_session_end(&mut self) {
         if let Some(mut child) = self.agent.take() {
-            let _ = child.kill();
-            let _ = child.try_wait();
+            // Keep the window message handler responsive during OS logoff.
+            thread::spawn(move || stop_owned_child(&mut child, Duration::from_secs(4)));
         }
     }
 
@@ -270,6 +269,12 @@ impl TrayState {
 }
 
 pub fn run() -> Result<()> {
+    if env::args_os()
+        .skip(1)
+        .any(|arg| arg == OsStr::new("--stop"))
+    {
+        return stop_existing_tray();
+    }
     let launch_mode = LaunchMode::from_args();
     if activate_existing_instance(launch_mode) {
         return Ok(());
@@ -292,6 +297,74 @@ pub fn run() -> Result<()> {
     }
 
     message_loop();
+    Ok(())
+}
+
+fn stop_existing_tray() -> Result<()> {
+    let class_name = wide_null("DSCCTrayWindow");
+    unsafe {
+        let hwnd = FindWindowW(class_name.as_ptr(), null());
+        if hwnd.is_null() {
+            return ensure_no_agent_process();
+        }
+        if PostMessageW(hwnd, WM_CLOSE, 0, 0) == 0 {
+            return Err(anyhow!("could not request tray shutdown"));
+        }
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(5) {
+            if FindWindowW(class_name.as_ptr(), null()).is_null() {
+                return ensure_no_agent_process();
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
+    Err(anyhow!("tray shutdown exceeded its timeout"))
+}
+
+fn ensure_no_agent_process() -> Result<()> {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, GetLastError, ERROR_NO_MORE_FILES, INVALID_HANDLE_VALUE},
+        System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+            TH32CS_SNAPPROCESS,
+        },
+    };
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return Err(anyhow!("could not verify that the agent stopped"));
+        }
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        let mut next = Process32FirstW(snapshot, &mut entry);
+        if next == 0 {
+            CloseHandle(snapshot);
+            return Err(anyhow!("could not enumerate agent processes"));
+        }
+        while next != 0 {
+            let len = entry
+                .szExeFile
+                .iter()
+                .position(|value| *value == 0)
+                .unwrap_or(entry.szExeFile.len());
+            if String::from_utf16_lossy(&entry.szExeFile[..len])
+                .eq_ignore_ascii_case("dscc-agent.exe")
+            {
+                CloseHandle(snapshot);
+                return Err(anyhow!(
+                    "an agent is still running; stop its owning tray or console before continuing"
+                ));
+            }
+            next = Process32NextW(snapshot, &mut entry);
+        }
+        let scan_error = GetLastError();
+        CloseHandle(snapshot);
+        if scan_error != ERROR_NO_MORE_FILES {
+            return Err(anyhow!("could not finish verifying agent processes"));
+        }
+    }
     Ok(())
 }
 
@@ -918,11 +991,30 @@ fn agent_spawn_addr() -> String {
 
 fn configure_agent_command(command: &mut Command, install_dir: &Path, web_dist: PathBuf) {
     command
+        .stdin(Stdio::piped())
+        .env("DSCC_TRAY_STDIN_SHUTDOWN", "1")
         .current_dir(install_dir)
         .env("DSCC_WEB_DIST", web_dist)
         .env("DSCC_AGENT_ADDR", agent_spawn_addr())
         .env(LAN_API_ENABLE_ENV, "1")
         .creation_flags(CREATE_NO_WINDOW);
+}
+
+fn stop_owned_child(child: &mut Child, timeout: Duration) {
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(b"shutdown\n");
+        // Closing this private pipe is also a shutdown request.
+    }
+    let started = Instant::now();
+    while started.elapsed() < timeout {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Err(_) => break,
+            Ok(None) => thread::sleep(Duration::from_millis(25)),
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 fn persisted_listen_on_all_interfaces() -> bool {

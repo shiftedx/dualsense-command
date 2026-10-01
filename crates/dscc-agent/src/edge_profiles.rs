@@ -583,10 +583,14 @@ pub(crate) async fn write_edge_profile_to_hardware(
         );
     }
 
-    match tokio::task::spawn_blocking(move || manager.write_edge_onboard_profile(&target, &profile))
-        .await
+    let shutdown = state.shutdown.clone();
+    match tokio::task::spawn_blocking(move || {
+        shutdown.write(|| manager.write_edge_onboard_profile(&target, &profile))
+    })
+    .await
     {
-        Ok(Ok(())) => EdgeHardwareProfileWriteResult::Written,
+        Ok(Ok(Ok(()))) => EdgeHardwareProfileWriteResult::Written,
+        Ok(Ok(Err(error))) => EdgeHardwareProfileWriteResult::Failed(error.to_string()),
         Ok(Err(error)) => EdgeHardwareProfileWriteResult::Failed(error.to_string()),
         Err(error) => EdgeHardwareProfileWriteResult::Failed(format!(
             "DualSense Edge profile write task failed: {error}"

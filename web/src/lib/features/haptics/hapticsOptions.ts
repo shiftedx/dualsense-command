@@ -31,20 +31,6 @@ export const FORZA_THROTTLE_ENDSTOP_FORCE_BOOST = 3.0;
 export const FORZA_THROTTLE_OVERTRAVEL_RAMP_WIDTH = 0.20;
 export const FORZA_THROTTLE_OVERTRAVEL_RAMP_CURVE = 2.4;
 
-export const shiftThumpPresets = [
-    { label: 'Soft', intensity: 35 },
-    { label: 'Medium', intensity: 65 },
-    { label: 'Strong', intensity: 180 },
-    { label: 'Max', intensity: FORZA_SHIFT_THUMP_DEFAULT_INTENSITY }
-  ];
-
-export const shiftThumpPresetHelp: Record<string, string> = {
-    Soft: 'A lighter mechanical cue for users who want shift feedback without a big kick through the controller.',
-    Medium: 'A moderate shift kick that is easy to feel but less abrupt than the stock strong profile.',
-    Strong: 'A firmer R2 kick with reduced body feedback for a more physical gear change.',
-    Max: 'The Base shift thump: the strongest cue, using the full 255 effect ceiling so gear changes punch through road texture and engine cues.'
-  };
-
 export const routeTooltips: Record<ForzaEffectRoute, string> = {
     body_both: 'Sends the effect to both grip motors. Good for road, impacts, and whole-car events.',
     body_left: 'Sends most of the effect to the left grip. Useful when you want to separate a cue from throttle-side feedback.',

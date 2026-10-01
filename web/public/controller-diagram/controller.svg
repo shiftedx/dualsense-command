@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 360">
+  <title>DSCC controller orientation diagram</title>
+  <g stroke="#8694a6" stroke-width="4" stroke-linejoin="round">
+    <path fill="#d4dce5" d="M115 76 Q150 50 205 62 L395 62 Q450 50 485 76 L555 266 Q565 315 520 318 Q485 318 435 243 L165 243 Q115 318 80 318 Q35 315 45 266Z"/>
+    <path fill="#253140" d="M196 75 H404 L435 238 H165Z"/>
+    <rect x="223" y="79" width="154" height="80" rx="16" fill="#536276"/>
+    <circle cx="229" cy="219" r="39" fill="#171f2a"/><circle cx="371" cy="219" r="39" fill="#171f2a"/>
+    <path fill="#171f2a" d="M111 117 H139 V137 H159 V165 H139 V185 H111 V165 H91 V137 H111Z"/>
+    <g fill="#171f2a"><circle cx="474" cy="119" r="17"/><circle cx="502" cy="151" r="17"/><circle cx="474" cy="183" r="17"/><circle cx="446" cy="151" r="17"/></g>
+    <g fill="none" stroke="#e4ebf3" stroke-width="3"><path d="M474 110 L482 124 H466Z"/><circle cx="502" cy="151" r="8"/><path d="M469 178 L479 188 M479 178 L469 188"/><rect x="439" y="144" width="14" height="14"/></g>
+  </g>
+</svg>

@@ -1,4 +1,4 @@
-import type { GameDetection, ProfileSummary, SupportedGame } from '../../types';
+import type { GameDetection, SupportedGame } from '../../types';
 
 export function gameArtwork(
   game: SupportedGame | null | undefined,
@@ -15,16 +15,6 @@ export function gameProviderMeta(game: SupportedGame | null | undefined): string
   if (!game?.appId) return '';
   if (game.source === 'local_app' || game.inputProvider === 'dscc_input_bridge') return 'Local app';
   return `Steam ${game.appId}`;
-}
-
-export function gameLauncherLabel(game: SupportedGame): string {
-  return [
-    game.name,
-    gameProviderMeta(game),
-    game.running ? 'running' : game.installed ? 'installed' : 'not installed'
-  ]
-    .filter(Boolean)
-    .join(' / ');
 }
 
 export function formatPlaytime(minutes: number | null | undefined): string {
@@ -76,19 +66,6 @@ export function gameDetectionStatusText(detection: GameDetection | undefined): s
     default:
       return source.replaceAll('_', ' ');
   }
-}
-
-export function gameMediaDetails(game: SupportedGame): string[] {
-  return [
-    gameProviderMeta(game),
-    formatPlaytime(game.stats?.playtimeMinutes),
-    achievementText(game),
-    formatLastPlayed(game.stats?.lastPlayedUnix)
-  ].filter(Boolean);
-}
-
-export function profileScopeCount(game: SupportedGame, profiles: ProfileSummary[]): number {
-  return profiles.filter((profile) => profile.scope === 'Game' && profile.gameId === game.gameId).length;
 }
 
 const SCOPE_ACCENT_BUILT_IN = '#3BA0FF';

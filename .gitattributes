@@ -1,5 +1,8 @@
 * text=auto eol=lf
 
+# Preserve upstream license text bytes, including intentional whitespace.
+DEPENDENCY_LICENSES.txt -text -whitespace
+
 *.ico binary
 *.png binary
 *.zip binary

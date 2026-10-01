@@ -141,6 +141,7 @@ pub enum ControllerPermissionState {
 pub enum ControllerDiagnosticState {
     Ok,
     Disconnected,
+    Detected,
     PermissionDenied,
     CannotOpen,
     Unsupported,

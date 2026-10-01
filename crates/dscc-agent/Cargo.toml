@@ -1,6 +1,6 @@
 [package]
 name = "dscc-agent"
-version = "0.5.0"
+version = "0.5.1"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -30,6 +30,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 windows-sys = { version = "0.61", features = [
     "Win32_Devices_DeviceAndDriverInstallation",
     "Win32_Foundation",
+    "Win32_Storage_FileSystem",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Memory",
     "Win32_System_Threading",

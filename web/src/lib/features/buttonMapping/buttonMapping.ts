@@ -248,7 +248,7 @@ export const buildDefaultSteamBindingBySlotKey = (
 
 export const steamSlotIconUrl = (key: string): string | null => {
   const icon = steamSlotGlyphs[key]?.icon;
-  return icon ? `/dualsense/icons/iconid_controller_key_${icon}.png` : null;
+  return icon ? `/controller-diagram/${icon}.svg` : null;
 };
 
 export const steamBindingKey = (binding: SteamInputBinding) =>

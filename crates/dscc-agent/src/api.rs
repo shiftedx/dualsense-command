@@ -223,7 +223,7 @@ pub(crate) async fn ws_handler(
     headers: HeaderMap,
     State(state): State<AgentState>,
 ) -> impl IntoResponse {
-    if !request_origin_matches_host(&headers) {
+    if !request_origin_matches_host(&headers, state.bind_addr) {
         return StatusCode::FORBIDDEN.into_response();
     }
 

@@ -118,12 +118,16 @@ pub(crate) fn user_game_to_supported_summary(
 ) -> SupportedGameSummary {
     let install_path = PathBuf::from(&game.install_path);
     let installed = !game.install_path.is_empty() && install_path.is_dir();
-    let artwork = match steam_root {
-        Some(root) => user_game_artwork_for_app(root, &game.app_id),
-        None => {
-            let mut artwork = GameArtwork::default();
-            apply_steam_cdn_artwork_fallback(&mut artwork, &game.app_id);
-            artwork
+    let artwork = if game.game_id.starts_with("local-") || game.app_id.is_empty() {
+        GameArtwork::default()
+    } else {
+        match steam_root {
+            Some(root) => user_game_artwork_for_app(root, &game.app_id),
+            None => {
+                let mut artwork = GameArtwork::default();
+                apply_steam_cdn_artwork_fallback(&mut artwork, &game.app_id);
+                artwork
+            }
         }
     };
     SupportedGameSummary {

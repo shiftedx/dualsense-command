@@ -28,14 +28,6 @@
     grid-template-columns: repeat(2, minmax(150px, 1fr));
   }
 
-  .dm-mapping-stage {
-    min-height: clamp(380px, 70vw, 560px);
-  }
-
-  .dm-mapping-figure {
-    width: clamp(280px, 60%, 540px);
-  }
-
   .dm-mapping-tray {
     grid-template-columns: 1fr;
   }
@@ -82,19 +74,5 @@
 
   .dm-steam-bottom-grid {
     grid-template-columns: 1fr;
-  }
-
-  .dm-mapping-chip-text {
-    display: none;
-  }
-
-  .dm-mapping-chip-icon {
-    width: 32px;
-    height: 32px;
-  }
-
-  .dm-mapping-chip-icon img {
-    width: 18px;
-    height: 18px;
   }
 }

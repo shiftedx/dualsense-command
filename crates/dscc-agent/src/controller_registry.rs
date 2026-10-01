@@ -202,7 +202,10 @@ impl ControllerRegistry {
         self.controllers
             .get(&controller.info.id.0)
             .is_some_and(|record| {
-                record.state.connection == ConnectionState::Connected
+                matches!(
+                    record.state.connection,
+                    ConnectionState::Connected | ConnectionState::Detected
+                ) && record.state.connection == controller.state.connection
                     && record.matches_identity(&controller.info)
             })
     }
@@ -221,7 +224,10 @@ impl ControllerRegistry {
         }
         self.controllers.retain(|id, record| {
             !(is_windows_pnp_controller_id(id)
-                && record.state.connection == ConnectionState::Connected)
+                && matches!(
+                    record.state.connection,
+                    ConnectionState::Connected | ConnectionState::Detected
+                ))
         });
     }
 
@@ -437,6 +443,7 @@ impl ControllerRecord {
         let status = match self.diagnostic_state {
             ControllerDiagnosticState::Ok => "ok",
             ControllerDiagnosticState::Disconnected => "warning",
+            ControllerDiagnosticState::Detected => "warning",
             ControllerDiagnosticState::PermissionDenied => "blocked",
             ControllerDiagnosticState::CannotOpen => "error",
             ControllerDiagnosticState::Unsupported => "warning",
@@ -453,6 +460,12 @@ impl ControllerRecord {
                 }
                 ControllerDiagnosticState::Disconnected => {
                     format!("{} is known but currently disconnected", self.name)
+                }
+                ControllerDiagnosticState::Detected => {
+                    format!(
+                        "{} is paired but offline; configuration is available",
+                        self.name
+                    )
                 }
                 ControllerDiagnosticState::PermissionDenied => self
                     .diagnostics
@@ -708,6 +721,7 @@ fn diagnostic_state_for(
     match connection {
         ConnectionState::Connected => ControllerDiagnosticState::Ok,
         ConnectionState::Disconnected => ControllerDiagnosticState::Disconnected,
+        ConnectionState::Detected => ControllerDiagnosticState::Detected,
         ConnectionState::Unknown => ControllerDiagnosticState::Unknown,
     }
 }

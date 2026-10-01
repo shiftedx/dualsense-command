@@ -318,7 +318,7 @@ fn controller_event(
         product_id,
         family,
         transport: ControllerTransportKind::Bluetooth,
-        connection: ConnectionState::Connected,
+        connection: ConnectionState::Detected,
         capabilities: ControllerCapabilities {
             adaptive_triggers: true,
             lightbar: true,
@@ -330,7 +330,7 @@ fn controller_event(
     };
     let state = ControllerState {
         id: info.id.clone(),
-        connection: ConnectionState::Connected,
+        connection: ConnectionState::Detected,
         battery_percent: None,
         battery_state: BatteryState::Unknown,
     };

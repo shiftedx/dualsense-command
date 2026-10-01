@@ -28,7 +28,7 @@ pub(crate) use process_scanning::windows_process_running;
 pub(crate) use steam::{
     apply_steam_cdn_artwork_fallback, browse_steam_library, discover_steam_game_catalog,
     get_game_art, get_steam_app_art, list_steam_library, locate_steam_manifest,
-    steam_root_and_stats_for_user_games, unsupported_steam_game_catalog, user_game_artwork_for_app,
+    unsupported_steam_game_catalog, user_game_artwork_for_app,
 };
 #[cfg(test)]
 pub(crate) use steam::{

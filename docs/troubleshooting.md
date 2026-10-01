@@ -1,189 +1,97 @@
 # Troubleshooting
 
-This page covers the issues new DSCC users are most likely to hit.
-
 ## Windows Warns About The Installer
 
-The current MSI is unsigned. Windows SmartScreen may show a publisher warning.
-Download DSCC only from the [official Releases page](https://github.com/shiftedx/dualsense-command/releases/latest)
-and compare the file with the published SHA256 checksum if you want extra
-confidence.
-
-Most users should download the `standard` Windows MSI. The `bridge` installers
-are only for users testing DSCC Input Bridge with non-Steam games.
-
-If you choose to continue, use SmartScreen's **More info** option only after
-confirming the download came from the official release page. Delete installers
-from any other source.
+Use the [official Releases page](https://github.com/shiftedx/dualsense-command/releases/latest),
+verify its SHA256 and choose `standard` unless testing non-Steam DSCC Input
+Bridge. Unsigned prereleases may trigger publisher warnings. Follow
+[Release Trust](release-trust.md) before continuing; delete downloads from
+untrusted sources.
 
 ## The App Does Not Open
 
-1. Start **DualSense Command Center** from the Start menu.
-2. Check the system tray for the DSCC icon.
-3. Open `http://127.0.0.1:43473/` in a browser.
-4. If it still fails, quit DSCC from the tray and start it again.
-
-## The First-Run Guide Is Gone
-
-The quick start guide is saved as a local preference after you skip or finish
-it. Open it again with the **Guide** button in the app header.
+Start **DualSense Command Center** from the Start menu, check the tray, then
+open `http://127.0.0.1:43473/`. If unavailable, quit from the tray and restart.
+Reopen the first-run guide with **Guide** in the header.
 
 ## Controller Is Not Detected
 
-- Try USB first. It is the most reliable connection for testing.
-- Close other apps that may own the controller.
-- Reconnect the controller, then restart DSCC.
-- For DualSense Edge onboard profile features, USB and Bluetooth can both sync
-  assignable Fn-slot edits. DSCC only marks a slot synced after the controller
-  acknowledges the write and a fresh readback matches.
-- Check the [Windows Hardware Matrix](hardware-matrix.md) to see which
-  controller/transport combinations have completed public validation.
+Try USB, close competing controller apps, reconnect and restart DSCC. Check the
+[hardware matrix](hardware-matrix.md) for transport-specific evidence.
+Edge onboard sync depends on host feature-report access; acknowledgement and
+matching readback are required. Unavailable writes remain staged locally.
 
 ## Forza Telemetry Is Not Working
 
-In the game settings, enable **Data Out** or **UDP Race Telemetry**:
+Enable **Data Out** / **UDP Race Telemetry** in the game: IP `127.0.0.1`,
+port `5300`. Enter a driving session; close other listeners on that port and
+check Windows Firewall if packets remain absent.
 
-- Target IP: `127.0.0.1`
-- Target port: `5300`
+```mermaid
+flowchart LR
+    Game[Supported game detected] --> Profile[Game Profile resolved]
+    Profile --> Fresh[Fresh telemetry]
+    Fresh --> Output[Game triggers + rumble]
+```
 
-Only one app can usually listen on the same UDP port. Close other telemetry
-tools if DSCC shows no packets.
-
-If DSCC detects the game but shows no live packets, adaptive triggers and
-telemetry haptics stay neutral by design. Enter a driving session, confirm the
-game is sending to `127.0.0.1:5300`, allow DSCC through Windows Firewall, and
-close any other telemetry tool using UDP port `5300`.
-
-## Triggers Feel Neutral In Game
-
-DSCC keeps triggers and rumble neutral until it sees:
-
-1. A supported game.
-2. An active profile for that game.
-3. Fresh telemetry from the game.
-
-DSCC uses this guard to avoid taking over the controller while you are outside
-the car.
+Detection may set the lightbar before packets arrive. Triggers and rumble stay
+neutral without fresh telemetry and neutralize after the 2s stale cutoff.
 
 ## API Errors Everywhere
 
-Open DSCC from the tray icon or go to `http://127.0.0.1:43473/`. Do not use a
-saved dev-server tab, a copied `file://` page, or a browser address from another
-machine unless LAN Access was enabled and the app was restarted.
+Open the tray's page or `http://127.0.0.1:43473/`. Replace stale dev-server,
+`file://` or remote tabs. LAN access requires **Web UI Location → LAN Access**,
+save and restart; enable it only on a trusted network.
 
-If the Support panel can export a bundle and the `api` check says `ok`, the
-local API is running. In that case, include the exact failed action, the error
-text, and the support bundle. The failure is likely a specific setup issue, not
-a dead agent.
+If Support reports `api: ok`, record the failed action and exact error: the
+agent is reachable, so investigate that action rather than restarting blindly.
 
 ## Battery Drops Faster Than Expected
 
-- Open **Controllers -> Power Diagnostics** and check the write cadence.
-- Prefer native body rumble passthrough when the game already drives strong
-  rumble.
-- Dim the lightbar or player LEDs before weakening adaptive trigger effects.
-- Use USB when you want full haptics during longer sessions.
+Check **Controller details → Power** for write cadence. Dim lights, prefer
+native body rumble passthrough when appropriate, or use USB for long sessions.
+Suppressed reports indicate duplicate writes avoided while retaining the frame.
 
-DSCC suppresses redundant encoded output reports automatically. If the panel
-shows many suppressed reports, the app is avoiding duplicate controller writes
-while preserving the current haptic frame.
+## Optional Forza Button Glyphs
 
-## LAN Access Does Not Work
-
-LAN Access is off by default. In DSCC, use **Web UI Location -> LAN Access**,
-save the setting, and restart the app.
-
-Only enable LAN Access on a network you trust.
+No glyph pack is shipped. Set `DSCC_FORZA_GLYPH_ARCHIVE` to a local
+`ControllerIcons.zip` you have permission to use (maximum 16 MiB), then restart
+the agent. Keep the archive for restore; originals remain backed up beside the
+target files. A missing archive causes an error without changing game files.
 
 ## Linux Page Does Not Open
 
-Use the Linux release archive rather than only copying the raw binary. From the
-extracted folder, run:
-
-```bash
-./dscc-cli serve --addr 127.0.0.1:43473
-```
-
-Then open `http://127.0.0.1:43473/`. The archive includes `web/dist`, so Vite is
-not needed. If you built from git yourself, run `npm --prefix web ci` and
-`npm --prefix web run build` first, or set `DSCC_WEB_DIST` to your built
-`web/dist` folder.
-
-See the [Linux Beta Guide](linux-beta.md) for full setup and artifact sanity
-checks.
+Run the complete extracted archive, including `web/dist`; follow the
+[Linux Beta Guide](linux-beta.md#run-the-release-archive). A source build needs
+its built UI or an absolute `DSCC_WEB_DIST` path.
 
 ## Linux Controller Opens Only With Sudo
 
-Do not run DSCC with `sudo` for normal use. Install the udev rule from the
-Linux release archive, reconnect the controller, then test again:
-
-```bash
-sudo install -m 0644 70-dualsense-command-center.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-./dscc-cli devices list-hid --experimental --probe-open
-```
-
-If the controller still shows permission denied, log out and back in so the
-desktop session receives the new device ACL. More detail is in the
-[Linux Beta Guide](linux-beta.md).
-
-## Linux Trigger Tests Feel Laggy
-
-Use USB first and make sure your user has permission to open the controller HID
-device without `sudo`. Release builds now run the trigger preview loop inside
-the agent so curve testing does not depend on browser-to-agent round trips for
-each trigger movement.
+Fix [udev permissions](linux-beta.md#hid-and-udev-permissions), reconnect and
+retest as your user. Do not run DSCC with `sudo`. If trigger previews lag, test
+USB and HID permissions first; preview processing runs inside the agent.
 
 ## Steam Input Button Mapping Looks Empty
 
-Open or create a real Steam Input layout for the selected game, then refresh
-DSCC. DSCC can show safe defaults, but it will not write generated placeholder
-mappings back to Steam.
-
-## Edge Paddle Preset Fails
-
-The paddle preset edits the selected Steam Input layout on this PC. It requires
-a DualSense Edge Steam Input layout that already contains Back Left and Back
-Right paddle bindings. Open Steam's controller configurator for the game once,
-save the layout, then apply the preset again.
+Open/create and save a real Steam Input layout for the selected game, then
+refresh DSCC. Placeholder defaults cannot be written back. Edge paddle presets
+require existing **Back Left** and **Back Right** bindings in that layout;
+save it in Steam's configurator before retrying.
 
 ## Create A Support Bundle
 
-The fastest bug report is one with a sanitized support bundle.
-
-1. Open DSCC.
-2. Open the **Support** panel.
-3. Use **GitHub** to open the project repository when you need issues,
-   discussions, releases, or docs.
-4. Choose **Copy JSON** or **Export JSON** for the sanitized support bundle.
-5. Attach it to your GitHub issue, or paste it if it is short.
-
-If the web UI will not open but the local agent is running, run:
-
-```powershell
-dscc-cli support-bundle
-```
-
-The bundle is meant to exclude raw HID paths, serials, Bluetooth addresses, and
-private Steam account paths. Please still avoid adding those manually in issue
-comments or screenshots.
+Open **Support → Copy JSON / Export JSON**. If the UI fails but the agent runs,
+use `dscc-cli support-bundle`. Review the bundle and screenshots before sharing;
+do not add raw HID paths, serials, Bluetooth addresses, account identifiers or
+reports manually.
 
 ## Reporting A Problem
 
-For setup questions, tuning ideas, or "is this expected?" beta behavior, start
-with [GitHub Discussions](https://github.com/shiftedx/dualsense-command/discussions).
+Use [Discussions](https://github.com/shiftedx/dualsense-command/discussions)
+for setup/tuning questions; file reproducible failures in
+[Issues](https://github.com/shiftedx/dualsense-command/issues) with:
 
-Open a [GitHub Issue](https://github.com/shiftedx/dualsense-command/issues) and
-include:
-
-- A sanitized support bundle when possible.
-- DSCC version.
-- Controller model.
-- USB or Bluetooth.
-- Operating system and distribution, such as Windows 11 or Ubuntu 24.04.
-- Which [hardware matrix](hardware-matrix.md) checklist step failed, if this is
-  a controller support issue.
-- Game and telemetry status.
-- What you expected.
-- What happened.
+- Version, OS, controller model and USB/Bluetooth transport.
+- Exact action, expected result, actual result and error text.
+- Game/telemetry status and failed [matrix step](hardware-matrix.md#validation-checklist), if applicable.
+- Sanitized support bundle and reconnect/restart result.

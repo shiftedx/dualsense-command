@@ -3,6 +3,7 @@
 // in mock mode. Usage: node scripts/curve-drag-budget.mjs [--url http://...]
 // Without --url it spawns `npm run dev:mock` on a free port and stops it after.
 import { spawn, spawnSync } from 'node:child_process';
+import assert from 'node:assert/strict';
 import net from 'node:net';
 import path from 'node:path';
 import process from 'node:process';
@@ -120,6 +121,7 @@ async function main() {
       });
       const frame = page.locator('.dm-curve-frame').first();
       await frame.waitFor({ timeout: 15000 });
+      const initialCurve = await frame.locator('.curve-force').getAttribute('d');
 
       await page.evaluate(() => {
         window.__dragMetrics = { mutations: 0, frames: [] };
@@ -150,6 +152,7 @@ async function main() {
         await new Promise((resolve) => setTimeout(resolve, 16));
       }
       await page.mouse.up();
+      assert.notEqual(await frame.locator('.curve-force').getAttribute('d'), initialCurve, 'drag must edit the curve');
 
       const metrics = await page.evaluate(() => {
         cancelAnimationFrame(window.__dragMetrics.raf);
@@ -157,6 +160,11 @@ async function main() {
       });
       const frames = metrics.frames.filter((ms) => ms > 0).sort((a, b) => a - b);
       const pick = (q) => frames[Math.min(frames.length - 1, Math.floor(frames.length * q))] ?? 0;
+      // Allow up to three 60 Hz frames on shared CI runners; the local baseline
+      // is 16.8 ms p95 and 14.1 mutations/move. Catch sustained regressions.
+      assert.ok(frames.length > 0, 'drag must produce frame samples');
+      assert.ok(pick(0.95) <= 50, `frame p95 ${pick(0.95).toFixed(1)} ms exceeds 50 ms`);
+      assert.ok(metrics.mutations / MOVES <= 32, `mutations/move ${(metrics.mutations / MOVES).toFixed(1)} exceeds 32`);
       console.log(
         JSON.stringify(
           {
