@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 import { chromium } from 'playwright';
 import { fileURLToPath } from 'node:url';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 const stockProfiles = JSON.parse(readFileSync(new URL('./fixtures/stock-profiles.json', import.meta.url), 'utf8'));
 
 // Test-only boundary: the compiled, mounted App and its real workflows run with
@@ -32,10 +34,10 @@ export const getControllerConfig = async id => fixture.deferController ? defer('
 export const getControllerInput = async () => ({available:false,source:'fixture',message:'No hardware input',buttons:[],l2:0,r2:0});
 export const exportProfile = async id => { fixture.requests.push({kind:'export',id}); return fixture.deferExport ? defer('export',id) : clone(stockProfiles.find(p=>p.id===id) ?? fixture.exported(id, id==='profile-b'?42:31)); };
 export const getEdgeProfiles = async id => fixture.deferEdge ? defer('edge',id) : ({controllerId:id,slots:[],supportState:'unavailable'});
-export const setProfileOverride = async () => null;
-export const saveControllerConfig = async (id,config) => { fixture.requests.push({kind:'live',config:clone(config)}); if(fixture.failLive) throw Error('live PUT failed'); return {...clone(config),controllerId:id,model:id==='standard'?'DualSense':'DualSense Edge'}; };
+export const setProfileOverride = async request => {fixture.requests.push({kind:'override',request:clone(request)});return null;};
+export const saveControllerConfig = async (id,config) => { fixture.requests.push({kind:'live',id,config:clone(config)}); if(fixture.failLive) throw Error('live PUT failed'); return {...clone(config),controllerId:id,model:id==='standard'?'DualSense':'DualSense Edge'}; };
 export const saveProfileConfig = async (id,config) => { fixture.requests.push({kind:'save',id,config:clone(config)}); if(fixture.deferSave) await defer('save',id); return {accepted:true,message:'saved'}; };
-export const runEffectTest = async (request,id) => { fixture.requests.push({kind:'effect',id,request:clone(request)}); return {accepted:true,dryRun:true}; };
+export const runEffectTest = async (request,id) => { fixture.requests.push({kind:'effect',id,request:clone(request)}); if(fixture.deferManual && request.durationMs===30000) await defer('manual',id); return {accepted:true,dryRun:true}; };
 export const createProfile = async (name,options) => {if(fixture.deferCreate)await defer('create','copy');const p=profile('copy-'+snapshot.profiles.length);p.name=name;snapshot.profiles.push(p);return p;};
 `;
 const hook = `
@@ -47,12 +49,14 @@ const hook = `
     scope: (value) => { selectedTuningScope = value; },
     edit: setLightbarBrightness, save: saveActiveProfile, discard: discardDraftChanges,
     stop: stopAppRuntime, manual: toggleBaseFeelTest, reset: restoreDefaults,
+    refreshManual: scheduleBaseFeelTestRefresh,
     resetCurves: resetTriggerCurvesToProfileDefaults,
     copy: () => {beginSaveAsProfile();return submitSaveAsProfile();},
-    state: () => ({config:buildControllerConfig(), baseline:profileSaveBaselineConfig, dirty:profileConfigDirty, edge:edgeProfiles, edgeLoading:edgeProfilesLoading, edgeError:edgeProfilesError, profileError:profileOverrideMessage, selected:selectedOverrideProfileId})
+    state: () => ({config:buildControllerConfig(), baseline:profileSaveBaselineConfig, dirty:profileConfigDirty, edge:edgeProfiles, edgeLoading:edgeProfilesLoading, edgeError:edgeProfilesError, profileError:profileOverrideMessage, selected:selectedOverrideProfileId, manualActive:baseFeelTestActive, manualBusy:baseFeelTestBusy})
   };
 `;
-const server = await createServer({ root: fileURLToPath(new URL('..', import.meta.url)), logLevel:'error', server:{host:'127.0.0.1',port:0}, plugins:[{
+const cacheDir = mkdtempSync(join(tmpdir(), 'dscc-profile-browser-'));
+const server = await createServer({ cacheDir, root: fileURLToPath(new URL('..', import.meta.url)), logLevel:'error', server:{host:'127.0.0.1',port:0}, plugins:[{
   name:'profile-regression-boundaries', enforce:'pre',
   resolveId(source, importer) { if (source.endsWith('/lib/api') && importer?.replaceAll('\\','/').includes('/src/')) return '\0profile-fixture-api'; },
   load(id) { if(id==='\0profile-fixture-api') return fixtureApi; },
@@ -70,6 +74,42 @@ async function test(name, run) {
   finally { await page.close(); }
 }
 try {
+  for (const mode of ['custom','stock','save-as']) for (const transition of ['switch','return','teardown']) await test(`mounted ${mode} save ignores ${transition} completion`,async page=>{
+    const original=mode==='stock'?'global':'profile-a';
+    await page.evaluate(id=>appFixture.select(id),original);
+    await page.evaluate(mode=>{appFixture.edit(51);if(mode==='custom')fixture.deferSave=true;else fixture.deferCreate=true;if(mode==='save-as')void appFixture.copy();else void appFixture.save();},mode);
+    await page.waitForFunction(()=>fixture.pending.some(p=>p.kind==='save'||p.kind==='create'));
+    if(transition==='teardown')await page.evaluate(()=>appFixture.stop());
+    else {
+      await page.evaluate(()=>appFixture.controller('edge-b'));await page.waitForTimeout(30);
+      await page.evaluate(()=>appFixture.select('profile-b'));
+      if(transition==='return'){
+        await page.evaluate(()=>appFixture.controller(fixture.snapshot.controllers[0].id));await page.waitForTimeout(30);
+        await page.evaluate(id=>appFixture.select(id),original);
+      }
+    }
+    const before=await page.evaluate(()=>({baseline:appFixture.state().baseline,selected:appFixture.state().selected,overrides:fixture.requests.filter(r=>r.kind==='override').length,live:fixture.requests.filter(r=>r.kind==='live').length}));
+    await page.evaluate(mode=>mode==='custom'?fixture.resolve('save','profile-a'):fixture.resolve('create','copy'),mode);
+    await page.waitForTimeout(150);
+    assert.deepEqual(await page.evaluate(()=>appFixture.state().baseline),before.baseline);
+    assert.equal(await page.evaluate(()=>appFixture.state().selected),before.selected);
+    assert.equal(await page.evaluate(()=>fixture.requests.filter(r=>r.kind==='override').length),before.overrides);
+    const laterLive=await page.evaluate(count=>fixture.requests.filter(r=>r.kind==='live').slice(count),before.live);
+    assert.ok(laterLive.every(r=>r.config.lightbar.brightness!==51),'stale save must not issue A config to the new context');
+  });
+  for (const pendingKind of ['start','refresh']) for (const ending of ['preview','teardown','controller']) await test(`pending manual ${pendingKind} cannot resume after ${ending}`, async page=>{
+    if(pendingKind==='refresh')await page.evaluate(()=>appFixture.manual());
+    await page.evaluate(kind=>{fixture.deferManual=true;if(kind==='start')void appFixture.manual();else appFixture.refreshManual();},pendingKind);
+    await page.waitForFunction(()=>fixture.pending.some(p=>p.kind==='manual'));
+    if(ending==='preview')await page.locator('.saved-preview-button').first().click();
+    else await page.evaluate(ending=>ending==='teardown'?appFixture.stop():appFixture.controller('edge-b'),ending);
+    await page.evaluate(()=>fixture.resolve('manual',fixture.snapshot.controllers[0].id));
+    await page.waitForTimeout(50);
+    assert.equal(await page.evaluate(()=>appFixture.state().manualActive),false);
+    const count=await page.evaluate(()=>fixture.requests.filter(r=>r.kind==='effect').length);
+    await page.evaluate(()=>appFixture.refreshManual());await page.waitForTimeout(100);
+    assert.equal(await page.evaluate(()=>fixture.requests.filter(r=>r.kind==='effect').length),count);
+  });
   await test('profile late success cannot replace selected editor', async page => {
     await page.evaluate(()=>{fixture.deferExport=true;void appFixture.select('profile-a');});
     await page.waitForFunction(()=>fixture.pending.length===1);
@@ -213,5 +253,10 @@ try {
     await page.evaluate(()=>appFixture.copy());
     assert.deepEqual(project(await page.evaluate(()=>fixture.requests.findLast(r=>r.kind==='save').config)),stock.config);
   });
-} finally { await browser.close(); await server.close(); }
+} finally {
+  await browser.close();
+  await server.close();
+  assert.equal(dirname(cacheDir), tmpdir());
+  rmSync(cacheDir, {recursive:true,force:true});
+}
 if(failures.length) throw Error(failures.join('\n'));

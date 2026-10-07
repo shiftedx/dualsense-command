@@ -14,7 +14,6 @@ import {
 } from '../lib/features/profiles/profileSelection';
 import type { EditableControllerConfig } from './profileDraft';
 import type { ToastTone } from './toastState';
-import type { TuningScope } from './profileWorkspace';
 import type { AppSnapshot, ProfileResolution, ProfileSummary, SupportedGame } from '../lib/types';
 
 // UI state for the Profile Resolution workflows: create, rename, save,
@@ -35,6 +34,13 @@ export type ProfileManagementStateStore = {
   set: (next: ProfileManagementState) => void;
 };
 
+export type ProfileSaveContext = {
+  gameId: string | null;
+  isCurrent: () => boolean;
+  saveControllerConfig: (config: EditableControllerConfig) => Promise<void>;
+  setProfileOverride: (profileId: string) => Promise<ProfileResolution | null>;
+};
+
 export type ProfileManagementDeps = {
   store: ProfileManagementStateStore;
   getSnapshot: () => AppSnapshot | null;
@@ -43,8 +49,6 @@ export type ProfileManagementDeps = {
   getActiveProfileId: () => string;
   getSelectedActionProfile: () => ProfileSummary | null;
   getProfileContextGame: () => SupportedGame | null;
-  getProfileContextGameId: () => string | null;
-  getSelectedTuningScope: () => TuningScope;
   getSelectedOverrideProfileId: () => string;
   setSelectedOverrideProfileId: (id: string) => void;
   markActiveProfileSynced: (id: string) => void;
@@ -54,8 +58,7 @@ export type ProfileManagementDeps = {
   buildControllerConfig: () => EditableControllerConfig;
   profileConfigSignature: (config: EditableControllerConfig) => string;
   setProfileSaveBaseline: (signature: string, config: EditableControllerConfig) => void;
-  saveControllerConfigForProfileTargets: (config: EditableControllerConfig) => Promise<void>;
-  setProfileOverrideForTargets: (profileId: string, gameId: string | null) => Promise<ProfileResolution | null>;
+  captureSaveContext: () => ProfileSaveContext;
   refresh: () => Promise<void>;
   notify: (message: string, tone?: ToastTone) => void;
 };
@@ -202,22 +205,27 @@ export const createProfileManagement = (deps: ProfileManagementDeps) => {
     }
 
     patch({ saveAsBusy: true });
+    const context = deps.captureSaveContext();
     try {
       const config = deps.buildControllerConfig();
       const created = await createProfile(name, {
-        gameId: deps.getSelectedTuningScope() === 'game' ? deps.getProfileContextGameId() : null
+        gameId: context.gameId
       });
       const response = await saveProfileConfig(created.id, config);
-      await deps.saveControllerConfigForProfileTargets(config);
-      const resolution = await deps.setProfileOverrideForTargets(created.id, deps.getProfileContextGameId());
+      if (!context.isCurrent()) return;
+      await context.saveControllerConfig(config);
+      if (!context.isCurrent()) return;
+      const resolution = await context.setProfileOverride(created.id);
+      if (!context.isCurrent()) return;
       applyResolution(resolution);
+      await deps.refresh();
+      if (!context.isCurrent()) return;
       deps.setProfileSaveBaseline(deps.profileConfigSignature(config), config);
       deps.setSelectedOverrideProfileId(created.id);
       cancelSaveAsProfile();
-      await deps.refresh();
-      deps.setSelectedOverrideProfileId(created.id);
       deps.notify(response.message || `Saved ${created.name}`, 'success');
     } catch (caught) {
+      if (!context.isCurrent()) return;
       deps.notify(caught instanceof Error ? caught.message : 'Unable to save profile copy', 'error');
       await deps.refresh();
     } finally {
@@ -244,6 +252,7 @@ export const createProfileManagement = (deps: ProfileManagementDeps) => {
     }
 
     patch({ saveBusy: true });
+    const context = deps.captureSaveContext();
     try {
       const config = deps.buildControllerConfig();
       const sourceProfileName = selected.name;
@@ -255,18 +264,20 @@ export const createProfileManagement = (deps: ProfileManagementDeps) => {
           contextGame ? `${contextGame.name} ${targetProfile.name} custom` : `${targetProfile.name} custom`,
           deps.getProfiles()
         );
-        targetProfile = await createProfile(name, { gameId: deps.getProfileContextGameId() });
+        targetProfile = await createProfile(name, { gameId: context.gameId });
         preservingStockProfile = true;
       }
       if (!targetProfile) throw new Error('No profile selected');
 
-      await deps.saveControllerConfigForProfileTargets(config);
+      if (context.isCurrent()) await context.saveControllerConfig(config);
       const response = await saveProfileConfig(targetProfile.id, config);
-      deps.setProfileSaveBaseline(deps.profileConfigSignature(config), config);
-      const resolution = await deps.setProfileOverrideForTargets(targetProfile.id, deps.getProfileContextGameId());
+      if (!context.isCurrent()) return;
+      const resolution = await context.setProfileOverride(targetProfile.id);
+      if (!context.isCurrent()) return;
       applyResolution(resolution);
-      deps.setSelectedOverrideProfileId(targetProfile.id);
       await deps.refresh();
+      if (!context.isCurrent()) return;
+      deps.setProfileSaveBaseline(deps.profileConfigSignature(config), config);
       deps.setSelectedOverrideProfileId(targetProfile.id);
       deps.notify(
         preservingStockProfile
@@ -274,6 +285,7 @@ export const createProfileManagement = (deps: ProfileManagementDeps) => {
           : response.message || `Saved ${targetProfile.name}`
       );
     } catch (caught) {
+      if (!context.isCurrent()) return;
       deps.notify(caught instanceof Error ? caught.message : 'Unable to save profile');
     } finally {
       patch({ saveBusy: false });
