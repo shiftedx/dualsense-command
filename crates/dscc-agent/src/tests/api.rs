@@ -2,6 +2,32 @@ use super::support::*;
 use super::*;
 
 #[tokio::test]
+async fn diagnostics_loopback_flag_tracks_bind_address_independently_of_output() {
+    for (address, loopback) in [
+        ("127.0.0.1:43473", true),
+        ("[::1]:43473", true),
+        ("0.0.0.0:43473", false),
+        ("[::]:43473", false),
+    ] {
+        for output_enabled in [false, true] {
+            let state = AgentState::mock().with_bind_addr(address.parse().unwrap());
+            let steam = state.cached_steam_input_status_or_refresh().await;
+            let game = state.cached_game_detection().await;
+            let inner = state.inner.read().await;
+            let diagnostics = state.diagnostics_from_inner(
+                &inner,
+                &steam,
+                &game,
+                output_enabled,
+                &state.input_bridge.status_response(),
+            );
+            assert_eq!(diagnostics.loopback_only, loopback, "{address}");
+            assert_eq!(diagnostics.hardware_required, output_enabled);
+        }
+    }
+}
+
+#[tokio::test]
 async fn status_reports_mock_active_state() {
     let response = app(AgentState::mock())
         .oneshot(

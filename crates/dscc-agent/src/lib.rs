@@ -1824,7 +1824,7 @@ impl AgentState {
         checks.extend(inner.controllers.health_checks());
 
         DiagnosticsResponse {
-            loopback_only: !hardware_output_enabled,
+            loopback_only: self.bind_addr.ip().is_loopback(),
             hardware_required: hardware_output_enabled,
             checks,
         }
