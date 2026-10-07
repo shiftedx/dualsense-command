@@ -2,8 +2,8 @@
   "schema": "dscc-declared-licenses-v1",
   "scope": "All locked package versions, including development and other-platform dependencies; declared licenses only. npm development does not imply absent from the browser bundle.",
   "lockfiles": {
-    "Cargo.lock": "d3b9c1316cbc8b89d0242e027c9592d4b2a67899115f77eb079c57b7583f497a",
-    "web/package-lock.json": "e4b04f3703f3e1c7b868d13c0a88043f73e36882e264c29c7bc7e8175d84cc41"
+    "Cargo.lock": "fbe1c3045d95d8510310b0be4d5a7614c90c8710ca8fc60f9f701c5d3358d6dd",
+    "web/package-lock.json": "3439fa7516b56b9435dea85629026161d629eacc5e147d6b44d7dc2d54ecf0fe"
   },
   "packages": [
     {
@@ -51,7 +51,7 @@
     {
       "kind": "cargo",
       "name": "anyhow",
-      "version": "1.0.103",
+      "version": "1.0.104",
       "license": "MIT OR Apache-2.0"
     },
     {
@@ -687,25 +687,25 @@
     {
       "kind": "cargo",
       "name": "serde",
-      "version": "1.0.228",
+      "version": "1.0.229",
       "license": "MIT OR Apache-2.0"
     },
     {
       "kind": "cargo",
       "name": "serde_core",
-      "version": "1.0.228",
+      "version": "1.0.229",
       "license": "MIT OR Apache-2.0"
     },
     {
       "kind": "cargo",
       "name": "serde_derive",
-      "version": "1.0.228",
+      "version": "1.0.229",
       "license": "MIT OR Apache-2.0"
     },
     {
       "kind": "cargo",
       "name": "serde_json",
-      "version": "1.0.150",
+      "version": "1.0.151",
       "license": "MIT OR Apache-2.0"
     },
     {
@@ -788,6 +788,12 @@
     },
     {
       "kind": "cargo",
+      "name": "syn",
+      "version": "3.0.3",
+      "license": "MIT OR Apache-2.0"
+    },
+    {
+      "kind": "cargo",
       "name": "sync_wrapper",
       "version": "1.0.2",
       "license": "Apache-2.0"
@@ -801,13 +807,13 @@
     {
       "kind": "cargo",
       "name": "thiserror",
-      "version": "2.0.18",
+      "version": "2.0.19",
       "license": "MIT OR Apache-2.0"
     },
     {
       "kind": "cargo",
       "name": "thiserror-impl",
-      "version": "2.0.18",
+      "version": "2.0.19",
       "license": "MIT OR Apache-2.0"
     },
     {
@@ -837,7 +843,7 @@
     {
       "kind": "cargo",
       "name": "tokio",
-      "version": "1.52.3",
+      "version": "1.53.1",
       "license": "MIT"
     },
     {
@@ -1323,7 +1329,7 @@
     {
       "kind": "npm",
       "name": "@fontsource-variable/inter",
-      "version": "5.2.8",
+      "version": "5.3.0",
       "license": "OFL-1.1",
       "development": true,
       "optional": false
@@ -1331,7 +1337,7 @@
     {
       "kind": "npm",
       "name": "@fontsource-variable/jetbrains-mono",
-      "version": "5.2.8",
+      "version": "5.3.0",
       "license": "OFL-1.1",
       "development": true,
       "optional": false
@@ -1379,7 +1385,7 @@
     {
       "kind": "npm",
       "name": "@lucide/svelte",
-      "version": "1.21.0",
+      "version": "1.27.0",
       "license": "ISC",
       "development": true,
       "optional": false
@@ -1851,7 +1857,7 @@
     {
       "kind": "npm",
       "name": "playwright",
-      "version": "1.61.1",
+      "version": "1.62.0",
       "license": "Apache-2.0",
       "development": true,
       "optional": false
@@ -1859,7 +1865,7 @@
     {
       "kind": "npm",
       "name": "playwright-core",
-      "version": "1.61.1",
+      "version": "1.62.0",
       "license": "Apache-2.0",
       "development": true,
       "optional": false
@@ -1899,7 +1905,7 @@
     {
       "kind": "npm",
       "name": "source-map-js",
-      "version": "1.2.1",
+      "version": "1.2.2",
       "license": "BSD-3-Clause",
       "development": true,
       "optional": false
@@ -1907,7 +1913,7 @@
     {
       "kind": "npm",
       "name": "svelte",
-      "version": "5.56.6",
+      "version": "5.56.8",
       "license": "MIT",
       "development": true,
       "optional": false

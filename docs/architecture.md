@@ -45,11 +45,14 @@ Search symbols with `rg`. Agent paths below are relative to
 | Task | Source / constraint |
 | --- | --- |
 | Routes / DTOs | `routes.rs::app`, `api/`, `agent_types.rs`: validate intent before mutation. |
-| Snapshot | `lib.rs::AgentState::snapshot`: no blocking I/O under state locks. |
+| Snapshot | `lib.rs::AgentState::snapshot`: no blocking I/O under state locks; Input Bridge health is cached. |
 | Network guards | `http_security.rs::reject_cross_origin_mutations`, `bind_addr.rs`, `env_policy.rs`. |
 | Profile resolution | `profiles.rs::profile_resolution`: stable controller id + game scope; aliases only label controllers. |
 | Live effects | `effects/materialization.rs::RuntimeLiveEffectMaterializer`, `effects/runtime_profiles.rs`: prepared cache, stateful smoothing/hysteresis. |
 | Output / discovery | `runtime/{hardware_output,output_watchdog,device_scan}.rs`, `runtime_constants.rs`: cadence, freshness, keepalive, neutralization. |
+| Manual output | `api/effects.rs`, `lib.rs::begin_manual_output_override`: controller-scoped ownership checked inside the serialized typed writer; expiry releases only its owned session. |
+| Telemetry freshness | `adapter_runtime.rs`, `assetto_shared_memory.rs`, `effects/materialization.rs`: enabled adapters, changed producer samples, source/session baseline reset. |
+| Input Bridge | `input_bridge.rs`, `dscc-virtual-output`: cached health uses an independent bounded status probe; session creation validates the live provider. |
 | Game detection | `game_detection_cache.rs::DiscoveryCache`, `game_detection/`: cached filesystem metadata, fast process scan. |
 | Persistence | `persistence.rs::{build_persist_snapshot,persist_snapshot}`: ordered atomic saves, isolated test paths. |
 | Defaults / paths | `built_in_presets.rs`, `runtime_paths.rs`. |

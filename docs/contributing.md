@@ -16,6 +16,14 @@ C compiler/linker; Linux needs `libudev-dev` for `hidapi`. In PowerShell use
 `npm.cmd` to avoid `npm.ps1` execution-policy blocks. Root scripts select GNU
 Rust automatically; direct commands use `cargo +stable-x86_64-pc-windows-gnu`.
 
+Full checks also require the .NET 10 SDK for the optional Input Bridge broker.
+An installed .NET runtime does not provide the compiler. On Windows, add Rust's
+`bin` and your MinGW GCC `bin` directory to the terminal PATH; the GNU toolchain
+needs `gcc`, `dlltool`, and its matching runtime libraries. Run
+`npm.cmd run check:env` before longer checks: it verifies tools and Chromium and
+links a small Rust program without launching DSCC. Web-only checks need Node
+and `npm.cmd --prefix web ci`; broker-only checks use `npm.cmd run check:broker`.
+
 **Real output defaults on. Set the write-disable flag before diagnostics or
 smoke tests, in every terminal that launches the agent:**
 
@@ -61,10 +69,12 @@ For docs-only changes, inspect the diff, verify commands and run `check:docs`.
 
 | Suite | Command | Coverage |
 | --- | --- | --- |
-| Full | `npm.cmd run check` | Docs, release, web and Rust gates. |
+| Full | `npm.cmd run check` | Environment, docs, release, web, Rust and broker gates. |
+| Environment | `npm.cmd run check:env` | Node/web dependencies, Chromium, native Rust linking and .NET 10 SDK. |
+| Broker | `npm.cmd run check:broker` | Compile the C# Input Bridge broker. |
 | Docs | `npm.cmd run check:docs` | Repository-local links; rejects ignored targets. |
 | Release | `npm.cmd run check:release` | Metadata tests, versions, assets and dependency notices. |
-| Rust | `npm.cmd run check:rust` | Format, all-feature workspace tests, Clippy. |
+| Rust | `npm.cmd run check:rust` | Format, all-feature workspace tests, Clippy, locked production feature configuration. |
 | Web | `npm.cmd run check:web` | Types, source audit, mapping/DTO/haptics, build, size, visual smoke, curve drag. |
 | Performance | `npm.cmd run check:perf` | Rust perf guards and button-map p95 budget. |
 

@@ -4,7 +4,7 @@ Generated from locked installed package source archives by tools/generate-depend
 
 Cargo.lock SHA256: fbe1c3045d95d8510310b0be4d5a7614c90c8710ca8fc60f9f701c5d3358d6dd
 
-web/package-lock.json SHA256: a541b48a2b7ede35776f291d7150d5764d0bc69686f1bb960520b9e9fe4a7596
+web/package-lock.json SHA256: 3439fa7516b56b9435dea85629026161d629eacc5e147d6b44d7dc2d54ecf0fe
 
 ## @fontsource-variable/inter 5.3.0
 
