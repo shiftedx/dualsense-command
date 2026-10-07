@@ -79,6 +79,8 @@ pub struct SteamInputBindingWriteRequest {
     pub app_id: Option<String>,
     pub input_id: String,
     pub group_id: Option<String>,
+    pub source: Option<String>,
+    pub source_mode: Option<String>,
     pub activator: Option<String>,
     pub raw_binding: String,
     pub profile_name: Option<String>,

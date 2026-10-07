@@ -77,21 +77,40 @@ impl PersistenceStore {
     }
 
     pub(crate) fn load(&self) -> io::Result<PersistedAgentState> {
-        if !self.state_file.exists() {
-            return Ok(PersistedAgentState::default());
-        }
-
-        let contents = fs::read_to_string(&self.state_file)?;
-        serde_json::from_str(&contents)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+        let contents = match fs::read(&self.state_file) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(PersistedAgentState::default()),
+            Err(error) => return Err(io::Error::new(error.kind(), "Saved state could not be read; replacement saves are blocked until it can be read.")),
+        };
+        parse_persisted_state(&contents)
     }
 
     pub(crate) fn save_snapshot(&self, snapshot: &PersistedAgentState) -> io::Result<()> {
+        // A load failure must never turn the only recovery copy into writable defaults.
+        // Recheck here as files can become unreadable or corrupt after initialization.
+        match fs::read(&self.state_file) {
+            Ok(contents) if parse_persisted_state(&contents).is_err() => {
+                let (mut backup, _) = create_exclusive_state_backup(&self.state_file)?;
+                use std::io::Write;
+                backup.write_all(&contents)?;
+                backup.sync_all()?;
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(io::Error::new(
+                    error.kind(),
+                    "Saved state could not be read; refusing replacement.",
+                ))
+            }
+        }
         if let Some(parent) = self.state_file.parent() {
             fs::create_dir_all(parent)?;
         }
 
-        let contents = serde_json::to_string_pretty(snapshot)
+        let mut snapshot = snapshot.clone();
+        snapshot.version = PERSISTED_STATE_VERSION;
+        let contents = serde_json::to_string_pretty(&snapshot)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let temp_file = temp_path_for(&self.state_file);
         use std::io::Write;
@@ -100,6 +119,38 @@ impl PersistenceStore {
         file.sync_all()?;
         drop(file);
         replace_state_file(&temp_file, &self.state_file)
+    }
+}
+
+fn parse_persisted_state(contents: &[u8]) -> io::Result<PersistedAgentState> {
+    let state: PersistedAgentState = serde_json::from_slice(contents).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Saved state is malformed; the original will be quarantined before replacement.",
+        )
+    })?;
+    if state.version != PERSISTED_STATE_VERSION {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "Saved state version is unsupported; the original will be quarantined before replacement."));
+    }
+    Ok(state)
+}
+
+fn create_exclusive_state_backup(path: &FsPath) -> io::Result<(fs::File, PathBuf)> {
+    loop {
+        let sequence = NEXT_SAVE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let backup = path.with_extension(format!(
+            "json.dscc-recovery-{}-{sequence}",
+            std::process::id()
+        ));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&backup)
+        {
+            Ok(file) => return Ok((file, backup)),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
     }
 }
 
@@ -271,12 +322,12 @@ pub(crate) fn temp_path_for(path: &FsPath) -> PathBuf {
 }
 
 #[cfg(not(windows))]
-fn replace_state_file(source: &FsPath, destination: &FsPath) -> io::Result<()> {
+pub(crate) fn replace_state_file(source: &FsPath, destination: &FsPath) -> io::Result<()> {
     fs::rename(source, destination)
 }
 
 #[cfg(windows)]
-fn replace_state_file(source: &FsPath, destination: &FsPath) -> io::Result<()> {
+pub(crate) fn replace_state_file(source: &FsPath, destination: &FsPath) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
         MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
@@ -315,7 +366,10 @@ pub(crate) async fn persist_snapshot(state: &AgentState, to_save: Option<Pending
     };
     let result = tokio::task::spawn_blocking(move || save.save()).await;
     let save_error = match result {
-        Ok(Ok(())) => return,
+        Ok(Ok(())) => {
+            state.inner.write().await.persistence_load_error = None;
+            return;
+        }
         Ok(Err(error)) => error.to_string(),
         Err(join_error) => format!("persistence task panicked: {join_error}"),
     };
@@ -324,9 +378,243 @@ pub(crate) async fn persist_snapshot(state: &AgentState, to_save: Option<Pending
         .await;
 }
 
+/// Attach to persisted mutation owners, leaving runtime stop/test routes available.
+pub(crate) async fn require_persistence_available(
+    axum::extract::State(state): axum::extract::State<AgentState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if !matches!(
+        *request.method(),
+        axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS
+    ) {
+        let inner = state.inner.read().await;
+        if inner.storage.is_none() {
+            if let Some(error) = &inner.persistence_load_error {
+                return (axum::http::StatusCode::SERVICE_UNAVAILABLE, error.clone())
+                    .into_response();
+            }
+        }
+    }
+    next.run(request).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn malformed_state_is_preserved_before_a_subsequent_save() {
+        let store = test_store();
+        fs::create_dir_all(store.state_file.parent().unwrap()).unwrap();
+        let original = b"{ malformed private recovery bytes";
+        fs::write(&store.state_file, original).unwrap();
+        assert!(store.load().is_err());
+        store
+            .save_snapshot(&PersistedAgentState::default())
+            .unwrap();
+        let preserved = fs::read_dir(store.state_file.parent().unwrap())
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|entry| {
+                entry.path() != store.state_file
+                    && fs::read(entry.path()).ok().as_deref() == Some(original.as_slice())
+            });
+        assert!(preserved, "original must be quarantined before replacement");
+        fs::remove_dir_all(store.state_file.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn unsupported_state_version_is_not_silently_loaded() {
+        let store = test_store();
+        fs::create_dir_all(store.state_file.parent().unwrap()).unwrap();
+        let state = PersistedAgentState {
+            version: PERSISTED_STATE_VERSION + 1,
+            ..Default::default()
+        };
+        fs::write(&store.state_file, serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(store.load().unwrap_err().kind(), io::ErrorKind::InvalidData);
+        fs::remove_dir_all(store.state_file.parent().unwrap()).unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_load_is_visible_and_mutation_preserves_recovery_bytes() {
+        let store = test_store();
+        fs::create_dir_all(store.state_file.parent().unwrap()).unwrap();
+        fs::write(&store.state_file, b"invalid private-fixture").unwrap();
+        let state = AgentState::from_controller_registry_with_backend_and_storage(
+            ControllerRegistry::default(),
+            AgentState::mock().inner.read().await.device_backend.clone(),
+            Some(store.clone()),
+        );
+        let pending = {
+            let mut inner = state.inner.write().await;
+            assert!(inner
+                .logs
+                .iter()
+                .any(|log| log.level == "warn" && log.message.contains("load")));
+            assert!(inner
+                .logs
+                .iter()
+                .all(|log| !log.message.contains("private-fixture")));
+            inner.active_profile_id = Some("changed".into());
+            build_persist_snapshot(&inner)
+        };
+        persist_snapshot(&state, pending).await;
+        assert!(fs::read_dir(store.state_file.parent().unwrap())
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(
+                |entry| fs::read(entry.path()).ok().as_deref() == Some(b"invalid private-fixture")
+            ));
+        fs::remove_dir_all(store.state_file.parent().unwrap()).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unreadable_state_cannot_be_overwritten() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let store = test_store();
+        fs::create_dir_all(store.state_file.parent().unwrap()).unwrap();
+        fs::write(&store.state_file, b"private original").unwrap();
+        let locked = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&store.state_file)
+            .unwrap();
+        assert!(store.load().is_err());
+        assert!(store
+            .save_snapshot(&PersistedAgentState::default())
+            .is_err());
+        drop(locked);
+        assert_eq!(fs::read(&store.state_file).unwrap(), b"private original");
+        fs::remove_dir_all(store.state_file.parent().unwrap()).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn unreadable_startup_cannot_later_overwrite_recovered_state() {
+        use std::os::windows::fs::OpenOptionsExt;
+        use tower::ServiceExt;
+        let store = test_store();
+        store
+            .save_snapshot(&PersistedAgentState {
+                active_profile_id: Some("original".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        let original = fs::read(&store.state_file).unwrap();
+        let locked = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&store.state_file)
+            .unwrap();
+        let state = AgentState::from_controller_registry_with_backend_and_storage(
+            ControllerRegistry::default(),
+            AgentState::mock().inner.read().await.device_backend.clone(),
+            Some(store.clone()),
+        );
+        drop(locked);
+        assert!(!state.status_with_detection(None).await.healthy);
+        assert!(state
+            .diagnostics()
+            .await
+            .checks
+            .iter()
+            .any(|check| check.name == "persistence" && check.status == "error"));
+        let response = app(state.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("PUT")
+                    .uri("/api/app-settings")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(r#"{"listenOnAllInterfaces":false}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        // Every route whose owner captures a persistence snapshot is guarded before
+        // extraction/side effects, including requests that would otherwise be invalid.
+        for (method, uri) in [
+            ("PUT", "/api/controllers/missing"),
+            ("PUT", "/api/controllers/missing/config"),
+            ("PUT", "/api/controllers/missing/edge-profiles/1"),
+            ("POST", "/api/profiles"),
+            ("POST", "/api/profiles/import"),
+            ("PUT", "/api/profiles/missing"),
+            ("DELETE", "/api/profiles/missing"),
+            ("PUT", "/api/profiles/missing/config"),
+            ("POST", "/api/profiles/missing/activate"),
+            ("PUT", "/api/adapters/missing"),
+            ("POST", "/api/input-bridge/bindings"),
+            ("POST", "/api/games/local"),
+            ("POST", "/api/games/custom"),
+            ("DELETE", "/api/games/custom/missing"),
+            ("PUT", "/api/profile-resolution/override"),
+            ("DELETE", "/api/profile-resolution/override"),
+        ] {
+            let response = app(state.clone())
+                .oneshot(
+                    axum::http::Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .header("content-type", "application/json")
+                        .body(axum::body::Body::from("{}"))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "{method} {uri}"
+            );
+        }
+        for uri in [
+            "/api/status",
+            "/api/diagnostics",
+            "/api/app-settings",
+            "/api/profiles",
+        ] {
+            let response = app(state.clone())
+                .oneshot(
+                    axum::http::Request::builder()
+                        .uri(uri)
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), axum::http::StatusCode::OK, "{uri}");
+        }
+        let response = app(state.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/input-bridge/sessions/missing/stop")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_ne!(
+            response.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        let pending = {
+            let mut inner = state.inner.write().await;
+            inner.active_profile_id = Some("mutation-after-unlock".into());
+            build_persist_snapshot(&inner)
+        };
+        persist_snapshot(&state, pending).await;
+        assert_eq!(fs::read(&store.state_file).unwrap(), original);
+        fs::remove_dir_all(store.state_file.parent().unwrap()).unwrap();
+    }
 
     fn test_store() -> PersistenceStore {
         PersistenceStore {

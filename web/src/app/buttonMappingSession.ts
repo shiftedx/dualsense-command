@@ -522,6 +522,8 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
         appId: steamInputLayout.appId ?? steamContextGame?.appId ?? null,
         inputId: bindingToSave.inputId,
         groupId: bindingToSave.groupId ?? null,
+        source: bindingToSave.source ?? null,
+        sourceMode: bindingToSave.sourceMode ?? null,
         activator: bindingToSave.activator ?? null,
         rawBinding,
         profileName: input.activeProfileName || input.profileContextGameName || steamContextGame?.name || null,

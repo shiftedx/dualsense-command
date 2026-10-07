@@ -423,6 +423,7 @@ struct AgentStateInner {
     logs: Vec<LogEntry>,
     device_backend: DeviceBackendSummary,
     storage: Option<PersistenceStore>,
+    persistence_load_error: Option<String>,
     controller_configs: BTreeMap<String, ControllerConfig>,
     profile_configs: BTreeMap<String, ProfileConfig>,
     profile_overrides: BTreeMap<String, ProfileOverride>,
@@ -595,14 +596,36 @@ impl AgentState {
     fn from_controller_registry_with_backend_and_storage(
         controllers: ControllerRegistry,
         device_backend: DeviceBackendSummary,
-        storage: Option<PersistenceStore>,
+        mut storage: Option<PersistenceStore>,
     ) -> Self {
         let (event_tx, _) = broadcast::channel(64);
-        let persisted = storage
-            .as_ref()
-            .and_then(|store| store.load().ok())
-            .unwrap_or_default()
-            .normalized();
+        let mut logs = vec![LogEntry {
+            level: "info".to_string(),
+            message: "Agent initialized with dscc-device controller registry".to_string(),
+            timestamp: current_timestamp(),
+        }];
+        let mut persistence_load_error = None;
+        let persisted = match storage.as_ref().map(PersistenceStore::load).transpose() {
+            Ok(persisted) => persisted.unwrap_or_default(),
+            Err(error) => {
+                if error.kind() != io::ErrorKind::InvalidData {
+                    // Defaults must not overwrite state that was never successfully read,
+                    // even if its permissions or sharing lock change later in this session.
+                    storage = None;
+                }
+                logs.push(LogEntry {
+                    level: "warn".to_string(),
+                    message: if storage.is_none() {
+                        "Could not load DSCC state. Persistence is disabled for this session; restore access and restart DSCC to load the saved state.".to_string()
+                    } else {
+                        format!("Could not load DSCC state: {error}")
+                    },
+                    timestamp: current_timestamp(),
+                });
+                persistence_load_error = logs.last().map(|log| log.message.clone());
+                PersistedAgentState::default()
+            }
+        }.normalized();
         let active_profile_id = persisted
             .active_profile_id
             .clone()
@@ -642,13 +665,10 @@ impl AgentState {
                 ),
                 adapters: adapters_with_persisted_state(&persisted.adapters),
                 telemetry: SignalSnapshot::default(),
-                logs: vec![LogEntry {
-                    level: "info".to_string(),
-                    message: "Agent initialized with dscc-device controller registry".to_string(),
-                    timestamp: current_timestamp(),
-                }],
+                logs,
                 device_backend,
                 storage,
+                persistence_load_error,
                 controller_configs: persisted.controller_configs,
                 profile_configs: persisted.profile_configs,
                 profile_overrides: persisted.profile_overrides,
@@ -1640,7 +1660,7 @@ impl AgentState {
         StatusResponse {
             product: "DualSense Command Center Agent".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            healthy: true,
+            healthy: inner.persistence_load_error.is_none(),
             bind_address: self.bind_addr.to_string(),
             uptime_seconds: self.started_at.elapsed().as_secs(),
             active_profile_id: if supported_foreground_game_detected {
@@ -1718,6 +1738,13 @@ impl AgentState {
                 },
             },
         ];
+        if let Some(error) = &inner.persistence_load_error {
+            checks.push(HealthCheck {
+                name: "persistence".to_string(),
+                status: "error".to_string(),
+                detail: error.clone(),
+            });
+        }
         if let Some(paths) = app_paths() {
             checks.push(HealthCheck {
                 name: "app-paths".to_string(),

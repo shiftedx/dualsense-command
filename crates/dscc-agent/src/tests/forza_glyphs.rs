@@ -2,6 +2,35 @@ use super::support::*;
 use super::*;
 
 const TEST_GLYPHS: &[u8] = b"PK\x03\x04original-dscc-test-fixture";
+
+#[test]
+fn glyph_archive_switch_preserves_original_and_requires_restore() {
+    let _env = glyph_archive_env();
+    let root = temp_test_dir("dscc-glyph-switch");
+    let targets = forza_controller_icon_targets(&root);
+    for target in &targets {
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(target, b"original xbox icons").unwrap();
+    }
+    install_forza_playstation_glyphs(root.clone()).unwrap();
+    let archive = std::env::var_os("DSCC_FORZA_GLYPH_ARCHIVE").unwrap();
+    fs::write(&archive, b"PK\x03\x04different-pack").unwrap();
+    assert!(install_forza_playstation_glyphs(root.clone()).is_err());
+    for target in &targets {
+        assert_eq!(fs::read(target).unwrap(), TEST_GLYPHS);
+        assert_eq!(
+            fs::read(forza_controller_icon_backup_path(target)).unwrap(),
+            b"original xbox icons"
+        );
+    }
+    restore_forza_original_glyphs(root.clone()).unwrap();
+    install_forza_playstation_glyphs(root.clone()).unwrap();
+    restore_forza_original_glyphs(root.clone()).unwrap();
+    for target in &targets {
+        assert_eq!(fs::read(target).unwrap(), b"original xbox icons");
+    }
+    fs::remove_dir_all(root).unwrap();
+}
 fn glyph_archive_env() -> TestEnv {
     let env = TestEnv::new(&["DSCC_FORZA_GLYPH_ARCHIVE"]);
     let path = std::env::temp_dir().join(format!("dscc-glyph-fixture-{}.zip", std::process::id()));
@@ -160,7 +189,7 @@ fn forza_glyph_installer_refuses_to_install_without_originals() {
 }
 
 #[test]
-fn forza_glyph_installer_recovers_bad_playstation_backups_after_verify() {
+fn forza_glyph_installer_preserves_ambiguous_backup_after_verify() {
     let _env = glyph_archive_env();
     let root = std::env::temp_dir().join(format!(
         "dscc-forza-glyph-recovery-test-{}",
@@ -179,10 +208,14 @@ fn forza_glyph_installer_recovers_bad_playstation_backups_after_verify() {
             .expect("stale PlayStation backup should be writable");
     }
 
-    install_forza_playstation_glyphs(root.clone()).expect("glyph install should succeed");
-    restore_forza_original_glyphs(root.clone()).expect("glyph restore should succeed");
+    assert!(install_forza_playstation_glyphs(root.clone()).is_err());
+    assert!(restore_forza_original_glyphs(root.clone()).is_err());
 
     for (index, target) in targets.iter().enumerate() {
+        assert_eq!(
+            fs::read(forza_controller_icon_backup_path(target)).unwrap(),
+            TEST_GLYPHS
+        );
         assert_eq!(
             fs::read_to_string(target).expect("restored icon should be readable"),
             format!("xbox-icons-{index}")

@@ -1,4 +1,4 @@
-﻿use std::fs;
+use std::fs;
 
 use super::{
     display_labels::friendly_steam_input,
@@ -7,7 +7,7 @@ use super::{
     writer::{
         backup_and_write_steam_input_layout, mark_dscc_steam_profile_metadata,
         normalize_steam_raw_binding, replace_steam_binding_value,
-        steam_binding_matches_write_request, SteamInputWriteFailure,
+        steam_binding_matches_write_request, steam_layout_writer, SteamInputWriteFailure,
     },
     SteamInputBinding, SteamInputBindingWriteRequest, SteamInputLayout,
     SteamInputPaddlePresetPaddleResult, SteamInputPaddlePresetRequest,
@@ -47,6 +47,8 @@ pub(crate) fn write_steam_input_paddle_preset(
 
     let (steam_root, target_path) =
         resolve_steam_input_layout_path(&request.layout_source, request.app_id.as_deref())?;
+    let writer = steam_layout_writer(&target_path);
+    let _transaction = writer.lock().unwrap_or_else(|error| error.into_inner());
     let metadata = fs::metadata(&target_path).map_err(|error| {
         SteamInputWriteFailure::io("Steam Input layout metadata could not be read", error)
     })?;
@@ -59,6 +61,11 @@ pub(crate) fn write_steam_input_paddle_preset(
     let contents = fs::read_to_string(&target_path).map_err(|error| {
         SteamInputWriteFailure::io("Steam Input layout could not be read", error)
     })?;
+    if contents.len() > 256 * 1024 {
+        return Err(SteamInputWriteFailure::bad_request(
+            "Steam Input layout exceeds the guarded write limit.",
+        ));
+    }
     let layout =
         parse_steam_input_layout(&steam_root, &target_path, &contents).ok_or_else(|| {
             SteamInputWriteFailure::conflict("Steam Input layout could not be parsed.")
@@ -81,19 +88,11 @@ pub(crate) fn write_steam_input_paddle_preset(
     );
 
     let left_updated = replace_steam_binding_value(&contents, &left_request, &left_raw_binding)?
-        .ok_or_else(|| {
-            SteamInputWriteFailure::conflict(
-                "Steam Input layout changed before the left paddle preset could be written.",
-            )
-        })?;
+        .unwrap_or_else(|| contents.clone());
     let left_changed = left_updated != contents;
     let right_updated =
         replace_steam_binding_value(&left_updated, &right_request, &right_raw_binding)?
-            .ok_or_else(|| {
-                SteamInputWriteFailure::conflict(
-                    "Steam Input layout changed before the right paddle preset could be written.",
-                )
-            })?;
+            .unwrap_or_else(|| left_updated.clone());
     let right_changed = right_updated != left_updated;
     let next_contents =
         mark_dscc_steam_profile_metadata(&right_updated, request.profile_name.as_deref());
@@ -129,6 +128,7 @@ pub(crate) fn write_steam_input_paddle_preset(
     let backup_path = if !request.dry_run && changed {
         Some(backup_and_write_steam_input_layout(
             &target_path,
+            &contents,
             &next_contents,
         )?)
     } else {
@@ -189,6 +189,8 @@ fn steam_paddle_binding_write_request(
         app_id: preset.app_id.clone(),
         input_id: input_id.to_string(),
         group_id: target.group_id.clone(),
+        source: target.source.clone(),
+        source_mode: target.source_mode.clone(),
         activator: target.activator.clone(),
         raw_binding: raw_binding.to_string(),
         profile_name: preset.profile_name.clone(),
@@ -230,20 +232,23 @@ pub(crate) fn steam_edge_paddle_binding<'a>(
             "DualSense Edge {paddle} binding was not found in this Steam Input layout. Open Steam's configurator once and map the Edge paddles before applying the preset."
         )));
     };
-    let preferred = std::iter::once(first)
-        .chain(matches)
-        .find(|binding| {
-            binding.group_id.is_some()
-                && binding.activator.as_deref().unwrap_or("Full Press") == "Full Press"
-                && binding.source.as_deref().unwrap_or("Switches") == "Switches"
-        })
-        .unwrap_or(first);
-    if preferred.group_id.is_none() {
+    let mut preferred = std::iter::once(first).chain(matches).filter(|binding| {
+        binding.group_id.is_some()
+            && binding.source_mode.is_some()
+            && binding.activator.as_deref() == Some("Full Press")
+            && binding.source.as_deref() == Some("Switches")
+    });
+    let Some(selected) = preferred.next() else {
         return Err(SteamInputWriteFailure::conflict(
-            "DualSense Edge paddle binding is missing Steam group identity, so DSCC will not edit it.",
+            "DualSense Edge paddle binding is missing complete Steam slot identity, so DSCC will not edit it.",
+        ));
+    };
+    if preferred.next().is_some() {
+        return Err(SteamInputWriteFailure::conflict(
+            "Multiple DualSense Edge paddle slots match the preset; select and edit the intended binding individually.",
         ));
     }
-    Ok(preferred)
+    Ok(selected)
 }
 
 fn normalize_steam_keyboard_key(

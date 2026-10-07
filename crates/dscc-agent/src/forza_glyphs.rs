@@ -130,13 +130,21 @@ pub(crate) fn install_forza_playstation_glyphs(root: PathBuf) -> io::Result<Stri
         let target_already_playstation = file_matches_bytes(&target, &glyphs)?;
         let backup_is_playstation = file_matches_bytes(&backup, &glyphs)?;
 
-        if target_exists && !target_already_playstation {
-            backup_actions.push((target.clone(), backup));
+        if backup_exists {
+            if backup_is_playstation
+                || (target_exists
+                    && !target_already_playstation
+                    && fs::read(&target)? != fs::read(&backup)?)
+            {
+                return Err(io::Error::new(io::ErrorKind::InvalidData,
+                    "Glyph replacement identity is ambiguous. DSCC preserved the existing backup. Restore the original glyphs before switching archives; if the backup is invalid, verify the game files and preserve or remove that backup manually."));
+            }
             install_targets.push(target);
             continue;
         }
 
-        if backup_exists && !backup_is_playstation {
+        if target_exists && !target_already_playstation {
+            backup_actions.push((target.clone(), backup));
             install_targets.push(target);
             continue;
         }
@@ -164,7 +172,13 @@ pub(crate) fn install_forza_playstation_glyphs(root: PathBuf) -> io::Result<Stri
         if let Some(parent) = backup.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::copy(target, backup)?;
+        let mut source = fs::File::open(target)?;
+        let mut destination = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(backup)?;
+        io::copy(&mut source, &mut destination)?;
+        destination.sync_all()?;
     }
 
     for target in install_targets {
@@ -173,10 +187,7 @@ pub(crate) fn install_forza_playstation_glyphs(root: PathBuf) -> io::Result<Stri
         }
         let temp = target.with_extension("zip.dscc-new");
         fs::write(&temp, &glyphs)?;
-        if path_exists(&target)? {
-            fs::remove_file(&target)?;
-        }
-        fs::rename(temp, target)?;
+        super::persistence::replace_state_file(&temp, &target)?;
     }
 
     Ok(format!(
@@ -251,10 +262,7 @@ pub(crate) fn restore_forza_original_glyphs(root: PathBuf) -> io::Result<String>
         }
         let temp = target.with_extension("zip.dscc-restore");
         fs::copy(&backup, &temp)?;
-        if path_exists(&target)? {
-            fs::remove_file(&target)?;
-        }
-        fs::rename(temp, target)?;
+        super::persistence::replace_state_file(&temp, &target)?;
         restored += 1;
     }
 

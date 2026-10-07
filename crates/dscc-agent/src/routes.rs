@@ -2,6 +2,8 @@ use super::*;
 use axum::{handler::HandlerWithoutStateExt, http::Uri, response::Response};
 
 pub fn app(state: AgentState) -> Router {
+    let persistence_guard =
+        middleware::from_fn_with_state(state.clone(), persistence::require_persistence_available);
     let dist = web_dist_dir();
     let index = dist.join("index.html");
     let spa_fallback = move |uri: Uri| {
@@ -15,17 +17,23 @@ pub fn app(state: AgentState) -> Router {
         .route("/api/update-check", get(get_update_check))
         .route(
             "/api/app-settings",
-            get(get_app_settings).put(update_app_settings),
+            get(get_app_settings)
+                .put(update_app_settings)
+                .layer(persistence_guard.clone()),
         )
         .route("/api/snapshot", get(get_snapshot))
         .route("/api/controllers", get(list_controllers))
         .route(
             "/api/controllers/{id}",
-            get(get_controller).put(update_controller),
+            get(get_controller)
+                .put(update_controller)
+                .layer(persistence_guard.clone()),
         )
         .route(
             "/api/controllers/{id}/config",
-            get(get_controller_config).put(update_controller_config),
+            get(get_controller_config)
+                .put(update_controller_config)
+                .layer(persistence_guard.clone()),
         )
         .route("/api/controllers/{id}/input", get(get_controller_input))
         .route(
@@ -34,7 +42,7 @@ pub fn app(state: AgentState) -> Router {
         )
         .route(
             "/api/controllers/{id}/edge-profiles/{slot}",
-            put(write_edge_profile),
+            put(write_edge_profile).layer(persistence_guard.clone()),
         )
         .route("/api/controllers/{id}/test-effect", post(test_effect))
         .route(
@@ -45,17 +53,37 @@ pub fn app(state: AgentState) -> Router {
             "/api/controllers/current/input",
             get(get_current_controller_input),
         )
-        .route("/api/profiles", get(list_profiles).post(create_profile))
-        .route("/api/profiles/import", post(import_profile))
+        .route(
+            "/api/profiles",
+            get(list_profiles)
+                .post(create_profile)
+                .layer(persistence_guard.clone()),
+        )
+        .route(
+            "/api/profiles/import",
+            post(import_profile).layer(persistence_guard.clone()),
+        )
         .route(
             "/api/profiles/{id}",
-            get(get_profile).put(update_profile).delete(delete_profile),
+            get(get_profile)
+                .put(update_profile)
+                .delete(delete_profile)
+                .layer(persistence_guard.clone()),
         )
-        .route("/api/profiles/{id}/config", put(update_profile_config))
+        .route(
+            "/api/profiles/{id}/config",
+            put(update_profile_config).layer(persistence_guard.clone()),
+        )
         .route("/api/profiles/{id}/export", get(export_profile))
-        .route("/api/profiles/{id}/activate", post(activate_profile))
+        .route(
+            "/api/profiles/{id}/activate",
+            post(activate_profile).layer(persistence_guard.clone()),
+        )
         .route("/api/adapters", get(list_adapters))
-        .route("/api/adapters/{id}", put(update_adapter))
+        .route(
+            "/api/adapters/{id}",
+            put(update_adapter).layer(persistence_guard.clone()),
+        )
         .route("/api/steam-input", get(get_steam_input_status))
         .route(
             "/api/steam-input/bindings",
@@ -68,7 +96,7 @@ pub fn app(state: AgentState) -> Router {
         .route("/api/input-bridge", get(get_input_bridge_status))
         .route(
             "/api/input-bridge/bindings",
-            post(write_input_bridge_binding),
+            post(write_input_bridge_binding).layer(persistence_guard.clone()),
         )
         .route(
             "/api/input-bridge/sessions/{controller_id}",
@@ -92,14 +120,25 @@ pub fn app(state: AgentState) -> Router {
         .route("/api/games/steam-library", get(list_steam_library))
         .route("/api/games/steam-library/browse", get(browse_steam_library))
         .route("/api/games/local/validate", post(validate_local_game))
-        .route("/api/games/local", post(add_local_game))
-        .route("/api/games/custom", post(add_custom_game))
-        .route("/api/games/custom/{game_id}", delete(remove_custom_game))
+        .route(
+            "/api/games/local",
+            post(add_local_game).layer(persistence_guard.clone()),
+        )
+        .route(
+            "/api/games/custom",
+            post(add_custom_game).layer(persistence_guard.clone()),
+        )
+        .route(
+            "/api/games/custom/{game_id}",
+            delete(remove_custom_game).layer(persistence_guard.clone()),
+        )
         .route("/api/effects/current", get(get_current_effect))
         .route("/api/profile-resolution", get(get_profile_resolution))
         .route(
             "/api/profile-resolution/override",
-            put(set_profile_override).delete(clear_profile_override),
+            put(set_profile_override)
+                .delete(clear_profile_override)
+                .layer(persistence_guard),
         )
         .route("/api/telemetry", get(list_telemetry))
         .route("/api/logs", get(list_logs))

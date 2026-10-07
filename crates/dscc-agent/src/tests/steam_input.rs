@@ -1,6 +1,290 @@
 use super::support::*;
 use super::*;
 
+fn audit_steam_layout(left: &str, right: &str) -> String {
+    format!(
+        r#""controller_mappings"
+{{
+"title" "Fixture"
+"controller_type" "controller_ps5_edge"
+"group"
+{{
+"id" "7"
+"mode" "switches"
+"inputs"
+{{
+"button_back_left"
+{{
+"activators"
+{{
+"Full_Press"
+{{
+"bindings"
+{{
+"binding" "{left}"
+}}
+}}
+}}
+}}
+"button_back_right"
+{{
+"activators"
+{{
+"Full_Press"
+{{
+"bindings"
+{{
+"binding" "{right}"
+}}
+}}
+}}
+}}
+}}
+}}
+"preset"
+{{
+"group_source_bindings"
+{{
+"7" "switch active"
+}}
+}}
+}}
+"#
+    )
+}
+
+fn audit_steam_request(path: &FsPath, input: &str, raw: &str) -> SteamInputBindingWriteRequest {
+    serde_json::from_value(serde_json::json!({
+        "layoutSource": path.display().to_string(), "appId": "2483190",
+        "inputId": input, "groupId": "7", "source": "Switches", "sourceMode": "Switches",
+        "activator": "Full Press", "rawBinding": raw, "dryRun": false
+    }))
+    .unwrap()
+}
+
+#[test]
+fn steam_audit_paddle_selection_rejects_multiple_eligible_groups() {
+    let source = audit_steam_layout("key_press A, , ", "key_press B, , ");
+    let mut layout = parse_steam_input_layout(
+        FsPath::new("."),
+        FsPath::new("controller_fixture.vdf"),
+        &source,
+    )
+    .unwrap();
+    let mut duplicate = layout.bindings[0].clone();
+    duplicate.group_id = Some("8".into());
+    layout.bindings.push(duplicate);
+    assert!(steam_edge_paddle_binding(&layout, "button_back_left").is_err());
+}
+
+#[test]
+fn steam_audit_rapid_writes_keep_distinct_backup_preimages() {
+    let _env = TestEnv::new(&[
+        "DSCC_STEAM_ROOT",
+        "ProgramFiles(x86)",
+        "ProgramFiles",
+        "LOCALAPPDATA",
+    ]);
+    let root = temp_test_dir("dscc-steam-backup-preimages");
+    let target = root.join("userdata/123456/2483190/remote/controller_fixture.vdf");
+    fs::create_dir_all(target.parent().unwrap()).unwrap();
+    std::env::set_var("DSCC_STEAM_ROOT", &root);
+    for name in ["ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"] {
+        std::env::set_var(name, root.join("missing"));
+    }
+    let original = audit_steam_layout("key_press A, , ", "key_press B, , ");
+    fs::write(&target, &original).unwrap();
+    let first = write_steam_input_binding(audit_steam_request(
+        &target,
+        "button_back_left",
+        "key_press Q, , ",
+    ))
+    .unwrap();
+    let intermediate = fs::read(&target).unwrap();
+    let second = write_steam_input_binding(audit_steam_request(
+        &target,
+        "button_back_right",
+        "key_press E, , ",
+    ))
+    .unwrap();
+    assert_ne!(first.backup_path, second.backup_path);
+    assert_eq!(
+        fs::read(first.backup_path.unwrap()).unwrap(),
+        original.as_bytes()
+    );
+    assert_eq!(fs::read(second.backup_path.unwrap()).unwrap(), intermediate);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn steam_audit_paddle_preset_handles_every_unchanged_combination() {
+    let _env = TestEnv::new(&[
+        "DSCC_STEAM_ROOT",
+        "ProgramFiles(x86)",
+        "ProgramFiles",
+        "LOCALAPPDATA",
+    ]);
+    let root = temp_test_dir("dscc-steam-idempotent-paddles");
+    let target = root.join("userdata/123456/2483190/remote/controller_fixture.vdf");
+    fs::create_dir_all(target.parent().unwrap()).unwrap();
+    std::env::set_var("DSCC_STEAM_ROOT", &root);
+    for name in ["ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"] {
+        std::env::set_var(name, root.join("missing"));
+    }
+    for dry_run in [true, false] {
+        for left_current in [false, true] {
+            for right_current in [false, true] {
+                let original = audit_steam_layout(
+                    if left_current {
+                        "key_press Q, , "
+                    } else {
+                        "key_press A, , "
+                    },
+                    if right_current {
+                        "key_press E, , "
+                    } else {
+                        "key_press B, , "
+                    },
+                );
+                fs::write(&target, &original).unwrap();
+                let result = write_steam_input_paddle_preset(SteamInputPaddlePresetRequest {
+                    layout_source: target.display().to_string(),
+                    app_id: Some("2483190".into()),
+                    left_key: None,
+                    right_key: None,
+                    profile_name: None,
+                    dry_run,
+                })
+                .unwrap();
+                assert_eq!(result.paddles[0].changed, !left_current);
+                assert_eq!(result.paddles[1].changed, !right_current);
+                if dry_run || (left_current && right_current) {
+                    assert!(result.backup_path.is_none());
+                    assert_eq!(fs::read_to_string(&target).unwrap(), original);
+                } else {
+                    let updated = fs::read_to_string(&target).unwrap();
+                    assert!(
+                        updated.contains("key_press Q, , ") && updated.contains("key_press E, , ")
+                    );
+                }
+            }
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn steam_audit_api_rejects_missing_and_stale_slot_selectors() {
+    let _env = TestEnv::new(&[
+        "DSCC_STEAM_ROOT",
+        "ProgramFiles(x86)",
+        "ProgramFiles",
+        "LOCALAPPDATA",
+    ]);
+    let root = temp_test_dir("dscc-steam-complete-selectors");
+    let target = root.join("userdata/123456/2483190/remote/controller_fixture.vdf");
+    fs::create_dir_all(target.parent().unwrap()).unwrap();
+    std::env::set_var("DSCC_STEAM_ROOT", &root);
+    for name in ["ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"] {
+        std::env::set_var(name, root.join("missing"));
+    }
+    let original = audit_steam_layout("key_press A, , ", "key_press B, , ");
+    fs::write(&target, &original).unwrap();
+    let body = serde_json::json!({"layoutSource": target.display().to_string(), "appId": "2483190", "inputId": "button_back_left", "groupId": "7", "source": "Switches", "sourceMode": "Switches", "activator": "Full Press", "rawBinding": "key_press Q"});
+    for field in ["groupId", "source", "sourceMode", "activator"] {
+        for missing in [true, false] {
+            let mut request = body.clone();
+            if missing {
+                request.as_object_mut().unwrap().remove(field);
+            } else {
+                request[field] = serde_json::json!("stale");
+            }
+            let response = app(AgentState::mock())
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri("/api/steam-input/bindings")
+                        .header("content-type", "application/json")
+                        .body(Body::from(request.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert!(
+                response.status().is_client_error(),
+                "{field}, missing={missing}: {}",
+                response.status()
+            );
+            assert_eq!(fs::read_to_string(&target).unwrap(), original);
+        }
+    }
+    let ambiguous = original.replace(
+        "\"binding\" \"key_press A, , \"",
+        "\"binding\" \"key_press A, , \"\n\"binding\" \"key_press C, , \"",
+    );
+    fs::write(&target, &ambiguous).unwrap();
+    let response = app(AgentState::mock())
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/steam-input/bindings")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(fs::read_to_string(&target).unwrap(), ambiguous);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn steam_audit_concurrent_edits_preserve_both_changes() {
+    let _env = TestEnv::new(&[
+        "DSCC_STEAM_ROOT",
+        "ProgramFiles(x86)",
+        "ProgramFiles",
+        "LOCALAPPDATA",
+    ]);
+    let root = temp_test_dir("dscc-steam-concurrent");
+    let target = root.join("userdata/123456/2483190/remote/controller_fixture.vdf");
+    fs::create_dir_all(target.parent().unwrap()).unwrap();
+    std::env::set_var("DSCC_STEAM_ROOT", &root);
+    for name in ["ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"] {
+        std::env::set_var(name, root.join("missing"));
+    }
+    for _ in 0..16 {
+        fs::write(
+            &target,
+            audit_steam_layout("key_press A, , ", "key_press B, , "),
+        )
+        .unwrap();
+        let gate = std::sync::Arc::new(std::sync::Barrier::new(2));
+        std::thread::scope(|scope| {
+            let a = audit_steam_request(&target, "button_back_left", "key_press Q, , ");
+            let b = audit_steam_request(&target, "button_back_right", "key_press E, , ");
+            let gate_a = gate.clone();
+            let first = scope.spawn(move || {
+                gate_a.wait();
+                write_steam_input_binding(a)
+            });
+            let second = scope.spawn(move || {
+                gate.wait();
+                write_steam_input_binding(b)
+            });
+            first.join().unwrap().unwrap();
+            second.join().unwrap().unwrap();
+        });
+        let contents = fs::read_to_string(&target).unwrap();
+        assert!(
+            contents.contains("key_press Q, , ") && contents.contains("key_press E, , "),
+            "accepted edits were lost"
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn missing_button_assignments_normalize_to_defaults() {
     let mut controller_value = serde_json::to_value(ControllerConfig::default_for(
@@ -307,6 +591,15 @@ fn steam_input_writer_replaces_only_selected_binding() {
 "title" "Forza Layout"
 "revision" "4"
 "controller_type" "controller_ps5_edge"
+"preset"
+{
+"group_source_bindings"
+{
+"7" "switch active"
+"9" "dpad active"
+"14" "center_trackpad active"
+}
+}
 "group"
 {
     "id" "7"
@@ -349,6 +642,8 @@ fn steam_input_writer_replaces_only_selected_binding() {
         app_id: Some("2483190".to_string()),
         input_id: "button_back_left".to_string(),
         group_id: Some("7".to_string()),
+        source: Some("Switches".into()),
+        source_mode: Some("Switches".into()),
         activator: Some("Full Press".to_string()),
         raw_binding: "key_press M, , ".to_string(),
         profile_name: Some("Immersive / active".to_string()),
@@ -374,6 +669,15 @@ fn steam_input_writer_updates_center_trackpad_without_touching_dpad() {
 "title" "Forza Layout"
 "revision" "2"
 "controller_type" "controller_ps5_edge"
+"preset"
+{
+"group_source_bindings"
+{
+"7" "switch active"
+"9" "dpad active"
+"14" "center_trackpad active"
+}
+}
 "group"
 {
     "id" "9"
@@ -424,6 +728,8 @@ fn steam_input_writer_updates_center_trackpad_without_touching_dpad() {
         app_id: Some("2483190".to_string()),
         input_id: "dpad_north".to_string(),
         group_id: Some("14".to_string()),
+        source: Some("Center Trackpad".into()),
+        source_mode: Some("Directional Swipe".into()),
         activator: Some("Full Press".to_string()),
         raw_binding: "key_press TAB, , ".to_string(),
         profile_name: Some("Immersive / active".to_string()),
@@ -457,6 +763,15 @@ fn steam_input_paddle_preset_writes_only_edge_back_paddles_and_creates_backup() 
 "title" "Forza Layout"
 "revision" "5"
 "controller_type" "controller_ps5_edge"
+"preset"
+{
+"group_source_bindings"
+{
+"7" "switch active"
+"9" "dpad active"
+"14" "center_trackpad active"
+}
+}
 "group"
 {
     "id" "7"
@@ -581,6 +896,15 @@ fn steam_input_paddle_preset_uses_configurable_keys_in_dry_run() {
 {
 "title" "Forza Layout"
 "controller_type" "controller_ps5_edge"
+"preset"
+{
+"group_source_bindings"
+{
+"7" "switch active"
+"9" "dpad active"
+"14" "center_trackpad active"
+}
+}
 "group"
 {
     "id" "7"
@@ -745,6 +1069,15 @@ fn steam_input_writer_dry_run_uses_temp_steam_root_without_writing() {
 {
 "title" "Gamepad"
 "controller_type" "controller_ps5_edge"
+"preset"
+{
+"group_source_bindings"
+{
+"7" "switch active"
+"9" "dpad active"
+"14" "center_trackpad active"
+}
+}
 "group"
 {
     "id" "7"
@@ -776,6 +1109,8 @@ fn steam_input_writer_dry_run_uses_temp_steam_root_without_writing() {
         app_id: Some("2483190".to_string()),
         input_id: "button_back_left".to_string(),
         group_id: Some("7".to_string()),
+        source: Some("Switches".into()),
+        source_mode: Some("Switches".into()),
         activator: Some("Full Press".to_string()),
         raw_binding: "key_press M".to_string(),
         profile_name: Some("Base".to_string()),
@@ -812,6 +1147,15 @@ fn steam_input_writer_creates_backup_before_writing() {
 "title" "Gamepad"
 "revision" "1"
 "controller_type" "controller_ps5_edge"
+"preset"
+{
+"group_source_bindings"
+{
+"7" "switch active"
+"9" "dpad active"
+"14" "center_trackpad active"
+}
+}
 "group"
 {
     "id" "7"
@@ -843,6 +1187,8 @@ fn steam_input_writer_creates_backup_before_writing() {
         app_id: Some("2483190".to_string()),
         input_id: "button_back_left".to_string(),
         group_id: Some("7".to_string()),
+        source: Some("Switches".into()),
+        source_mode: Some("Switches".into()),
         activator: Some("Full Press".to_string()),
         raw_binding: "key_press M".to_string(),
         profile_name: Some("Base".to_string()),
@@ -939,6 +1285,8 @@ fn steam_input_writer_rejects_layouts_over_guarded_size_limit() {
         app_id: Some("2483190".to_string()),
         input_id: "button_back_left".to_string(),
         group_id: None,
+        source: None,
+        source_mode: None,
         activator: None,
         raw_binding: "key_press M".to_string(),
         profile_name: None,
@@ -982,6 +1330,15 @@ async fn steam_input_binding_route_honors_snake_case_dry_run() {
 {
 "title" "Gamepad"
 "controller_type" "controller_ps5_edge"
+"preset"
+{
+"group_source_bindings"
+{
+"7" "switch active"
+"9" "dpad active"
+"14" "center_trackpad active"
+}
+}
 "group"
 {
     "id" "7"
@@ -1013,6 +1370,8 @@ async fn steam_input_binding_route_honors_snake_case_dry_run() {
         "appId": "2483190",
         "inputId": "button_back_left",
         "groupId": "7",
+        "source": "Switches",
+        "sourceMode": "Switches",
         "activator": "Full Press",
         "rawBinding": "key_press M",
         "profileName": "Base",
@@ -1063,6 +1422,15 @@ async fn steam_input_paddle_preset_route_honors_snake_case_dry_run() {
 {
 "title" "Forza Layout"
 "controller_type" "controller_ps5_edge"
+"preset"
+{
+"group_source_bindings"
+{
+"7" "switch active"
+"9" "dpad active"
+"14" "center_trackpad active"
+}
+}
 "group"
 {
     "id" "7"

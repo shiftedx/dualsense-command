@@ -649,6 +649,8 @@ export interface SteamInputBindingWriteRequest {
   appId?: string | null;
   inputId: string;
   groupId?: string | null;
+  source: string | null;
+  sourceMode: string | null;
   activator?: string | null;
   rawBinding: string;
   profileName?: string | null;

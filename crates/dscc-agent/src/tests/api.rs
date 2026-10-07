@@ -179,6 +179,44 @@ fn support_sanitizer_redacts_absolute_paths_and_steam_ids() {
 }
 
 #[test]
+fn support_sanitizer_redacts_unc_and_posix_without_redacting_urls() {
+    for path in [
+        r"\\synthetic-server\private-share\config.json",
+        r"\\?\UNC\synthetic-server\private-share\config.json",
+        "/srv/private-fixture/config.json",
+    ] {
+        let sanitized = sanitize_support_text(&format!(
+            "Read failed at '{path}'. See https://example.test/help/path."
+        ));
+        assert!(!sanitized.contains("private"), "{sanitized}");
+        assert!(
+            sanitized.contains("https://example.test/help/path"),
+            "{sanitized}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn support_bundle_opaque_path_fields_hide_custom_overrides() {
+    let _env = TestEnv::new(&["DSCC_CONFIG_DIR", "DSCC_WEB_DIST"]);
+    std::env::set_var("DSCC_CONFIG_DIR", "/srv/private-config");
+    std::env::set_var("DSCC_WEB_DIST", r"\\synthetic-server\private-web\dist");
+    let state = AgentState::mock();
+    state
+        .inner
+        .write()
+        .await
+        .app_settings
+        .forza_playstation_glyphs
+        .last_message = r"Failed at \\?\UNC\synthetic-server\private-glyphs\icons.zip".into();
+    let bundle = state.support_bundle().await;
+    let json = serde_json::to_string(&bundle).unwrap();
+    assert!(!json.contains("private-"), "{json}");
+    assert!(!json.contains("synthetic-server"));
+    assert_eq!(bundle.paths.web_dist_dir, "[local-path]");
+}
+
+#[test]
 fn update_check_version_comparison_handles_tags_and_unknowns() {
     assert_eq!(
         compare_release_versions("0.2.0", "v0.3.0"),

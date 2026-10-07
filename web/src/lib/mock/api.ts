@@ -627,9 +627,15 @@ export async function writeMockSteamInputBinding(
   request: SteamInputBindingWriteRequest
 ): Promise<SteamInputBindingWriteResponse> {
   const layout =
-    state.snapshot.steamInput.layouts.find((item) => item.source === request.layoutSource) ??
-    state.snapshot.steamInput.layouts[0];
+    state.snapshot.steamInput.layouts.find((item) => item.source === request.layoutSource);
   if (!layout) throw new Error('No mock Steam Input layout is loaded.');
+
+  if ([request.groupId, request.source, request.sourceMode, request.activator].some((value) => !value?.trim())) {
+    throw new Error('Steam binding requires complete slot identity.');
+  }
+  if (layout.bindings.filter((binding) => bindingMatchesWriteRequest(binding, request)).length !== 1) {
+    throw new Error('The Steam binding selector is stale or ambiguous; refresh the layout before editing.');
+  }
 
   const existingIndex = layout.bindings.findIndex((binding) => bindingMatchesWriteRequest(binding, request));
   const existing = existingIndex >= 0 ? layout.bindings[existingIndex] : null;
@@ -898,8 +904,10 @@ function uniqueProfileId(name: string): string {
 function bindingMatchesWriteRequest(binding: SteamInputBinding, request: SteamInputBindingWriteRequest): boolean {
   return (
     binding.inputId === request.inputId &&
-    (request.groupId === undefined || request.groupId === null || binding.groupId === request.groupId) &&
-    (request.activator === undefined || request.activator === null || binding.activator === request.activator)
+    binding.groupId === request.groupId &&
+    binding.source === request.source &&
+    binding.sourceMode === request.sourceMode &&
+    binding.activator === request.activator
   );
 }
 
