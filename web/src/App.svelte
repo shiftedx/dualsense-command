@@ -312,6 +312,7 @@
   let baseFeelTestBusy = false;
   let baseFeelTestGeneration = 0;
   let baseFeelTestController = '';
+  const pendingEffectStops = new Map<string, Promise<void>>();
   let savedFeelPreviewActive = false;
   let savedFeelPreviewBusy = false;
   let savedFeelPreviewTimer = 0;
@@ -2121,15 +2122,38 @@
     trigger: buildControllerConfig().trigger
   });
 
+  // Retain controller ownership until the off request settles, including when
+  // selection leaves and returns. All preview entry points share this barrier.
+  const stopControllerEffect = (controllerId: string): Promise<void> => {
+    const existing = pendingEffectStops.get(controllerId);
+    if (existing) return existing;
+    const pending = runEffectTest(
+      { target: 'base_feel', mode: 'off', intensity: 0, durationMs: 100 },
+      controllerId
+    ).then(() => {}).finally(() => {
+      if (pendingEffectStops.get(controllerId) === pending) pendingEffectStops.delete(controllerId);
+    });
+    pendingEffectStops.set(controllerId, pending);
+    return pending;
+  };
+
+  const waitForEffectStop = async (controllerId: string) => {
+    while (pendingEffectStops.has(controllerId)) {
+      // The stop owner reports errors. A settled failure must release the UI.
+      await pendingEffectStops.get(controllerId)?.catch(() => {});
+    }
+  };
+
   const startBaseFeelTest = async (refreshOnly = false) => {
     if (!snapshot || !controller || (refreshOnly && !baseFeelTestActive)) return;
     const controllerId = controller.id;
     const request = refreshOnly ? baseFeelTestGeneration : ++baseFeelTestGeneration;
     baseFeelTestController = controllerId;
-    const current = () => request === baseFeelTestGeneration && selectedControllerId === controllerId;
+    const current = () => Boolean(appRuntime) && request === baseFeelTestGeneration && selectedControllerId === controllerId;
     if (!refreshOnly) baseFeelTestBusy = true;
     try {
       if (!refreshOnly && (savedFeelPreviewActive || savedFeelPreviewBusy)) await stopSavedFeelPreview();
+      await waitForEffectStop(controllerId);
       if (!current()) return;
       if (!refreshOnly) await pollTriggerInput();
       if (!current()) return;
@@ -2154,16 +2178,15 @@
 
   const stopBaseFeelTest = async () => {
     const controllerId = baseFeelTestController;
+    if (!controllerId) return;
     markBaseFeelTestInactive();
     if (!snapshot || !controllerId) return;
     const request = baseFeelTestGeneration;
-    const current = () => request === baseFeelTestGeneration && selectedControllerId === controllerId;
+    const generation = profileSaveGeneration;
+    const current = () => Boolean(appRuntime) && generation === profileSaveGeneration && request === baseFeelTestGeneration && selectedControllerId === controllerId;
     baseFeelTestBusy = true;
     try {
-      await runEffectTest(
-        { target: 'base_feel', mode: 'off', intensity: 0, durationMs: 100 },
-        controllerId
-      );
+      await stopControllerEffect(controllerId);
       if (current()) setApplyMessage('Base feel test stopped');
     } catch (caught) {
       if (current()) setApplyMessage(caught instanceof Error ? caught.message : 'Unable to stop Base feel test');
@@ -2185,18 +2208,21 @@
 
   const stopSavedFeelPreview = async () => {
     const controllerId = savedFeelPreviewController;
+    if (!controllerId) return;
     const request = ++savedFeelPreviewRequest;
+    const generation = profileSaveGeneration;
     window.clearTimeout(savedFeelPreviewTimer);
     savedFeelPreviewController = '';
     savedFeelPreviewActive = false;
-    savedFeelPreviewBusy = false;
-    if (!controllerId) return;
+    savedFeelPreviewBusy = true;
     try {
-      await runEffectTest({ target: 'base_feel', mode: 'off', intensity: 0, durationMs: 100 }, controllerId);
+      await stopControllerEffect(controllerId);
     } catch (caught) {
-      if (appRuntime && request === savedFeelPreviewRequest && controller?.id === controllerId) {
+      if (appRuntime && generation === profileSaveGeneration && request === savedFeelPreviewRequest && controller?.id === controllerId) {
         setApplyMessage(caught instanceof Error ? caught.message : 'Unable to stop preview', 'error');
       }
+    } finally {
+      if (request === savedFeelPreviewRequest) savedFeelPreviewBusy = false;
     }
   };
 
@@ -2207,9 +2233,10 @@
     const request = ++savedFeelPreviewRequest;
     savedFeelPreviewController = controllerId;
     savedFeelPreviewBusy = true;
-    const current = () => request === savedFeelPreviewRequest && controller?.id === controllerId;
+    const current = () => Boolean(appRuntime) && request === savedFeelPreviewRequest && controller?.id === controllerId;
     try {
       if (baseFeelTestActive || baseFeelTestBusy) await stopBaseFeelTest();
+      await waitForEffectStop(controllerId);
       if (!current()) return;
       const deadline = Date.now() + SAVED_FEEL_PREVIEW_DURATION_MS;
       await runEffectTest({ ...baseFeelTestRequest(), durationMs: SAVED_FEEL_PREVIEW_DURATION_MS }, controllerId);
@@ -2234,7 +2261,10 @@
   $: if (savedFeelPreviewController && selectedControllerId !== savedFeelPreviewController) void stopSavedFeelPreview();
 
   const previewBodyHaptics = async () => {
-    if (!snapshot) return;
+    if (!snapshot || !controller) return;
+    const controllerId = controller.id;
+    const generation = profileSaveGeneration;
+    const current = () => Boolean(appRuntime) && generation === profileSaveGeneration && selectedControllerId === controllerId;
     const intensity = vibrationIntensityPercent(vibrationIntensity);
     if (intensity <= 0) {
       setApplyMessage('Body haptics are off; raise Body strength to preview.');
@@ -2242,6 +2272,8 @@
     }
 
     try {
+      await waitForEffectStop(controllerId);
+      if (!current()) return;
       // Output frame has no UI consumers; the 1Hz snapshot stream keeps state current.
       await runEffectTest(
         {
@@ -2250,10 +2282,12 @@
           intensity,
           durationMs: 900
         },
-        controller?.id
+        controllerId
       );
+      if (!current()) return;
       setApplyMessage(`${vibrationMode} body haptics previewed`);
     } catch (caught) {
+      if (!current()) return;
       setApplyMessage(caught instanceof Error ? caught.message : 'Body haptics preview failed');
     }
   };
@@ -2261,10 +2295,15 @@
   const previewLightbarColor = async (color: string, label: string) => {
     // /test-effect takes parameters in the request body, so preview first
     // and only persist the config if the preview is accepted by the agent.
-    if (!snapshot) return;
+    if (!snapshot || !controller) return;
+    const controllerId = controller.id;
+    const generation = profileSaveGeneration;
+    const current = () => Boolean(appRuntime) && generation === profileSaveGeneration && selectedControllerId === controllerId;
 
     const intensity = lightbarEnabled ? lightbarBrightness : 0;
     try {
+      await waitForEffectStop(controllerId);
+      if (!current()) return;
       // Output frame has no UI consumers; the 1Hz snapshot stream keeps state current.
       await runEffectTest(
         {
@@ -2273,16 +2312,19 @@
           intensity,
           durationMs: 650
         },
-        controller?.id
+        controllerId
       );
     } catch (caught) {
+      if (!current()) return;
       setApplyMessage(caught instanceof Error ? caught.message : `${label} preview failed`);
       return;
     }
 
+    if (!current()) return;
     const saved = await saveCurrentConfig();
-    if (!saved) return;
+    if (!saved || !current()) return;
     await refresh();
+    if (!current()) return;
     setApplyMessage(`${label} ${color} previewed`);
   };
 

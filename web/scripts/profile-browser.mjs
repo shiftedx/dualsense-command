@@ -37,7 +37,7 @@ export const getEdgeProfiles = async id => fixture.deferEdge ? defer('edge',id) 
 export const setProfileOverride = async request => {fixture.requests.push({kind:'override',request:clone(request)});return null;};
 export const saveControllerConfig = async (id,config) => { fixture.requests.push({kind:'live',id,config:clone(config)}); if(fixture.failLive) throw Error('live PUT failed'); return {...clone(config),controllerId:id,model:id==='standard'?'DualSense':'DualSense Edge'}; };
 export const saveProfileConfig = async (id,config) => { fixture.requests.push({kind:'save',id,config:clone(config)}); if(fixture.deferSave) await defer('save',id); return {accepted:true,message:'saved'}; };
-export const runEffectTest = async (request,id) => { fixture.requests.push({kind:'effect',id,request:clone(request)}); if(fixture.deferManual && request.durationMs===30000) await defer('manual',id); return {accepted:true,dryRun:true}; };
+export const runEffectTest = async (request,id) => { fixture.requests.push({kind:'effect',id,request:clone(request)}); if(fixture.deferOff && request.mode==='off') await defer('off',id); if(fixture.deferManual && request.durationMs===30000) await defer('manual',id); return {accepted:true,dryRun:true}; };
 export const createProfile = async (name,options) => {if(fixture.deferCreate)await defer('create','copy');const p=profile('copy-'+snapshot.profiles.length);p.name=name;snapshot.profiles.push(p);return p;};
 `;
 const hook = `
@@ -49,10 +49,11 @@ const hook = `
     scope: (value) => { selectedTuningScope = value; },
     edit: setLightbarBrightness, save: saveActiveProfile, discard: discardDraftChanges,
     stop: stopAppRuntime, manual: toggleBaseFeelTest, reset: restoreDefaults,
+    rail: toggleSavedFeelPreview, body: previewBodyHaptics, lights: previewLightbar,
     refreshManual: scheduleBaseFeelTestRefresh,
     resetCurves: resetTriggerCurvesToProfileDefaults,
     copy: () => {beginSaveAsProfile();return submitSaveAsProfile();},
-    state: () => ({config:buildControllerConfig(), baseline:profileSaveBaselineConfig, dirty:profileConfigDirty, edge:edgeProfiles, edgeLoading:edgeProfilesLoading, edgeError:edgeProfilesError, profileError:profileOverrideMessage, selected:selectedOverrideProfileId, manualActive:baseFeelTestActive, manualBusy:baseFeelTestBusy})
+    state: () => ({config:buildControllerConfig(), baseline:profileSaveBaselineConfig, dirty:profileConfigDirty, edge:edgeProfiles, edgeLoading:edgeProfilesLoading, edgeError:edgeProfilesError, profileError:profileOverrideMessage, selected:selectedOverrideProfileId, manualActive:baseFeelTestActive, manualBusy:baseFeelTestBusy, railBusy:savedFeelPreviewBusy, railActive:savedFeelPreviewActive})
   };
 `;
 const cacheDir = mkdtempSync(join(tmpdir(), 'dscc-profile-browser-'));
@@ -74,6 +75,71 @@ async function test(name, run) {
   finally { await page.close(); }
 }
 try {
+  for (const next of ['manual','body','lights']) for (const completion of ['resolve','reject']) await test(`rail stop settles before ${next} preview (${completion})`, async page => {
+    await page.locator('.saved-preview-button').first().click();
+    await page.evaluate(()=>fixture.deferOff=true);
+    await page.locator('.saved-preview-button').first().click();
+    await page.waitForFunction(()=>fixture.pending.some(p=>p.kind==='off'));
+    if(next==='manual') {
+      await page.getByRole('button',{name:'Preview Triggers',exact:true}).click();
+    } else await page.evaluate(next=>void appFixture[next](),next);
+    await page.waitForTimeout(50);
+    assert.deepEqual(await page.evaluate(()=>fixture.requests.filter(r=>r.kind==='effect').map(r=>r.request.durationMs)),[3000,100]);
+    assert.equal(await page.evaluate(()=>appFixture.state().railBusy),true);
+    await page.evaluate(completion=>fixture[completion]('off',fixture.snapshot.controllers[0].id),completion);
+    await page.waitForFunction(()=>fixture.requests.filter(r=>r.kind==='effect').length===3);
+    assert.equal(await page.evaluate(()=>appFixture.state().railBusy),false);
+  });
+  await test('pending rail stop blocks repeated rail start until settled',async page=>{
+    await page.locator('.saved-preview-button').first().click();
+    await page.evaluate(()=>fixture.deferOff=true);
+    await page.locator('.saved-preview-button').first().click();
+    await page.waitForFunction(()=>fixture.pending.some(p=>p.kind==='off'));
+    assert.equal(await page.locator('.saved-preview-button').first().isDisabled(),true);
+    await page.evaluate(()=>void appFixture.rail());
+    assert.equal(await page.evaluate(()=>fixture.requests.filter(r=>r.kind==='effect').length),2);
+    await page.evaluate(()=>fixture.resolve('off',fixture.snapshot.controllers[0].id));
+    await page.locator('.saved-preview-button').first().click();
+    assert.deepEqual(await page.evaluate(()=>fixture.requests.filter(r=>r.kind==='effect').map(r=>r.request.durationMs)),[3000,100,3000]);
+  });
+  await test('pending manual stop settles before rail handoff',async page=>{
+    await page.evaluate(()=>appFixture.manual());
+    await page.evaluate(()=>{fixture.deferOff=true;void appFixture.manual();});
+    await page.waitForFunction(()=>fixture.pending.some(p=>p.kind==='off'));
+    await page.locator('.saved-preview-button').first().click();
+    await page.waitForTimeout(50);
+    assert.deepEqual(await page.evaluate(()=>fixture.requests.filter(r=>r.kind==='effect').map(r=>r.request.durationMs)),[30000,100]);
+    await page.evaluate(()=>fixture.resolve('off',fixture.snapshot.controllers[0].id));
+    await page.waitForFunction(()=>appFixture.state().railActive);
+    assert.deepEqual(await page.evaluate(()=>fixture.requests.filter(r=>r.kind==='effect').map(r=>r.request.durationMs)),[30000,100,3000]);
+  });
+  for(const next of ['manual','body','lights']) for(const transition of ['return','teardown']) await test(`${next} waiting for stop ignores ${transition}`,async page=>{
+    await page.locator('.saved-preview-button').first().click();
+    await page.evaluate(()=>fixture.deferOff=true);
+    await page.locator('.saved-preview-button').first().click();
+    await page.evaluate(next=>void appFixture[next](),next);
+    if(transition==='teardown')await page.evaluate(()=>appFixture.stop());
+    else {
+      await page.evaluate(()=>appFixture.controller('edge-b'));await page.waitForTimeout(30);
+      await page.evaluate(()=>appFixture.controller(fixture.snapshot.controllers[0].id));await page.waitForTimeout(30);
+    }
+    await page.evaluate(()=>{for(const pending of [...fixture.pending].filter(p=>p.kind==='off'))fixture.reject('off',pending.id);});
+    await page.waitForTimeout(100);
+    assert.equal(await page.evaluate(()=>fixture.requests.filter(r=>r.kind==='effect'&&r.request.mode!=='off').length),1);
+    assert.equal(await page.evaluate(()=>appFixture.state().manualActive),false);
+    assert.equal(await page.getByText('obsolete failure',{exact:true}).count(),0);
+  });
+  await test('controller leave and return retains its pending stop for a new preview',async page=>{
+    await page.locator('.saved-preview-button').first().click();
+    await page.evaluate(()=>fixture.deferOff=true);
+    await page.locator('.saved-preview-button').first().click();
+    await page.evaluate(()=>appFixture.controller('edge-b'));await page.waitForTimeout(30);
+    await page.evaluate(()=>appFixture.controller(fixture.snapshot.controllers[0].id));await page.waitForTimeout(30);
+    await page.evaluate(()=>void appFixture.body());await page.waitForTimeout(50);
+    assert.equal(await page.evaluate(()=>fixture.requests.filter(r=>r.kind==='effect'&&r.request.mode!=='off').length),1);
+    await page.evaluate(()=>fixture.resolve('off',fixture.snapshot.controllers[0].id));
+    await page.waitForFunction(()=>fixture.requests.some(r=>r.kind==='effect'&&r.request.target==='rumble'));
+  });
   for (const mode of ['custom','stock','save-as']) for (const transition of ['switch','return','teardown']) await test(`mounted ${mode} save ignores ${transition} completion`,async page=>{
     const original=mode==='stock'?'global':'profile-a';
     await page.evaluate(id=>appFixture.select(id),original);
