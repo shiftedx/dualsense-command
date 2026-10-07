@@ -67,9 +67,18 @@ pub(crate) async fn export_profile(
         .cloned()
         .ok_or(StatusCode::NOT_FOUND)?;
 
+    let config = if profile.built_in {
+        let mut config = ControllerConfig::default_for("", "DualSense");
+        if let Some(selected) = crate::profiles::selected_profile_config(&inner, &profile.id) {
+            crate::profiles::apply_selected_profile_config(&mut config, &selected);
+        }
+        Some(ProfileConfig::from_controller_config(&config))
+    } else {
+        inner.profile_configs.get(&profile.id).cloned()
+    };
     Ok(Json(ExportedProfile {
         schema: "dev.dscc.profile.v1".to_string(),
-        config: inner.profile_configs.get(&profile.id).cloned(),
+        config,
         id: profile.id,
         name: profile.name,
         built_in: profile.built_in,

@@ -9,8 +9,7 @@ import {
   normalizeStickDeadzone,
   normalizeTriggerCurve,
   normalizeTriggerCurvePoints,
-  normalizeTriggerPercent,
-  triggerCurvePointsFromCurve
+  normalizeTriggerPercent
 } from '../lib/features/haptics/hapticsModel';
 import type {
   ControllerConfiguration,
@@ -271,24 +270,6 @@ export const normalizeInputBridgeConfig = (config: InputBridgeConfig | undefined
   bindings: Array.isArray(config?.bindings) ? config.bindings : []
 });
 
-export function baseForzaTriggerDefaults(): EditableControllerConfig['trigger'] {
-  return {
-    sameRange: false,
-    l2From: 0,
-    l2To: 100,
-    r2From: 4,
-    r2To: 100,
-    l2Curve: 1,
-    r2Curve: defaultTriggerCurve('r2'),
-    l2CurvePoints: triggerCurvePointsFromCurve(1),
-    r2CurvePoints: defaultTriggerCurvePoints('r2'),
-    effect: 'Adaptive resistance',
-    intensity: 'Strong (Standard)',
-    vibration: 'Medium',
-    vibrationMode: DEFAULT_BODY_FEEL
-  };
-}
-
 export function buildDefaultControllerConfig(options: DraftConfigOptions): EditableControllerConfig {
   const forzaDefaults = forzaTuningDefaultsFromOptions(options);
 
@@ -343,27 +324,6 @@ export function editableConfigFromController(
     buttons: normalizeButtonAssignments(config.buttons, config.model === 'DualSense Edge' || edge),
     inputBridge: normalizeInputBridgeConfig(config.inputBridge),
     profileAssignments: config.profileAssignments
-  };
-}
-
-export function buildBuiltInProfileConfig(options: DraftConfigOptions & {
-  profileId: string;
-  builtInForzaEffects: ForzaEffectConfiguration[];
-}): EditableControllerConfig {
-  const base = buildDefaultControllerConfig(options);
-  const forzaDefaults = forzaTuningDefaultsFromOptions(options);
-  if (options.profileId === 'global') {
-    return {
-      ...base,
-      profileAssignments: options.profileAssignments ?? []
-    };
-  }
-
-  return {
-    ...base,
-    trigger: baseForzaTriggerDefaults(),
-    forza: defaultForzaTelemetryConfig(forzaDefaults, options.builtInForzaEffects),
-    profileAssignments: options.profileAssignments ?? []
   };
 }
 

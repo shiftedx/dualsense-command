@@ -597,9 +597,7 @@ export const mockExportedProfiles: Record<string, ExportedProfile> = Object.from
       id: profile.id,
       name: profile.name,
       built_in: profile.builtIn,
-      builtIn: profile.builtIn,
       game_id: profile.scope === 'Game' ? profile.gameId : null,
-      gameId: profile.scope === 'Game' ? profile.gameId : null,
       active: profile.active,
       config: mockProfileConfigs[profile.id] ?? editableConfigFromController(mockControllerConfig)
     }

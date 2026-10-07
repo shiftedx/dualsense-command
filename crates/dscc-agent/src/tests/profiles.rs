@@ -1,5 +1,81 @@
 use super::support::*;
 use super::*;
+use crate::profiles::{apply_selected_profile_config, selected_profile_config};
+
+#[tokio::test]
+async fn stock_exports_materialize_complete_canonical_configs_and_round_trip() {
+    let state = AgentState::mock();
+    let router = app(state.clone());
+    let mut fixtures = Vec::new();
+    for profile in default_profiles() {
+        let exported: ExportedProfile = get_json(
+            router.clone(),
+            &format!("/api/profiles/{}/export", profile.id),
+            StatusCode::OK,
+        )
+        .await;
+        let mut expected = ControllerConfig::default_for("", "DualSense");
+        if let Some(selected) = selected_profile_config(&*state.inner.read().await, &profile.id) {
+            apply_selected_profile_config(&mut expected, &selected);
+        }
+        // Compare at the JSON boundary, including its floating-point round trip.
+        let expected: ProfileConfig = serde_json::from_str(
+            &serde_json::to_string(&ProfileConfig::from_controller_config(&expected)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            exported.config,
+            Some(expected),
+            "{} export must carry canonical config",
+            profile.id
+        );
+        fixtures.push(exported.clone());
+        let mut payload = serde_json::to_value(&exported).unwrap();
+        payload["id"] = serde_json::json!(format!("{}-roundtrip", profile.id));
+        payload["name"] = serde_json::json!(format!("{} copy", profile.name));
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/profiles/import")
+                    .header("content-type", "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let copied: ExportedProfile = get_json(
+            router.clone(),
+            &format!("/api/profiles/{}-roundtrip/export", profile.id),
+            StatusCode::OK,
+        )
+        .await;
+        assert_eq!(copied.game_id, exported.game_id);
+        assert_eq!(copied.config, exported.config);
+    }
+    let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../web/scripts/fixtures/stock-profiles.json");
+    let fixtures = serde_json::to_value(fixtures).unwrap();
+    if std::env::var("DSCC_UPDATE_PROFILE_FIXTURES").as_deref() == Ok("1") {
+        std::fs::create_dir_all(fixture_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &fixture_path,
+            serde_json::to_string_pretty(&fixtures).unwrap() + "\n",
+        )
+        .unwrap();
+    }
+    let checked_in: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(fixture_path)
+            .expect("canonical frontend fixtures; regenerate with DSCC_UPDATE_PROFILE_FIXTURES=1"),
+    )
+    .unwrap();
+    assert_eq!(
+        fixtures, checked_in,
+        "frontend fixture must match the actual Rust export"
+    );
+}
 
 fn cycle_summary(id: &str) -> ProfileSummary {
     ProfileSummary {

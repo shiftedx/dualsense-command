@@ -229,9 +229,7 @@ export interface ExportedProfile {
   id: string;
   name: string;
   built_in?: boolean;
-  builtIn?: boolean;
   game_id?: string | null;
-  gameId?: string | null;
   active?: boolean;
   config?: ProfileConfigPayload | null;
 }

@@ -200,7 +200,13 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
     ? steamInputLayout?.bindings ?? EMPTY_STEAM_INPUT_BINDINGS
     : EMPTY_STEAM_INPUT_BINDINGS;
   const contextKey = [
+    active ? selectedTuningScope : '',
+    active ? providerKind : '',
+    active ? input.bridgeProfileId ?? '' : '',
     active ? steamInputLayout?.source ?? '' : '',
+    active ? steamInputLayout?.title ?? '' : '',
+    active ? steamInputLayout?.appId ?? '' : '',
+    active ? steamInputLayout?.controllerType ?? '' : '',
     active ? steamContextGame?.gameId ?? '' : '',
     active ? controller?.id ?? '' : '',
     active ? controller?.family ?? '' : ''
@@ -211,9 +217,14 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
     nextState = { ...nextState, ...patch };
   };
 
-  if (active && contextKey !== nextState.activeContextKey) {
+  if (contextKey !== nextState.activeContextKey) {
     patchNextState({
       activeContextKey: contextKey,
+      selectedBindingKey: '',
+      lastBindingDraftKey: '',
+      bindingDraft: '',
+      bindingLabelDraft: '',
+      bindingMessage: '',
       optimisticBindings: null,
       activeSlotKey: '',
       hoveredSlotKey: ''

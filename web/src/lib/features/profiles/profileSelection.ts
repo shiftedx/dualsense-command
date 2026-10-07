@@ -10,6 +10,7 @@ export type ProfileImportPayload = {
   schema: string;
   id?: string;
   name: string;
+  game_id?: string | null;
   config?: ExportedProfile['config'];
 };
 
@@ -168,6 +169,7 @@ export function profileImportPayload(value: unknown, profiles: ProfileSummary[])
     id: idAvailable ? id : undefined,
     schema: profile.schema,
     name: idAvailable ? name : uniqueProfileName(`${name} copy`, profiles),
+    game_id: profile.game_id,
     config: profile.config ?? undefined
   };
 }

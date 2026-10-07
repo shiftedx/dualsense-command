@@ -53,7 +53,7 @@ export type ProfileManagementDeps = {
   loadControllerConfig: (controllerId: string) => Promise<void>;
   buildControllerConfig: () => EditableControllerConfig;
   profileConfigSignature: (config: EditableControllerConfig) => string;
-  setProfileSaveBaseline: (signature: string) => void;
+  setProfileSaveBaseline: (signature: string, config: EditableControllerConfig) => void;
   saveControllerConfigForProfileTargets: (config: EditableControllerConfig) => Promise<void>;
   setProfileOverrideForTargets: (profileId: string, gameId: string | null) => Promise<ProfileResolution | null>;
   refresh: () => Promise<void>;
@@ -211,7 +211,7 @@ export const createProfileManagement = (deps: ProfileManagementDeps) => {
       await deps.saveControllerConfigForProfileTargets(config);
       const resolution = await deps.setProfileOverrideForTargets(created.id, deps.getProfileContextGameId());
       applyResolution(resolution);
-      deps.setProfileSaveBaseline(deps.profileConfigSignature(config));
+      deps.setProfileSaveBaseline(deps.profileConfigSignature(config), config);
       deps.setSelectedOverrideProfileId(created.id);
       cancelSaveAsProfile();
       await deps.refresh();
@@ -245,6 +245,7 @@ export const createProfileManagement = (deps: ProfileManagementDeps) => {
 
     patch({ saveBusy: true });
     try {
+      const config = deps.buildControllerConfig();
       const sourceProfileName = selected.name;
       let targetProfile: ProfileSummary = selected;
       let preservingStockProfile = false;
@@ -259,10 +260,9 @@ export const createProfileManagement = (deps: ProfileManagementDeps) => {
       }
       if (!targetProfile) throw new Error('No profile selected');
 
-      const config = deps.buildControllerConfig();
       await deps.saveControllerConfigForProfileTargets(config);
       const response = await saveProfileConfig(targetProfile.id, config);
-      deps.setProfileSaveBaseline(deps.profileConfigSignature(config));
+      deps.setProfileSaveBaseline(deps.profileConfigSignature(config), config);
       const resolution = await deps.setProfileOverrideForTargets(targetProfile.id, deps.getProfileContextGameId());
       applyResolution(resolution);
       deps.setSelectedOverrideProfileId(targetProfile.id);

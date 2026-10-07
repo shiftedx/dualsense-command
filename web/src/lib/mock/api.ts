@@ -323,9 +323,7 @@ export async function exportMockProfile(profileId: string): Promise<ExportedProf
     id: profile.id,
     name: profile.name,
     built_in: profile.builtIn,
-    builtIn: profile.builtIn,
     game_id: profile.scope === 'Game' ? profile.gameId : null,
-    gameId: profile.scope === 'Game' ? profile.gameId : null,
     active: profile.active,
     config: state.profileConfigs.get(profileId) ?? editableConfigFromController(controllerConfigFor(MOCK_CONTROLLER_ID))
   };
@@ -336,11 +334,10 @@ export async function importMockProfile(profile: {
   id?: string | null;
   name: string;
   game_id?: string | null;
-  gameId?: string | null;
   config?: ExportedProfile['config'];
 }): Promise<ProfileSummary> {
   if (profile.schema !== MOCK_EXPORT_SCHEMA) throw new Error('Unsupported profile schema.');
-  const gameId = normalizeProfileGameId(profile.game_id ?? profile.gameId);
+  const gameId = normalizeProfileGameId(profile.game_id);
   const id = profile.id && !state.snapshot.profiles.some((item) => item.id === profile.id)
     ? profile.id
     : uniqueProfileId(profile.name);
