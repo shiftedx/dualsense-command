@@ -101,13 +101,7 @@ pub(crate) async fn run_effect_test_for_controller(
             .await
         {
             Ok(None) => {
-                let _ = state
-                    .write_output_frame_with_owner(
-                        &id,
-                        &ControllerOutputFrame::default(),
-                        OutputWriteOwner::FinishManual(generation),
-                    )
-                    .await;
+                state.finish_manual_output(&id, generation).await;
                 accepted = false;
                 status = StatusCode::CONFLICT;
                 format!("Hardware effect test for controller {id} was superseded")
@@ -195,12 +189,8 @@ pub(crate) async fn run_effect_test_for_controller(
                         if state_for_reset
                             .manual_output_override_generation_matches(&id_for_reset, generation)
                         {
-                            let _ = state_for_reset
-                                .write_output_frame_with_owner(
-                                    &id_for_reset,
-                                    &ControllerOutputFrame::default(),
-                                    OutputWriteOwner::FinishManual(generation),
-                                )
+                            state_for_reset
+                                .finish_manual_output(&id_for_reset, generation)
                                 .await;
                         }
                     });
@@ -216,13 +206,7 @@ pub(crate) async fn run_effect_test_for_controller(
                 }
             }
             Err(error) => {
-                let _ = state
-                    .write_output_frame_with_owner(
-                        &id,
-                        &ControllerOutputFrame::default(),
-                        OutputWriteOwner::FinishManual(generation),
-                    )
-                    .await;
+                state.finish_manual_output(&id, generation).await;
                 accepted = false;
                 status = StatusCode::CONFLICT;
                 format!("Hardware effect test for controller {id} was blocked: {error}")

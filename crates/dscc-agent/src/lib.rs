@@ -932,6 +932,39 @@ impl AgentState {
         self.lock_output_runtime().last_output_frames.clear();
     }
 
+    async fn finish_manual_output(&self, controller_id: &str, generation: u64) {
+        if let Err(error) = self
+            .write_output_frame_with_owner(
+                controller_id,
+                &ControllerOutputFrame::default(),
+                OutputWriteOwner::FinishManual(generation),
+            )
+            .await
+        {
+            self.note_hardware_output_error(format!(
+                "Hardware effect test cleanup for controller {controller_id} failed; neutralization will retry: {error}"
+            )).await;
+        }
+    }
+
+    async fn retry_expired_manual_outputs(&self) {
+        let expired = {
+            let runtime = self.lock_output_runtime();
+            let now = Instant::now();
+            runtime
+                .manual_overrides
+                .iter()
+                .filter(|(_, (_, until))| now >= *until)
+                .map(|(id, (generation, _))| (id.clone(), *generation))
+                .collect::<Vec<_>>()
+        };
+        for (controller_id, generation) in expired {
+            // Recheck generation under the write gate: a new manual owner or
+            // successful automatic output may have taken over since the snapshot.
+            self.finish_manual_output(&controller_id, generation).await;
+        }
+    }
+
     async fn neutralize_active_output_and_release(&self, reason: &str) {
         let controller_ids = self.non_neutral_output_controller_ids();
         for controller_id in controller_ids {
@@ -1026,7 +1059,25 @@ impl AgentState {
         } else if self.manual_output_override_active(controller_id) {
             return Ok(None);
         }
+        if matches!(owner, OutputWriteOwner::FinishManual(_)) {
+            // End refresh eligibility even if cleanup fails, including a failed
+            // replacement. The watchdog retries this generation on its next tick.
+            if let Some((_, until)) = self
+                .lock_output_runtime()
+                .manual_overrides
+                .get_mut(controller_id)
+            {
+                *until = Instant::now();
+            }
+        }
         let result = write(frame)?;
+        if matches!(owner, OutputWriteOwner::Runtime) {
+            // Automatic output now owns the frame. Keep its dedup record, but
+            // prevent an old expiry task/retry from resetting the newer output.
+            self.lock_output_runtime()
+                .manual_overrides
+                .remove(controller_id);
+        }
         if matches!(
             owner,
             OutputWriteOwner::FinishManual(_) | OutputWriteOwner::Watchdog

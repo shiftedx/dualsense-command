@@ -509,3 +509,150 @@ async fn audit_automatic_neutral_output_keeps_keepalive_record() {
         Instant::now()
     ));
 }
+
+#[tokio::test]
+async fn audit_runtime_takeover_releases_expired_manual_owner_without_losing_dedup() {
+    let state = recording_manual_state();
+    let (generation, _) = state
+        .begin_manual_output_override("manual-a", Duration::from_secs(1))
+        .await;
+    let frame = effect_test_output_frame(
+        &serde_json::from_value(serde_json::json!({"target":"r2", "mode":"wall", "intensity":70}))
+            .unwrap(),
+    );
+    state
+        .write_output_frame_with_owner("manual-a", &frame, OutputWriteOwner::Manual(generation))
+        .await
+        .unwrap();
+    state
+        .lock_output_runtime()
+        .manual_overrides
+        .get_mut("manual-a")
+        .unwrap()
+        .1 = Instant::now() - Duration::from_millis(1);
+    let automatic = ControllerOutputFrame::default();
+    state
+        .write_output_frame_to_controller("manual-a", &automatic)
+        .await
+        .unwrap();
+    assert!(!state.manual_output_override_generation_matches("manual-a", generation));
+    assert!(!state.output_frame_write_due(
+        "manual-a",
+        &automatic,
+        DeviceTransportKind::Usb,
+        Instant::now()
+    ));
+    assert!(state
+        .write_output_frame_with_owner(
+            "manual-a",
+            &ControllerOutputFrame::default(),
+            OutputWriteOwner::FinishManual(generation)
+        )
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn audit_cleanup_retry_preserves_replacement_and_retries_another_failure() {
+    let state = recording_manual_state();
+    let frame = effect_test_output_frame(
+        &serde_json::from_value(serde_json::json!({"target":"r2", "mode":"wall", "intensity":70}))
+            .unwrap(),
+    );
+    let (old, _) = state
+        .begin_manual_output_override("manual-b", Duration::from_secs(30))
+        .await;
+    state
+        .write_output_frame_with_owner("manual-b", &frame, OutputWriteOwner::Manual(old))
+        .await
+        .unwrap();
+    state
+        .output_recorder
+        .as_ref()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .fail_next = true;
+    state.finish_manual_output("manual-b", old).await;
+    assert!(
+        !state.manual_output_override_active_for("manual-b", old),
+        "failed cleanup immediately ends refresh eligibility"
+    );
+    assert!(state
+        .inner
+        .read()
+        .await
+        .logs
+        .iter()
+        .any(|entry| entry.message.contains("neutralization will retry")));
+    let (current, _) = state
+        .begin_manual_output_override("manual-b", Duration::from_secs(30))
+        .await;
+    state
+        .write_output_frame_with_owner("manual-b", &frame, OutputWriteOwner::Manual(current))
+        .await
+        .unwrap();
+    state.retry_expired_manual_outputs().await;
+    state.finish_manual_output("manual-b", old).await;
+    assert_eq!(
+        state
+            .output_recorder
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .writes
+            .len(),
+        2
+    );
+    assert!(state.manual_output_override_active_for("manual-b", current));
+    state
+        .lock_output_runtime()
+        .manual_overrides
+        .get_mut("manual-b")
+        .unwrap()
+        .1 = Instant::now() - Duration::from_millis(1);
+    state
+        .output_recorder
+        .as_ref()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .fail_next = true;
+    state.retry_expired_manual_outputs().await;
+    assert!(state.manual_output_override_generation_matches("manual-b", current));
+    state.retry_expired_manual_outputs().await;
+    assert!(!state.manual_output_override_generation_matches("manual-b", current));
+    assert_eq!(
+        state
+            .output_recorder
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .writes
+            .last()
+            .unwrap(),
+        &("manual-b".to_string(), ControllerOutputFrame::default())
+    );
+}
+
+#[tokio::test]
+async fn audit_cleanup_retry_cannot_write_after_shutdown() {
+    let state = recording_manual_state();
+    let (generation, _) = state
+        .begin_manual_output_override("manual-b", Duration::ZERO)
+        .await;
+    state.shutdown.begin();
+    state.retry_expired_manual_outputs().await;
+    assert!(state
+        .output_recorder
+        .as_ref()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .writes
+        .is_empty());
+    assert!(state.manual_output_override_generation_matches("manual-b", generation));
+}
