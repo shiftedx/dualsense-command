@@ -173,12 +173,7 @@ pub(crate) fn install_forza_playstation_glyphs(root: PathBuf) -> io::Result<Stri
             fs::create_dir_all(parent)?;
         }
         let mut source = fs::File::open(target)?;
-        let mut destination = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(backup)?;
-        io::copy(&mut source, &mut destination)?;
-        destination.sync_all()?;
+        create_forza_original_backup(&mut source, &backup, fs::File::sync_all)?;
     }
 
     for target in install_targets {
@@ -194,6 +189,41 @@ pub(crate) fn install_forza_playstation_glyphs(root: PathBuf) -> io::Result<Stri
         "PlayStation button glyphs installed for Forza Horizon 6 at {}.",
         root.display()
     ))
+}
+
+pub(crate) fn create_forza_original_backup(
+    source: &mut impl io::Read,
+    backup: &FsPath,
+    sync: impl FnOnce(&fs::File) -> io::Result<()>,
+) -> io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_BACKUP: AtomicU64 = AtomicU64::new(1);
+    let (staging, mut destination) = loop {
+        let sequence = NEXT_BACKUP.fetch_add(1, Ordering::Relaxed);
+        let mut name = backup.as_os_str().to_os_string();
+        name.push(format!(".staging-{}-{sequence}", std::process::id()));
+        let staging = PathBuf::from(name);
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&staging)
+        {
+            Ok(file) => break (staging, file),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    };
+    let result = (|| {
+        io::copy(source, &mut destination)?;
+        sync(&destination)?;
+        // Hard-link publication is exclusive: an existing original can never be
+        // replaced. Restore only sees complete, synced content at the trusted
+        // name; interruption beforehand can leave only an ignored staging file.
+        fs::hard_link(&staging, backup)
+    })();
+    drop(destination);
+    let _ = fs::remove_file(staging);
+    result
 }
 
 pub(crate) fn restore_forza_original_glyphs(root: PathBuf) -> io::Result<String> {

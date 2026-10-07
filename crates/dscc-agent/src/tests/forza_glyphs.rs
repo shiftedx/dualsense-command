@@ -4,6 +4,110 @@ use super::*;
 const TEST_GLYPHS: &[u8] = b"PK\x03\x04original-dscc-test-fixture";
 
 #[test]
+fn glyph_failed_backup_copy_never_publishes_restorable_bytes() {
+    assert_failed_backup_never_publishes_restorable_bytes(false);
+}
+
+#[test]
+fn glyph_failed_backup_sync_never_publishes_restorable_bytes() {
+    assert_failed_backup_never_publishes_restorable_bytes(true);
+}
+
+#[test]
+fn glyph_backup_publication_preserves_an_original_created_during_staging() {
+    let root = temp_test_dir("dscc-glyph-backup-publication-race");
+    fs::create_dir_all(&root).unwrap();
+    let backup = root.join("ControllerIcons.zip.dscc-xbox-backup");
+    let original = b"immutable previously saved original";
+    let result = crate::forza_glyphs::create_forza_original_backup(
+        &mut b"newly staged bytes".as_slice(),
+        &backup,
+        |staging| {
+            assert!(
+                !backup.exists(),
+                "trusted name must remain absent until sync completes"
+            );
+            staging.sync_all()?;
+            fs::write(&backup, original)
+        },
+    );
+    assert!(
+        result.is_err(),
+        "exclusive publication must refuse a competing original"
+    );
+    assert_eq!(fs::read(&backup).unwrap(), original);
+    assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+    fs::remove_dir_all(root).unwrap();
+}
+
+fn assert_failed_backup_never_publishes_restorable_bytes(fail_sync: bool) {
+    struct InterruptedRead {
+        prefix: Option<&'static [u8]>,
+    }
+    impl io::Read for InterruptedRead {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if let Some(prefix) = self.prefix.take() {
+                buffer[..prefix.len()].copy_from_slice(prefix);
+                Ok(prefix.len())
+            } else {
+                Err(io::Error::other(
+                    "injected source read failure after partial copy",
+                ))
+            }
+        }
+    }
+    let _env = glyph_archive_env();
+    let root = temp_test_dir("dscc-glyph-backup-failure");
+    let original = b"complete original Xbox icons";
+    let targets = forza_controller_icon_targets(&root);
+    for target in &targets {
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(target, original).unwrap();
+    }
+    let backup = forza_controller_icon_backup_path(&targets[0]);
+    let result = if fail_sync {
+        crate::forza_glyphs::create_forza_original_backup(&mut original.as_slice(), &backup, |_| {
+            Err(io::Error::other("injected backup sync failure"))
+        })
+    } else {
+        crate::forza_glyphs::create_forza_original_backup(
+            &mut InterruptedRead {
+                prefix: Some(b"partial"),
+            },
+            &backup,
+            fs::File::sync_all,
+        )
+    };
+    assert!(result.is_err());
+    assert_eq!(fs::read(&targets[0]).unwrap(), original);
+    assert!(
+        !backup.exists(),
+        "failed backup must never be published under the trusted restore name; sync={fail_sync}"
+    );
+    // A process killed during staging can leave bytes behind, but restore
+    // must never consider a staging filename authoritative.
+    let interrupted = backup.with_extension("dscc-backup-staging-interrupted");
+    fs::write(&interrupted, b"interrupted partial staging bytes").unwrap();
+    restore_forza_original_glyphs(root.clone()).unwrap();
+    for target in &targets {
+        assert_eq!(fs::read(target).unwrap(), original);
+    }
+    install_forza_playstation_glyphs(root.clone()).unwrap();
+    for target in &targets {
+        assert_eq!(
+            fs::read(forza_controller_icon_backup_path(target)).unwrap(),
+            original
+        );
+        assert_eq!(fs::read(target).unwrap(), TEST_GLYPHS);
+    }
+    restore_forza_original_glyphs(root.clone()).unwrap();
+    for target in &targets {
+        assert_eq!(fs::read(target).unwrap(), original);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn glyph_archive_switch_preserves_original_and_requires_restore() {
     let _env = glyph_archive_env();
     let root = temp_test_dir("dscc-glyph-switch");
