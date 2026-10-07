@@ -12,11 +12,29 @@ use dscc_device::ControllerInputState;
 use dscc_virtual_output::MockVirtualOutputBackend;
 use dscc_virtual_output::{
     HidMaestroBrokerBackend, VirtualButtonState, VirtualGamepadState, VirtualOutputBackend,
-    VirtualOutputBackendState, VirtualOutputError, VirtualOutputKind, VirtualOutputTarget,
+    VirtualOutputBackendState, VirtualOutputBackendStatus, VirtualOutputError, VirtualOutputKind,
+    VirtualOutputTarget,
 };
 use serde::{Deserialize, Serialize};
 
 const KNOWN_INPUT_BUTTON_COUNT: usize = 23;
+const PROVIDER_HEALTH_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
+struct ProviderHealth {
+    status: VirtualOutputBackendStatus,
+    next_refresh: std::time::Instant,
+    in_flight: bool,
+}
+
+impl ProviderHealth {
+    fn new(status: VirtualOutputBackendStatus) -> Self {
+        Self {
+            status,
+            next_refresh: std::time::Instant::now(),
+            in_flight: false,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct InputBridgeService {
@@ -25,6 +43,8 @@ pub(crate) struct InputBridgeService {
     sessions: Arc<Mutex<BTreeMap<String, InputBridgeSessionRecord>>>,
     operations: Arc<tokio::sync::Mutex<()>>,
     stopping: Arc<AtomicBool>,
+    health: Arc<Mutex<ProviderHealth>>,
+    status_probe: Arc<dyn Fn() -> VirtualOutputBackendStatus + Send + Sync>,
 }
 
 #[derive(Clone, Debug)]
@@ -74,6 +94,10 @@ pub struct InputBridgeSessionSummary {
 
 impl InputBridgeService {
     pub(crate) fn begin_shutdown(&self) {
+        let _health = self
+            .health
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         self.stopping.store(true, Ordering::SeqCst);
     }
 
@@ -100,12 +124,22 @@ impl InputBridgeService {
     }
 
     pub(crate) fn production() -> Self {
+        let initial = VirtualOutputBackendStatus {
+            backend_id: "hidmaestro".into(),
+            state: VirtualOutputBackendState::Unavailable,
+            message: "Provider health check pending.".into(),
+            supported_kinds: Vec::new(),
+        };
         Self {
             backend: Arc::new(HidMaestroBrokerBackend::from_env_or_default()),
             provider: "hidmaestro".to_string(),
             sessions: Arc::new(Mutex::new(BTreeMap::new())),
             operations: Arc::new(tokio::sync::Mutex::new(())),
             stopping: Arc::new(AtomicBool::new(false)),
+            health: Arc::new(Mutex::new(ProviderHealth::new(initial))),
+            // A status-only connection cannot contend with forwarding. Its
+            // backend drops (shutdown + process reap) before this probe returns.
+            status_probe: Arc::new(|| HidMaestroBrokerBackend::from_env_or_default().status()),
         }
     }
 
@@ -117,11 +151,55 @@ impl InputBridgeService {
             sessions: Arc::new(Mutex::new(BTreeMap::new())),
             operations: Arc::new(tokio::sync::Mutex::new(())),
             stopping: Arc::new(AtomicBool::new(false)),
+            health: Arc::new(Mutex::new(ProviderHealth::new(
+                MockVirtualOutputBackend::new().status(),
+            ))),
+            status_probe: Arc::new(|| MockVirtualOutputBackend::new().status()),
         }
     }
 
+    fn cached_provider_status(&self) -> VirtualOutputBackendStatus {
+        let mut health = self
+            .health
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let status = health.status.clone();
+        if !self.stopping.load(Ordering::SeqCst)
+            && !health.in_flight
+            && std::time::Instant::now() >= health.next_refresh
+        {
+            health.in_flight = true;
+            health.next_refresh = std::time::Instant::now() + PROVIDER_HEALTH_REFRESH_INTERVAL;
+            let weak_health = Arc::downgrade(&self.health);
+            let stopping = self.stopping.clone();
+            let probe = self.status_probe.clone();
+            if std::thread::Builder::new()
+                .name("dscc-provider-health".into())
+                .spawn(move || {
+                    if stopping.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    let status = probe();
+                    if let Some(health) = weak_health.upgrade() {
+                        let mut health = health.lock().unwrap_or_else(|error| error.into_inner());
+                        health.in_flight = false;
+                        if !stopping.load(Ordering::SeqCst) {
+                            health.status = status;
+                            health.next_refresh =
+                                std::time::Instant::now() + PROVIDER_HEALTH_REFRESH_INTERVAL;
+                        }
+                    }
+                })
+                .is_err()
+            {
+                health.in_flight = false;
+            }
+        }
+        status
+    }
+
     pub(crate) fn status_response(&self) -> InputBridgeStatusResponse {
-        let backend = self.backend.status();
+        let backend = self.cached_provider_status();
         let sessions = self.session_summaries();
         InputBridgeStatusResponse {
             available: backend.state == VirtualOutputBackendState::Available,
@@ -966,6 +1044,8 @@ mod tests {
             sessions: Arc::new(Mutex::new(BTreeMap::new())),
             operations: Arc::new(tokio::sync::Mutex::new(())),
             stopping: Arc::new(AtomicBool::new(false)),
+            health: Arc::new(Mutex::new(ProviderHealth::new(PrivateIdBackend.status()))),
+            status_probe: Arc::new(|| PrivateIdBackend.status()),
         };
 
         let status = service.status_response();
@@ -1013,5 +1093,163 @@ mod tests {
         fn drop_session(&self, _target: &VirtualOutputTarget) -> Result<(), VirtualOutputError> {
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod audit_health_tests {
+    use super::*;
+    use dscc_virtual_output::VirtualOutputBackendStatus;
+    use std::time::{Duration, Instant};
+
+    struct SlowHealthBackend {
+        output: MockVirtualOutputBackend,
+    }
+    impl VirtualOutputBackend for SlowHealthBackend {
+        fn status(&self) -> VirtualOutputBackendStatus {
+            std::thread::sleep(Duration::from_millis(300));
+            self.output.status()
+        }
+        fn create_session(
+            &self,
+            id: &str,
+            kind: VirtualOutputKind,
+        ) -> Result<VirtualOutputTarget, VirtualOutputError> {
+            self.output.create_session(id, kind)
+        }
+        fn submit_state(
+            &self,
+            target: &VirtualOutputTarget,
+            state: &VirtualGamepadState,
+        ) -> Result<(), VirtualOutputError> {
+            self.output.submit_state(target, state)
+        }
+        fn drop_session(&self, target: &VirtualOutputTarget) -> Result<(), VirtualOutputError> {
+            self.output.drop_session(target)
+        }
+    }
+
+    #[tokio::test]
+    async fn audit_slow_provider_status_does_not_block_snapshot_or_submission() {
+        let mut service = InputBridgeService::mock();
+        service.backend = Arc::new(SlowHealthBackend {
+            output: MockVirtualOutputBackend::new(),
+        });
+        let slow = service.backend.clone();
+        service.status_probe = Arc::new(move || slow.status());
+        service
+            .start_session("test", VirtualOutputKind::Xbox360, 0)
+            .unwrap();
+        let started = Instant::now();
+        service.status_response();
+        assert!(
+            started.elapsed() < Duration::from_millis(100),
+            "snapshot waited for provider I/O: {:?}",
+            started.elapsed()
+        );
+        let started = Instant::now();
+        service
+            .run_blocking(|bridge| {
+                bridge.submit_virtual_state("test", &VirtualGamepadState::neutral(), 1)
+            })
+            .await
+            .unwrap();
+        assert!(started.elapsed() < Duration::from_millis(100));
+        service.shutdown();
+    }
+}
+
+#[cfg(test)]
+mod audit_probe_lifecycle_tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+    use std::time::{Duration, Instant};
+
+    async fn wait_for(check: impl Fn() -> bool) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !check() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    #[test]
+    fn audit_cached_availability_cannot_bypass_live_start_validation() {
+        let mut service = InputBridgeService::mock();
+        service.backend = Arc::new(MockVirtualOutputBackend::unavailable("offline"));
+        assert!(service.status_response().available);
+        assert!(service
+            .start_session("controller", VirtualOutputKind::Xbox360, 0)
+            .is_err());
+        assert_eq!(
+            service.session_summary("controller").state,
+            InputBridgeSessionState::Faulted
+        );
+    }
+
+    #[tokio::test]
+    async fn audit_health_probe_recovers_and_discards_shutdown_result() {
+        let mut service = InputBridgeService::mock();
+        let (release, replies) = std::sync::mpsc::channel();
+        let replies = Arc::new(Mutex::new(replies));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let probe_calls = calls.clone();
+        service.status_probe = Arc::new(move || {
+            probe_calls.fetch_add(1, Ordering::SeqCst);
+            let state = replies.lock().unwrap().recv().unwrap();
+            VirtualOutputBackendStatus {
+                backend_id: "mock".into(),
+                state,
+                message: "controlled probe".into(),
+                supported_kinds: vec![VirtualOutputKind::Xbox360],
+            }
+        });
+        service
+            .start_session("controller", VirtualOutputKind::Xbox360, 0)
+            .unwrap();
+        let initial = service.status_response();
+        wait_for(|| calls.load(Ordering::SeqCst) == 1).await;
+        let start = Instant::now();
+        for _ in 0..100 {
+            assert_eq!(service.status_response(), initial);
+        }
+        let snapshot_elapsed = start.elapsed();
+        let start = Instant::now();
+        service
+            .run_blocking(|bridge| {
+                bridge.submit_virtual_state("controller", &VirtualGamepadState::neutral(), 1)
+            })
+            .await
+            .unwrap();
+        let submit_elapsed = start.elapsed();
+        assert!(snapshot_elapsed < Duration::from_millis(100));
+        assert!(submit_elapsed < Duration::from_millis(100));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        eprintln!("blocked probe: 100 cached snapshots={snapshot_elapsed:?}, queued submission={submit_elapsed:?}");
+        release.send(VirtualOutputBackendState::Faulted).unwrap();
+        wait_for(|| !service.health.lock().unwrap().in_flight).await;
+        assert_eq!(service.status_response().state, "faulted");
+        service.health.lock().unwrap().next_refresh = Instant::now();
+        service.status_response();
+        wait_for(|| calls.load(Ordering::SeqCst) == 2).await;
+        release.send(VirtualOutputBackendState::Available).unwrap();
+        wait_for(|| !service.health.lock().unwrap().in_flight).await;
+        assert!(service.status_response().available);
+        service.health.lock().unwrap().next_refresh = Instant::now();
+        service.status_response();
+        wait_for(|| calls.load(Ordering::SeqCst) == 3).await;
+        service.shutdown();
+        let stopped = service.status_response();
+        release
+            .send(VirtualOutputBackendState::Unavailable)
+            .unwrap();
+        wait_for(|| !service.health.lock().unwrap().in_flight).await;
+        assert_eq!(service.status_response(), stopped);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert!(service
+            .start_session("new", VirtualOutputKind::Xbox360, 2)
+            .is_err());
     }
 }

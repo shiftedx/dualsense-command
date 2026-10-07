@@ -247,6 +247,9 @@ pub struct AgentState {
     #[cfg(test)]
     input_overrides: Arc<Mutex<BTreeMap<String, ControllerInputState>>>,
     output_runtime: Arc<Mutex<HardwareOutputRuntime>>,
+    output_write_serial: Arc<Mutex<()>>,
+    #[cfg(test)]
+    output_recorder: Option<Arc<Mutex<TestOutputRecorder>>>,
     shutdown: Arc<shutdown::ShutdownGate>,
     discovery_cache: Arc<DiscoveryCache>,
     realtime_runtime: Arc<Mutex<RealtimeRuntime>>,
@@ -255,14 +258,29 @@ pub struct AgentState {
     input_bridge: InputBridgeService,
 }
 
+#[cfg(test)]
+#[derive(Default)]
+struct TestOutputRecorder {
+    writes: Vec<(String, ControllerOutputFrame)>,
+    fail_next: bool,
+}
+
 #[derive(Debug, Default)]
 struct HardwareOutputRuntime {
-    manual_override_until: Option<Instant>,
+    manual_overrides: BTreeMap<String, (u64, Instant)>,
     manual_override_generation: u64,
     last_error: Option<String>,
     last_error_at: Option<Instant>,
     last_output_frames: BTreeMap<String, LastHardwareOutputFrame>,
     diagnostics: BTreeMap<String, ControllerOutputDiagnostics>,
+}
+
+#[derive(Clone, Copy)]
+enum OutputWriteOwner {
+    Runtime,
+    Manual(u64),
+    FinishManual(u64),
+    Watchdog,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -606,6 +624,9 @@ impl AgentState {
             #[cfg(test)]
             input_overrides: Arc::new(Mutex::new(BTreeMap::new())),
             output_runtime: Arc::new(Mutex::new(HardwareOutputRuntime::default())),
+            output_write_serial: Arc::new(Mutex::new(())),
+            #[cfg(test)]
+            output_recorder: None,
             shutdown: Arc::new(shutdown::ShutdownGate::default()),
             discovery_cache: Arc::new(DiscoveryCache::default()),
             realtime_runtime: Arc::new(Mutex::new(RealtimeRuntime::default())),
@@ -705,6 +726,10 @@ impl AgentState {
     }
 
     fn hardware_output_enabled(&self) -> bool {
+        #[cfg(test)]
+        if self.output_recorder.is_some() {
+            return !self.shutdown.is_stopping();
+        }
         !self.shutdown.is_stopping()
             && self
                 .output_manager
@@ -733,54 +758,54 @@ impl AgentState {
         }
     }
 
-    fn begin_manual_output_override(&self, duration: Duration) -> u64 {
-        let mut runtime = self.lock_output_runtime();
-        runtime.manual_override_generation = runtime.manual_override_generation.wrapping_add(1);
-        runtime.manual_override_until = Some(Instant::now() + duration);
-        runtime.manual_override_generation
-    }
-
-    fn clear_manual_output_override(&self) {
-        let mut runtime = self.lock_output_runtime();
-        runtime.manual_override_generation = runtime.manual_override_generation.wrapping_add(1);
-        runtime.manual_override_until = None;
-    }
-
-    fn clear_manual_output_override_if_generation(&self, generation: u64) {
-        let mut runtime = self.lock_output_runtime();
-        if runtime.manual_override_generation == generation {
+    async fn begin_manual_output_override(
+        &self,
+        controller_id: &str,
+        duration: Duration,
+    ) -> (u64, Instant) {
+        let state = self.clone();
+        let controller_id = controller_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let _serial = state
+                .output_write_serial
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let mut runtime = state.lock_output_runtime();
             runtime.manual_override_generation = runtime.manual_override_generation.wrapping_add(1);
-            runtime.manual_override_until = None;
-        }
+            let generation = runtime.manual_override_generation;
+            let until = Instant::now() + duration;
+            runtime
+                .manual_overrides
+                .insert(controller_id, (generation, until));
+            (generation, until)
+        })
+        .await
+        .expect("manual output ownership worker panicked")
     }
 
-    fn manual_output_override_active(&self) -> bool {
-        let mut runtime = self.lock_output_runtime();
-        if let Some(until) = runtime.manual_override_until {
-            if Instant::now() < until {
-                return true;
-            }
-            runtime.manual_override_until = None;
-        }
-        false
+    fn manual_output_override_active(&self, controller_id: &str) -> bool {
+        self.lock_output_runtime()
+            .manual_overrides
+            .get(controller_id)
+            .is_some_and(|(_, until)| Instant::now() < *until)
     }
 
-    fn manual_output_override_active_for(&self, generation: u64) -> bool {
-        let mut runtime = self.lock_output_runtime();
-        if runtime.manual_override_generation != generation {
-            return false;
-        }
-        if let Some(until) = runtime.manual_override_until {
-            if Instant::now() < until {
-                return true;
-            }
-            runtime.manual_override_until = None;
-        }
-        false
+    fn manual_output_override_active_for(&self, controller_id: &str, generation: u64) -> bool {
+        self.lock_output_runtime()
+            .manual_overrides
+            .get(controller_id)
+            .is_some_and(|(current, until)| *current == generation && Instant::now() < *until)
     }
 
-    fn manual_output_override_generation_matches(&self, generation: u64) -> bool {
-        self.lock_output_runtime().manual_override_generation == generation
+    fn manual_output_override_generation_matches(
+        &self,
+        controller_id: &str,
+        generation: u64,
+    ) -> bool {
+        self.lock_output_runtime()
+            .manual_overrides
+            .get(controller_id)
+            .is_some_and(|(current, _)| *current == generation)
     }
 
     fn output_frame_write_due(
@@ -907,31 +932,18 @@ impl AgentState {
         self.lock_output_runtime().last_output_frames.clear();
     }
 
-    fn release_all_output_sessions(&self) {
-        if let Some(manager) = &self.output_manager {
-            manager.release_all();
-        }
-    }
-
-    async fn release_output_session_for_controller(&self, controller_id: &str) {
-        if let Some(manager) = &self.output_manager {
-            let target = {
-                let inner = self.inner.read().await;
-                controller_output_target_or_reason(&inner, controller_id).ok()
-            };
-            if let Some(target) = target {
-                manager.release(&target);
-            }
-        }
-        let mut runtime = self.lock_output_runtime();
-        runtime.last_output_frames.remove(controller_id);
-    }
-
     async fn neutralize_active_output_and_release(&self, reason: &str) {
         let controller_ids = self.non_neutral_output_controller_ids();
         for controller_id in controller_ids {
+            if self.manual_output_override_active(&controller_id) {
+                continue;
+            }
             if let Err(error) = self
-                .write_output_frame_to_controller(&controller_id, &ControllerOutputFrame::default())
+                .write_output_frame_with_owner(
+                    &controller_id,
+                    &ControllerOutputFrame::default(),
+                    OutputWriteOwner::Watchdog,
+                )
                 .await
             {
                 self.note_hardware_output_error(format!(
@@ -940,8 +952,6 @@ impl AgentState {
                 .await;
             }
         }
-        self.release_all_output_sessions();
-        self.clear_recorded_output_frames();
     }
 
     async fn log_warn(&self, message: String) {
@@ -984,7 +994,91 @@ impl AgentState {
         &self,
         controller_id: &str,
         frame: &ControllerOutputFrame,
-    ) -> Result<ControllerOutputWrite, String> {
+    ) -> Result<Option<ControllerOutputWrite>, String> {
+        self.write_output_frame_with_owner(controller_id, frame, OutputWriteOwner::Runtime)
+            .await
+    }
+
+    // The ownership check and typed write share a synchronous gate inside the
+    // blocking worker. Cancelling its async caller cannot release that gate early.
+    fn write_with_output_ownership(
+        &self,
+        controller_id: &str,
+        frame: &ControllerOutputFrame,
+        owner: OutputWriteOwner,
+        mut write: impl FnMut(&ControllerOutputFrame) -> Result<ControllerOutputWrite, String>,
+        release: impl FnOnce(),
+    ) -> Result<Option<ControllerOutputWrite>, String> {
+        let _serial = self
+            .output_write_serial
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let OutputWriteOwner::Manual(generation) | OutputWriteOwner::FinishManual(generation) =
+            owner
+        {
+            let finishing = matches!(owner, OutputWriteOwner::FinishManual(_));
+            if !self.manual_output_override_generation_matches(controller_id, generation)
+                || (!finishing
+                    && !self.manual_output_override_active_for(controller_id, generation))
+            {
+                return Ok(None);
+            }
+        } else if self.manual_output_override_active(controller_id) {
+            return Ok(None);
+        }
+        let result = write(frame)?;
+        if matches!(
+            owner,
+            OutputWriteOwner::FinishManual(_) | OutputWriteOwner::Watchdog
+        ) {
+            release();
+            let mut runtime = self.lock_output_runtime();
+            runtime.manual_overrides.remove(controller_id);
+            runtime.last_output_frames.remove(controller_id);
+        }
+        Ok(Some(result))
+    }
+
+    async fn write_output_frame_with_owner(
+        &self,
+        controller_id: &str,
+        frame: &ControllerOutputFrame,
+        owner: OutputWriteOwner,
+    ) -> Result<Option<ControllerOutputWrite>, String> {
+        #[cfg(test)]
+        if let Some(recorder) = &self.output_recorder {
+            return self
+                .shutdown
+                .write(|| {
+                    self.write_with_output_ownership(
+                        controller_id,
+                        frame,
+                        owner,
+                        |frame| {
+                            let mut recorder = recorder.lock().unwrap();
+                            if std::mem::take(&mut recorder.fail_next) {
+                                return Err("recording write failure".into());
+                            }
+                            recorder
+                                .writes
+                                .push((controller_id.to_string(), frame.clone()));
+                            self.record_output_frame_write(
+                                controller_id,
+                                frame,
+                                DeviceTransportKind::Usb,
+                                Instant::now(),
+                            );
+                            Ok(ControllerOutputWrite {
+                                bytes: 48,
+                                hardware_output: false,
+                                report_kind: OutputReportKind::Usb,
+                            })
+                        },
+                        || {},
+                    )
+                })
+                .map_err(str::to_string)?;
+        }
         let manager = self
             .output_manager
             .clone()
@@ -993,30 +1087,36 @@ impl AgentState {
             let inner = self.inner.read().await;
             controller_output_target_or_reason(&inner, controller_id)?
         };
-        let transport = target.transport;
-        let frame_for_write = frame.clone();
-        let shutdown = self.shutdown.clone();
+        let frame = frame.clone();
         let state = self.clone();
         let controller_id = controller_id.to_string();
-        let write = tokio::task::spawn_blocking(move || {
-            shutdown.write(|| {
-                let result = manager.write_frame(&target, &frame_for_write);
-                if result.is_ok() {
-                    state.record_output_frame_write(
-                        &controller_id,
-                        &frame_for_write,
-                        transport,
-                        Instant::now(),
-                    );
-                }
-                result
+        tokio::task::spawn_blocking(move || {
+            state.shutdown.write(|| {
+                state.write_with_output_ownership(
+                    &controller_id,
+                    &frame,
+                    owner,
+                    |frame| {
+                        let result = manager
+                            .write_frame(&target, frame)
+                            .map_err(|error| error.to_string());
+                        if result.is_ok() {
+                            state.record_output_frame_write(
+                                &controller_id,
+                                frame,
+                                target.transport,
+                                Instant::now(),
+                            );
+                        }
+                        result
+                    },
+                    || manager.release(&target),
+                )
             })
         })
         .await
         .map_err(|error| format!("HID output task failed: {error}"))?
-        .map_err(|error| error.to_string())?
-        .map_err(|error| error.to_string())?;
-        Ok(write)
+        .map_err(str::to_string)?
     }
 
     async fn read_input_state_for_controller(
@@ -1181,7 +1281,6 @@ impl AgentState {
         }
         self.write_output_frame_to_controller(&controller_id, &frame)
             .await
-            .map(Some)
     }
 
     fn current_effect_response_cached(
@@ -1230,6 +1329,34 @@ impl AgentState {
                 return;
             }
             let mut updates = updates;
+            let now = Instant::now();
+            let previous_runtime = inner.adapter_runtime(adapter_id);
+            let mut new_session = inner.telemetry.text("source.id") != Some(adapter_id)
+                || previous_runtime.is_none_or(|runtime| !runtime.has_recent_packet(now))
+                || inner.telemetry.text("game.state") != update_text(&updates, "game.state")
+                || inner.telemetry.text("game.id") != update_text(&updates, "game.id");
+            if adapter_id == ASSETTO_SHARED_MEMORY_ADAPTER_ID {
+                if let Some(sample_id) = update_number(&updates, "source.sample_id") {
+                    let identity = (
+                        update_text(&updates, "source.session")
+                            .unwrap_or(adapter_id)
+                            .to_string(),
+                        sample_id as i32,
+                    );
+                    let runtime = inner.adapter_runtime_mut(adapter_id);
+                    if runtime.last_sample_identity.as_ref() == Some(&identity) {
+                        return;
+                    }
+                    new_session |= runtime
+                        .last_sample_identity
+                        .as_ref()
+                        .is_none_or(|previous| previous.0 != identity.0 || identity.1 < previous.1);
+                    runtime.last_sample_identity = Some(identity);
+                }
+            }
+            if new_session {
+                inner.forza_effect_runtime = ForzaEffectRuntime::default();
+            }
             let packet_rate_hz = inner
                 .adapter_runtime_mut(adapter_id)
                 .mark_packet(packet_len, sequence);
@@ -1494,10 +1621,7 @@ impl AgentState {
         steam_input: &SteamInputStatus,
         game_detection: &GameDetectionResponse,
     ) -> DiagnosticsResponse {
-        let bridge = self
-            .input_bridge
-            .run_blocking(|bridge| bridge.status_response())
-            .await;
+        let bridge = self.input_bridge.status_response();
         let inner = self.inner.read().await;
         let hardware_output_enabled = self.hardware_output_enabled();
         self.diagnostics_from_inner(
@@ -1633,10 +1757,7 @@ impl AgentState {
         let steam_input = self.cached_steam_input_status_or_refresh().await;
         let hardware_output_enabled = self.hardware_output_enabled();
         let output_diagnostics = self.output_diagnostics_snapshot();
-        let input_bridge = self
-            .input_bridge
-            .run_blocking(|bridge| bridge.status_response())
-            .await;
+        let input_bridge = self.input_bridge.status_response();
         let inner = self.inner.read().await;
         let diagnostics = self.diagnostics_from_inner(
             &inner,

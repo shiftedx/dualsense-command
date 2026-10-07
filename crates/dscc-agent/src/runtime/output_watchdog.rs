@@ -6,10 +6,7 @@ pub(crate) async fn output_watchdog_loop(state: AgentState, interval_duration: D
 
     loop {
         interval.tick().await;
-        if !state.hardware_output_enabled()
-            || state.manual_output_override_active()
-            || !state.has_non_neutral_output_frames()
-        {
+        if !state.hardware_output_enabled() || !state.has_non_neutral_output_frames() {
             continue;
         }
 
@@ -49,7 +46,8 @@ mod tests {
 
     #[tokio::test]
     async fn unavailable_discovery_preserves_global_lighting() {
-        let state = AgentState::from_controller_events([]);
+        let mut state = AgentState::from_controller_events([]);
+        state.output_recorder = Some(Arc::new(Mutex::new(TestOutputRecorder::default())));
         let _busy = state.discovery_cache.game_detection.lock().await;
         state.record_output_frame_write(
             "mock-controller",
@@ -73,7 +71,8 @@ mod tests {
 
     #[tokio::test]
     async fn slow_discovery_does_not_block_watchdog_neutralization() {
-        let state = AgentState::from_controller_events([]);
+        let mut state = AgentState::from_controller_events([]);
+        state.output_recorder = Some(Arc::new(Mutex::new(TestOutputRecorder::default())));
         // Simulate a discovery worker holding both shared discovery locks.
         let detection_lock = state.discovery_cache.game_detection.lock().await;
         let catalog_lock = state.discovery_cache.steam_game_catalog.lock().await;

@@ -83,6 +83,7 @@ pub(crate) fn parse_assetto_shared_memory_pages(
     let updates = vec![
         sequenced_signal_update("source.id", ASSETTO_SHARED_MEMORY_ADAPTER_ID, sequence),
         sequenced_signal_update("source.connected", true, sequence),
+        sequenced_signal_update("source.sample_id", f64::from(packet_id), sequence),
         sequenced_signal_update("source.packet_size", pages.physics.len() as f64, sequence),
         sequenced_signal_update("game.state", game_state, sequence),
         sequenced_signal_update("vehicle.max_rpm", max_rpm, sequence),
@@ -214,23 +215,28 @@ fn sequenced_signal_update(
 }
 
 #[cfg(target_os = "windows")]
-type AssettoSharedMemoryPageBuffers = (Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>);
+type AssettoSharedMemoryPageBuffers = (&'static str, Vec<u8>, Option<Vec<u8>>, Option<Vec<u8>>);
 
 #[cfg(target_os = "windows")]
 fn read_assetto_shared_memory_snapshot(
     sequence: u64,
 ) -> io::Result<Option<(usize, Vec<SignalUpdate>)>> {
-    let Some((physics, graphics, static_page)) = read_assetto_shared_memory_pages()? else {
+    let Some((mapping, physics, graphics, static_page)) = read_assetto_shared_memory_pages()?
+    else {
         return Ok(None);
     };
-    Ok(parse_assetto_shared_memory_pages(
+    let parsed = parse_assetto_shared_memory_pages(
         AssettoSharedMemoryPages {
             physics: &physics,
             graphics: graphics.as_deref(),
             static_page: static_page.as_deref(),
         },
         sequence,
-    ))
+    );
+    Ok(parsed.map(|(len, mut updates)| {
+        updates.push(sequenced_signal_update("source.session", mapping, sequence));
+        (len, updates)
+    }))
 }
 
 #[cfg(target_os = "windows")]
@@ -255,7 +261,7 @@ fn read_assetto_shared_memory_pages() -> io::Result<Option<AssettoSharedMemoryPa
         };
         let graphics = read_windows_shared_memory_page(graphics_name, ASSETTO_GRAPHICS_MIN_LEN)?;
         let static_page = read_windows_shared_memory_page(static_name, ASSETTO_STATIC_MIN_LEN)?;
-        return Ok(Some((physics, graphics, static_page)));
+        return Ok(Some((physics_name, physics, graphics, static_page)));
     }
 
     Ok(None)
@@ -369,6 +375,12 @@ pub(crate) async fn assetto_shared_memory_adapter_loop(state: AgentState) {
                     .await;
             }
             Ok(Ok(None)) => {
+                state
+                    .inner
+                    .write()
+                    .await
+                    .adapter_runtime_mut(ASSETTO_SHARED_MEMORY_ADAPTER_ID)
+                    .mark_mapping_absent();
                 next_probe = Instant::now() + Duration::from_millis(500);
             }
             Ok(Err(error)) => {

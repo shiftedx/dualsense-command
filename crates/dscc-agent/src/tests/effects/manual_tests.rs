@@ -287,3 +287,225 @@ fn rumble_test_honors_body_haptic_character() {
     assert!(fine.low_frequency < 0.20);
     assert!((fine.high_frequency - 0.80).abs() < f64::EPSILON);
 }
+
+fn recording_manual_state() -> AgentState {
+    let mut state = AgentState::from_controller_events(["manual-a", "manual-b"].map(|id| {
+        attach_event(
+            id,
+            ControllerFamily::DualSenseEdge,
+            ControllerTransportKind::Usb,
+            Some(90),
+        )
+    }));
+    state.output_recorder = Some(Arc::new(Mutex::new(TestOutputRecorder::default())));
+    state
+}
+
+async fn recorded_manual_test(
+    state: &AgentState,
+    id: &str,
+    duration: u64,
+    stop: bool,
+) -> EffectTestResponse {
+    let request = serde_json::from_value(serde_json::json!({"target": if stop { "base_feel" } else { "r2" }, "mode": if stop { "off" } else { "wall" }, "intensity": 70, "durationMs": duration})).unwrap();
+    crate::api::run_effect_test_for_controller(id.into(), state.clone(), request)
+        .await
+        .unwrap()
+        .1
+         .0
+}
+
+#[tokio::test]
+async fn audit_manual_tests_expire_each_owned_controller() {
+    let state = recording_manual_state();
+    assert!(
+        recorded_manual_test(&state, "manual-a", 100, false)
+            .await
+            .accepted
+    );
+    assert!(
+        recorded_manual_test(&state, "manual-b", 500, false)
+            .await
+            .accepted
+    );
+    tokio::time::sleep(Duration::from_millis(175)).await;
+    let writes = state
+        .output_recorder
+        .as_ref()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .writes
+        .clone();
+    assert!(
+        writes
+            .iter()
+            .any(|(id, frame)| id == "manual-a" && *frame == ControllerOutputFrame::default()),
+        "first controller must neutralize on its own deadline"
+    );
+    assert!(!writes
+        .iter()
+        .any(|(id, frame)| id == "manual-b" && *frame == ControllerOutputFrame::default()));
+}
+
+#[tokio::test]
+async fn audit_failed_replacement_neutralizes_only_its_controller() {
+    let state = recording_manual_state();
+    recorded_manual_test(&state, "manual-a", 500, false).await;
+    recorded_manual_test(&state, "manual-b", 500, false).await;
+    state
+        .output_recorder
+        .as_ref()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .fail_next = true;
+    assert!(
+        !recorded_manual_test(&state, "manual-a", 500, false)
+            .await
+            .accepted
+    );
+    let writes = state
+        .output_recorder
+        .as_ref()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .writes
+        .clone();
+    assert!(writes
+        .iter()
+        .any(|(id, frame)| id == "manual-a" && *frame == ControllerOutputFrame::default()));
+    assert!(!writes
+        .iter()
+        .any(|(id, frame)| id == "manual-b" && *frame == ControllerOutputFrame::default()));
+}
+
+#[tokio::test]
+async fn audit_manual_replacement_and_stop_preserve_other_controller() {
+    let state = recording_manual_state();
+    recorded_manual_test(&state, "manual-a", 100, false).await;
+    recorded_manual_test(&state, "manual-a", 500, false).await;
+    recorded_manual_test(&state, "manual-b", 500, false).await;
+    tokio::time::sleep(Duration::from_millis(170)).await;
+    assert!(!state
+        .output_recorder
+        .as_ref()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .writes
+        .iter()
+        .any(|(_, f)| *f == ControllerOutputFrame::default()));
+    recorded_manual_test(&state, "manual-a", 0, true).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let writes = state
+        .output_recorder
+        .as_ref()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .writes
+        .clone();
+    assert!(writes
+        .iter()
+        .any(|(id, f)| id == "manual-b" && *f == ControllerOutputFrame::default()));
+    let stopped = writes
+        .iter()
+        .position(|(id, f)| id == "manual-a" && *f == ControllerOutputFrame::default())
+        .unwrap();
+    assert!(!writes[stopped + 1..].iter().any(|(id, _)| id == "manual-a"));
+}
+
+#[tokio::test]
+async fn audit_shutdown_rejects_delayed_manual_writes() {
+    let state = recording_manual_state();
+    recorded_manual_test(&state, "manual-a", 500, false).await;
+    state.shutdown_outputs().await;
+    let count = state
+        .output_recorder
+        .as_ref()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .writes
+        .len();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        state
+            .output_recorder
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .writes
+            .len(),
+        count
+    );
+}
+
+#[tokio::test]
+async fn audit_superseded_writer_cannot_refresh_or_clear_replacement() {
+    let state = recording_manual_state();
+    let (old, _) = state
+        .begin_manual_output_override("manual-a", Duration::from_secs(1))
+        .await;
+    let (current, _) = state
+        .begin_manual_output_override("manual-a", Duration::from_secs(1))
+        .await;
+    let frame = effect_test_output_frame(
+        &serde_json::from_value(serde_json::json!({"target":"r2", "mode":"wall", "intensity":70}))
+            .unwrap(),
+    );
+    assert!(state
+        .write_output_frame_with_owner("manual-a", &frame, OutputWriteOwner::Manual(current))
+        .await
+        .unwrap()
+        .is_some());
+    assert!(state
+        .write_output_frame_with_owner(
+            "manual-a",
+            &ControllerOutputFrame::default(),
+            OutputWriteOwner::FinishManual(old)
+        )
+        .await
+        .unwrap()
+        .is_none());
+    assert!(state
+        .write_output_frame_with_owner("manual-a", &frame, OutputWriteOwner::Manual(old))
+        .await
+        .unwrap()
+        .is_none());
+    assert!(state
+        .write_output_frame_to_controller("manual-a", &ControllerOutputFrame::default())
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        state
+            .output_recorder
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .writes
+            .len(),
+        1
+    );
+    assert!(state.manual_output_override_active_for("manual-a", current));
+}
+
+#[tokio::test]
+async fn audit_automatic_neutral_output_keeps_keepalive_record() {
+    let state = recording_manual_state();
+    state
+        .write_output_frame_to_controller("manual-a", &ControllerOutputFrame::default())
+        .await
+        .unwrap();
+    assert!(!state.output_frame_write_due(
+        "manual-a",
+        &ControllerOutputFrame::default(),
+        DeviceTransportKind::Usb,
+        Instant::now()
+    ));
+}

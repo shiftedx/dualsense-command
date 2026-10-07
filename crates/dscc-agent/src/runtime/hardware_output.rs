@@ -5,7 +5,7 @@ pub(crate) async fn hardware_output_loop(state: AgentState, interval_duration: D
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         interval.tick().await;
-        if !state.hardware_output_enabled() || state.manual_output_override_active() {
+        if !state.hardware_output_enabled() {
             continue;
         }
 
