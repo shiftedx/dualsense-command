@@ -94,8 +94,11 @@ pub(crate) fn write_steam_input_paddle_preset(
         replace_steam_binding_value(&left_updated, &right_request, &right_raw_binding)?
             .unwrap_or_else(|| left_updated.clone());
     let right_changed = right_updated != left_updated;
-    let next_contents =
-        mark_dscc_steam_profile_metadata(&right_updated, request.profile_name.as_deref());
+    let next_contents = if left_changed || right_changed {
+        mark_dscc_steam_profile_metadata(&right_updated, request.profile_name.as_deref())
+    } else {
+        right_updated
+    };
 
     let updated_layout = parse_steam_input_layout(&steam_root, &target_path, &next_contents)
         .ok_or_else(|| {

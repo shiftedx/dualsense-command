@@ -519,7 +519,10 @@ fn redact_absolute_paths(value: String) -> String {
     let mut redacted = String::with_capacity(value.len());
     let mut index = 0;
     while index < chars.len() {
-        if let Some(end) = absolute_path_end(&chars, index) {
+        if let Some(end) = http_url_end(&chars, index) {
+            redacted.extend(&chars[index..end]);
+            index = end;
+        } else if let Some(end) = absolute_path_end(&chars, index) {
             redacted.push_str("[local-path]");
             index = end;
         } else {
@@ -528,6 +531,30 @@ fn redact_absolute_paths(value: String) -> String {
         }
     }
     redacted
+}
+
+fn http_url_end(chars: &[char], start: usize) -> Option<usize> {
+    let starts_url = ["http://", "https://"].iter().any(|scheme| {
+        chars
+            .get(start..start + scheme.len())
+            .is_some_and(|prefix| {
+                prefix
+                    .iter()
+                    .zip(scheme.chars())
+                    .all(|(actual, expected)| actual.eq_ignore_ascii_case(&expected))
+            })
+    });
+    if !starts_url {
+        return None;
+    }
+    // Query and fragment values may themselves start with '/', so skip the
+    // complete URL before recognizing local paths. Identifier redaction still
+    // runs over the result afterward.
+    let end = chars[start..]
+        .iter()
+        .position(|ch| ch.is_whitespace() || matches!(ch, '\'' | '"' | '<' | '>'))
+        .map_or(chars.len(), |offset| start + offset);
+    Some(end)
 }
 
 fn absolute_path_end(chars: &[char], start: usize) -> Option<usize> {

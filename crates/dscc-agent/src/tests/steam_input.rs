@@ -145,6 +145,10 @@ fn steam_audit_paddle_preset_handles_every_unchanged_combination() {
                     } else {
                         "key_press B, , "
                     },
+                )
+                .replace(
+                    "\"title\" \"Fixture\"",
+                    "\"title\" \"Fixture\"\n\"revision\" \"5\"",
                 );
                 fs::write(&target, &original).unwrap();
                 let result = write_steam_input_paddle_preset(SteamInputPaddlePresetRequest {
@@ -152,7 +156,7 @@ fn steam_audit_paddle_preset_handles_every_unchanged_combination() {
                     app_id: Some("2483190".into()),
                     left_key: None,
                     right_key: None,
-                    profile_name: None,
+                    profile_name: Some("Forza Profile".into()),
                     dry_run,
                 })
                 .unwrap();
@@ -168,6 +172,63 @@ fn steam_audit_paddle_preset_handles_every_unchanged_combination() {
                     );
                 }
             }
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn steam_audit_repeated_ui_paddle_preset_preserves_revision_and_backups() {
+    let _env = TestEnv::new(&[
+        "DSCC_STEAM_ROOT",
+        "ProgramFiles(x86)",
+        "ProgramFiles",
+        "LOCALAPPDATA",
+    ]);
+    let root = temp_test_dir("dscc-steam-ui-paddle-repeat");
+    let target = root.join("userdata/123456/2483190/remote/controller_fixture.vdf");
+    fs::create_dir_all(target.parent().unwrap()).unwrap();
+    std::env::set_var("DSCC_STEAM_ROOT", &root);
+    for name in ["ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"] {
+        std::env::set_var(name, root.join("missing"));
+    }
+    let original = audit_steam_layout("key_press A, , ", "key_press B, , ").replace(
+        "\"title\" \"Fixture\"",
+        "\"title\" \"Fixture\"\n\"revision\" \"5\"",
+    );
+    fs::write(&target, &original).unwrap();
+    let mut request = SteamInputPaddlePresetRequest {
+        layout_source: target.display().to_string(),
+        app_id: Some("2483190".into()),
+        left_key: Some("Q".into()),
+        right_key: Some("E".into()),
+        profile_name: Some("Forza Profile".into()),
+        dry_run: false,
+    };
+    let applied = write_steam_input_paddle_preset(request.clone()).unwrap();
+    assert!(applied.paddles.iter().all(|paddle| paddle.changed));
+    let backup = applied.backup_path.unwrap();
+    assert_eq!(fs::read(&backup).unwrap(), original.as_bytes());
+    let saved = fs::read_to_string(&target).unwrap();
+    assert!(saved.contains("\"revision\" \"6\""));
+    assert!(saved.contains("\"title\" \"DSCC / Forza Profile\""));
+    let file_count = fs::read_dir(target.parent().unwrap()).unwrap().count();
+    for dry_run in [true, false, true, false] {
+        request.dry_run = dry_run;
+        let repeated = write_steam_input_paddle_preset(request.clone()).unwrap();
+        assert!(repeated.paddles.iter().all(|paddle| !paddle.changed));
+        assert!(
+            repeated.backup_path.is_none(),
+            "already-current preset must not create a backup"
+        );
+        assert_eq!(fs::read_to_string(&target).unwrap(), saved);
+        assert_eq!(
+            fs::read_dir(target.parent().unwrap()).unwrap().count(),
+            file_count
+        );
+        assert_eq!(fs::read(&backup).unwrap(), original.as_bytes());
+        if !dry_run {
+            assert!(repeated.message.starts_with("Already current"));
         }
     }
     fs::remove_dir_all(root).unwrap();

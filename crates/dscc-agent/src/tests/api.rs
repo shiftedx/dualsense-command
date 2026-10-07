@@ -196,6 +196,29 @@ fn support_sanitizer_redacts_unc_and_posix_without_redacting_urls() {
     }
 }
 
+#[test]
+fn support_sanitizer_preserves_url_query_and_fragment_paths() {
+    for url in [
+        "https://example.test/help?return=/guide/start#/guide/fragment",
+        "http://example.test/help?return=/guide/start#section=/guide/fragment",
+        "HTTPS://example.test/help?return=/guide/start",
+    ] {
+        let sanitized = sanitize_support_text(&format!(
+            "See '{url}' then read '/srv/private-fixture/config.json'."
+        ));
+        assert!(sanitized.contains(url), "{sanitized}");
+        assert!(!sanitized.contains("private-fixture"), "{sanitized}");
+    }
+    let sanitized = sanitize_support_text(
+        "https://example.test/userdata/76561198000000000/help?return=/guide/start",
+    );
+    assert!(!sanitized.contains("76561198000000000"));
+    assert!(
+        sanitized.contains("userdata/<steam-user>/help?return=/guide/start"),
+        "{sanitized}"
+    );
+}
+
 #[tokio::test]
 async fn support_bundle_opaque_path_fields_hide_custom_overrides() {
     let _env = TestEnv::new(&["DSCC_CONFIG_DIR", "DSCC_WEB_DIST"]);
