@@ -13,6 +13,92 @@ const originalFetch = globalThis.fetch;
 try {
   const { createButtonMappingSession, createButtonMappingSessionState } = await server.ssrLoadModule('/src/app/buttonMappingSession.ts');
   const { mockAppSnapshot, mockControllerConfig } = await server.ssrLoadModule('/src/lib/mock/fixture.ts');
+  const { steamBindingSlots } = await server.ssrLoadModule('/src/lib/features/buttonMapping/buttonMapping.ts');
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+  const deferred = () => { let resolve; let reject; const promise = new Promise((yes,no) => {resolve=yes;reject=no;}); return {promise,resolve,reject}; };
+  const mappingFixture = kind => {
+    let state = createButtonMappingSessionState();
+    const requests = [], notifications = [], refreshes = [];
+    const store = { get:()=>state, set:next=>state=next, update:fn=>state=fn(state) };
+    const binding = (key,inputId='button_a') => ({input:'Cross',inputId,rawBinding:`key_press ${key}, , ${key}`,binding:key,groupId:'1',source:inputId==='button_a'?'button_diamond':'switches',sourceMode:'four_buttons',activator:'Full Press',kind:'Key'});
+    const contextFor = key => ({active:true,controller:{...mockAppSnapshot.controllers[0],family:'DualSense Edge'},controllerHeaderName:'Test',selectedTuningScope:'game',steamContextGame:{gameId:`game-${key}`,appId:key,name:key,inputProvider:kind==='bridge'?'dscc_input_bridge':'steam_input'},steamInputStatus:{available:true,running:true,layouts:[{source:`layout-${key}`,appId:key,controllerType:'controller_ps5_edge',bindings:[binding(key),binding(key,'button_back_left'),binding(key,'button_back_right')]}]},inputBridgeStatus:{available:true},activeProfileName:key,profileContextGameName:key,bridgeProfileId:`profile-${key}`,refresh:()=>{const pending=deferred();refreshes.push(pending);return pending.promise;},notify:message=>notifications.push(message)});
+    let context = contextFor('A');
+    globalThis.fetch = (url,init) => {
+      const pending = deferred(), body = JSON.parse(init?.body ?? '{}');
+      const response = {accepted:true,message:`saved ${body.rawBinding ?? body.target ?? body.leftKey}`,warnings:[],binding:{...binding('A'),rawBinding:body.rawBinding},paddles:[{binding:binding(body.leftKey,'button_back_left')},{binding:binding(body.rightKey,'button_back_right')}]};
+      const request = {...pending,url,body,response};requests.push(request);
+      return pending.promise;
+    };
+    const render = () => createButtonMappingSession({...context,state,store});
+    const start = (view,key='X') => {
+      if(kind==='paddle'){view.onPaddlePresetLeftKeyChange(key);return view.onApplyPaddlePreset();}
+      view.onRawDraftChange(`key_press ${key}, , ${key}`);return view.onSaveBinding();
+    };
+    const settle = (request,outcome='resolve') => request.resolve(outcome==='reject'?Response.json({message:'obsolete mapping failure'},{status:500}):Response.json(request.response));
+    const transition = type => {
+      if(type==='switch'||type==='return'){context=contextFor('B');render();if(type==='return')context=contextFor('A');}
+      else if(type==='inactive')context={...context,active:false};
+      else if(type==='controller')context={...context,controller:{...context.controller,id:'controller-B'}};
+      else if(type==='profile')context={...context,bridgeProfileId:'profile-B'};
+      else if(type==='provider')context={...context,steamContextGame:{...context.steamContextGame,inputProvider:kind==='bridge'?'steam_input':'dscc_input_bridge'}};
+      return render();
+    };
+    const close = async () => {for(const request of requests)settle(request);for(const pending of refreshes)pending.resolve();await flush();};
+    return {get state(){return state;},store,requests,notifications,refreshes,render,start,settle,transition,close};
+  };
+  for(const kind of ['steam','bridge','paddle']) for(const outcome of ['resolve','reject']) for(const transition of ['switch','return','inactive','controller','provider','profile']) await test(`${kind} pending ${outcome} ignores ${transition} mapping context`,async()=>{
+    const fixture=mappingFixture(kind);
+    try {
+      const saving=fixture.start(fixture.render());
+      await flush();assert.equal(fixture.requests.length,1);
+      fixture.transition(transition);
+      const resetBusy=fixture.state.bindingBusy;
+      // A replacement operation owns busy/finally; it must not be released by A.
+      fixture.store.update(state=>({...state,bindingBusy:true,bindingMessage:'Current context',bindingDraft:'key_press B, , B',optimisticBindings:[{inputId:'button_a',rawBinding:'key_press B, , B'}]}));
+      const before=structuredClone(fixture.state), notifications=fixture.notifications.length;
+      fixture.settle(fixture.requests[0],outcome);await saving;await flush();
+      assert.deepEqual(fixture.state,before,'old response changed the replacement editor');
+      assert.equal(fixture.notifications.length,notifications,'old response notified the new context');
+      assert.equal(fixture.refreshes.length,0,'obsolete success started a refresh');
+      assert.equal(resetBusy,false,'context reset must release the old busy flag');
+    } finally {await fixture.close();}
+  });
+  for(const kind of ['steam','bridge','paddle']) for(const outcome of ['resolve','reject']) await test(`${kind} older request cannot release or replace its newer mapping save (${outcome})`,async()=>{
+    const fixture=mappingFixture(kind);
+    try {
+      const first=fixture.start(fixture.render(),'X');await flush();
+      const second=fixture.start(fixture.render(),'Y');await flush();
+      const before=structuredClone(fixture.state),notifications=fixture.notifications.length;
+      fixture.settle(fixture.requests[0],outcome);await first;
+      assert.deepEqual(fixture.state,before);assert.equal(fixture.notifications.length,notifications);assert.equal(fixture.refreshes.length,0);
+      fixture.settle(fixture.requests[1]);await second;
+      assert.equal(fixture.state.bindingBusy,false);assert.match(fixture.state.bindingMessage,/Y/);
+    } finally {await fixture.close();}
+  });
+  for(const kind of ['steam','paddle']) for(const transition of ['switch','new-save']) for(const outcome of ['resolve','reject']) await test(`${kind} old ${outcome} refresh cannot clear ${transition} optimistic bindings`,async()=>{
+    const fixture=mappingFixture(kind);
+    try {
+      const first=fixture.start(fixture.render(),'X');await flush();fixture.settle(fixture.requests[0]);await first;
+      assert.equal(fixture.refreshes.length,1);
+      if(transition==='switch')fixture.transition('switch');
+      const second=fixture.start(fixture.render(),'Y');await flush();fixture.settle(fixture.requests[1]);await second;
+      const optimistic=structuredClone(fixture.state.optimisticBindings);
+      assert.ok(optimistic?.some(binding=>binding.rawBinding.includes('Y')));
+      fixture.refreshes[0][outcome](Error('obsolete refresh failure'));await flush();
+      assert.deepEqual(fixture.state.optimisticBindings,optimistic);
+      fixture.refreshes[1][outcome](Error('current refresh failure'));await flush();assert.equal(fixture.state.optimisticBindings,null);
+    } finally {await fixture.close();}
+  });
+  for(const kind of ['steam','bridge','paddle']) await test(`${kind} obsolete mapping callbacks cannot edit or start writes after leaving and returning`,async()=>{
+    const fixture=mappingFixture(kind);
+    try {
+      const old=fixture.render();fixture.transition('return');const before=structuredClone(fixture.state),notifications=fixture.notifications.length;
+      old.onRawDraftChange('key_press Z, , Stale');old.onLabelChange('Stale');old.onTargetChange('key_press Z, , Stale');old.onResetDraft();
+      old.onPaddlePresetLeftKeyChange('Z');old.onPaddlePresetRightKeyChange('Z');old.onHoverSlot(steamBindingSlots[1]);old.onSelectSlot(steamBindingSlots[1]);
+      void old.onSaveBinding();void old.onApplyPaddlePreset();await flush();
+      assert.equal(fixture.requests.length,0);assert.deepEqual(fixture.state,before);assert.equal(fixture.notifications.length,notifications);
+    } finally {await fixture.close();}
+  });
   await test('mapping session drops edits when game changes with identical slot identity', () => {
     let state = createButtonMappingSessionState();
     const store = { get: () => state, set: value => state = value, update: fn => state = fn(state) };

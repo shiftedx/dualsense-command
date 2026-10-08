@@ -13,6 +13,7 @@
   import {
     createButtonMappingSession,
     createButtonMappingSessionState,
+    invalidateButtonMappingSession,
     type ButtonMappingSessionStateStore
   } from './app/buttonMappingSession';
   import { EMPTY_BUTTON_MAPPING_VIEW_SESSION } from './lib/features/buttonMapping/buttonMappingState';
@@ -856,7 +857,7 @@
 
   const inputBridgeBindingProfileId = () => inputBridgeBindingProfileIdForWorkspace(profileWorkspace);
 
-  $: buttonMappingSession = buttonMappingActive
+  $: buttonMappingSession = buttonMappingActive && appRuntime
     ? createButtonMappingSession({
         state: buttonMappingSessionState,
         store: buttonMappingSessionStore,
@@ -873,7 +874,7 @@
         refresh,
         notify: showToast
       })
-    : EMPTY_BUTTON_MAPPING_VIEW_SESSION;
+    : (invalidateButtonMappingSession(buttonMappingSessionStore), EMPTY_BUTTON_MAPPING_VIEW_SESSION);
 
   const setTriggerRangeValue = (side: TriggerSide, edge: TriggerRangeEdge, rawValue: number | string) => {
     if (side === 'l2') {
@@ -2356,6 +2357,7 @@
         profileSaveGeneration += 1;
         controllerConfigRequest += 1;
         edgeProfilesRequest += 1;
+        invalidateButtonMappingSession(buttonMappingSessionStore);
         void stopSavedFeelPreview();
         liveConfigSync.clear();
         markBaseFeelTestInactive();

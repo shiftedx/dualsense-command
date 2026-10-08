@@ -41,6 +41,8 @@ export type ButtonMappingSessionState = {
   lastBindingDraftKey: string;
   optimisticBindings: SteamInputBinding[] | null;
   activeContextKey: string;
+  contextGeneration: number;
+  bindingRequest: number;
   bindingBusy: boolean;
   bindingMessage: string;
   paddlePresetLeftKey: string;
@@ -83,6 +85,8 @@ export function createButtonMappingSessionState(): ButtonMappingSessionState {
     lastBindingDraftKey: '',
     optimisticBindings: null,
     activeContextKey: '',
+    contextGeneration: 0,
+    bindingRequest: 0,
     bindingBusy: false,
     bindingMessage: '',
     paddlePresetLeftKey: 'Q',
@@ -90,6 +94,18 @@ export function createButtonMappingSessionState(): ButtonMappingSessionState {
     hoveredSlotKey: '',
     activeSlotKey: ''
   };
+}
+
+export function invalidateButtonMappingSession(store: ButtonMappingSessionStateStore): void {
+  const current = store.get();
+  if (!current.activeContextKey) return;
+  store.set({
+    ...createButtonMappingSessionState(),
+    contextGeneration: current.contextGeneration + 1,
+    bindingRequest: current.bindingRequest,
+    paddlePresetLeftKey: current.paddlePresetLeftKey,
+    paddlePresetRightKey: current.paddlePresetRightKey
+  });
 }
 
 const normalizedSteamControllerType = (controllerLike: string | null | undefined) => {
@@ -220,6 +236,8 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
   if (contextKey !== nextState.activeContextKey) {
     patchNextState({
       activeContextKey: contextKey,
+      contextGeneration: nextState.contextGeneration + 1,
+      bindingBusy: false,
       selectedBindingKey: '',
       lastBindingDraftKey: '',
       bindingDraft: '',
@@ -285,6 +303,21 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
     store.set(nextState);
   }
 
+  // Identity can repeat after leaving; generations keep its old callbacks stale.
+  const generation = nextState.contextGeneration;
+  const isCurrentContext = () => active && generation === store.get().contextGeneration;
+  const beginBindingWrite = () => {
+    const request = store.get().bindingRequest + 1;
+    updateSessionState(store, { bindingRequest: request, bindingBusy: true });
+    return () => isCurrentContext() && request === store.get().bindingRequest;
+  };
+  const refreshOptimisticBindings = (current: () => boolean) => {
+    const cleanup = () => {
+      if (current()) updateSessionState(store, { optimisticBindings: null });
+    };
+    void input.refresh().then(cleanup, cleanup);
+  };
+
   const steamPaddlePresetVisible =
     active &&
     !bridgeContextActive &&
@@ -346,14 +379,17 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
     : 'Steam Input Layout';
 
   const setPaddlePresetLeftKey = (value: string) => {
+    if (!isCurrentContext()) return;
     updateSessionState(store, { paddlePresetLeftKey: normalizePaddlePresetKey(value) });
   };
 
   const setPaddlePresetRightKey = (value: string) => {
+    if (!isCurrentContext()) return;
     updateSessionState(store, { paddlePresetRightKey: normalizePaddlePresetKey(value) });
   };
 
   const applyBindingTargetChange = (nextTargetRaw: string) => {
+    if (!isCurrentContext()) return;
     const next = parseSteamBindingTriple(nextTargetRaw);
     const current = parseSteamBindingTriple(store.get().bindingDraft);
     updateSessionState(store, {
@@ -367,6 +403,7 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
   };
 
   const applyBindingLabelChange = (nextLabel: string) => {
+    if (!isCurrentContext()) return;
     const current = parseSteamBindingTriple(store.get().bindingDraft);
     updateSessionState(store, {
       bindingLabelDraft: nextLabel,
@@ -378,6 +415,7 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
   };
 
   const applyBindingRawChange = (nextRaw: string) => {
+    if (!isCurrentContext()) return;
     updateSessionState(store, {
       bindingDraft: nextRaw,
       bindingLabelDraft: parseSteamBindingTriple(nextRaw).label
@@ -385,6 +423,7 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
   };
 
   const resetBindingDraft = () => {
+    if (!isCurrentContext()) return;
     if (!selectedSteamBinding) return;
     updateSessionState(store, {
       bindingDraft: selectedSteamBinding.rawBinding,
@@ -395,6 +434,7 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
   };
 
   const selectBinding = (binding: SteamInputBinding | null | undefined) => {
+    if (!isCurrentContext()) return;
     if (!binding) {
       setBindingMessage(store, input, 'That Steam input is not present in the loaded layout yet.', 'info');
       return;
@@ -410,6 +450,7 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
   };
 
   const selectSlot = (slot: SteamBindingSlot) => {
+    if (!isCurrentContext()) return;
     const binding = steamBindingBySlotKey.get(slot.key) ?? null;
     updateSessionState(store, { activeSlotKey: slot.key });
     if (binding) {
@@ -426,10 +467,12 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
   };
 
   const hoverSlot = (slot: SteamBindingSlot | null) => {
+    if (!isCurrentContext()) return;
     updateSessionState(store, { hoveredSlotKey: slot?.key ?? '' });
   };
 
   const saveBinding = async (dryRun = false) => {
+    if (!isCurrentContext()) return;
     const bindingToSave = bridgeContextActive
       ? focusedSlotBinding ?? selectedSteamBinding
       : focusedSlotSelectedBinding ?? selectedSteamBinding;
@@ -457,7 +500,7 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
         setBindingMessage(store, input, 'Choose a bridge target before saving.', 'error');
         return;
       }
-      updateSessionState(store, { bindingBusy: true });
+      const current = beginBindingWrite();
       setBindingMessage(
         store,
         input,
@@ -472,6 +515,7 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
           target: rawBinding,
           dryRun
         });
+        if (!current()) return;
         const warningText = response.warnings.length ? ` ${response.warnings.join(' ')}` : '';
         setBindingMessage(store, input, `${response.message}${warningText}`, response.accepted ? 'success' : 'error');
         if (response.accepted && !dryRun) {
@@ -490,6 +534,7 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
           applyOptimisticBinding(store, rawSteamInputBindings, updatedBinding);
         }
       } catch (caught) {
+        if (!current()) return;
         setBindingMessage(
           store,
           input,
@@ -497,7 +542,7 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
           'error'
         );
       } finally {
-        updateSessionState(store, { bindingBusy: false });
+        if (current()) updateSessionState(store, { bindingBusy: false });
       }
       return;
     }
@@ -520,7 +565,7 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
       setBindingMessage(store, input, 'Choose a target binding before saving.', 'error');
       return;
     }
-    updateSessionState(store, { bindingBusy: true });
+    const current = beginBindingWrite();
     setBindingMessage(
       store,
       input,
@@ -540,6 +585,7 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
         profileName: input.activeProfileName || input.profileContextGameName || steamContextGame?.name || null,
         dryRun
       });
+      if (!current()) return;
       setBindingMessage(
         store,
         input,
@@ -555,11 +601,10 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
       });
       if (!dryRun) {
         applyOptimisticBinding(store, rawSteamInputBindings, response.binding);
-        void input.refresh().finally(() => {
-          updateSessionState(store, { optimisticBindings: null });
-        });
+        refreshOptimisticBindings(current);
       }
     } catch (caught) {
+      if (!current()) return;
       setBindingMessage(
         store,
         input,
@@ -567,11 +612,12 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
         'error'
       );
     } finally {
-      updateSessionState(store, { bindingBusy: false });
+      if (current()) updateSessionState(store, { bindingBusy: false });
     }
   };
 
   const applyPaddlePreset = async (dryRun = false) => {
+    if (!isCurrentContext()) return;
     const currentState = store.get();
     if (!steamInputLayout) {
       setBindingMessage(store, input, 'Load a Steam Input layout before applying the paddle preset.', 'error');
@@ -585,7 +631,7 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
       setBindingMessage(store, input, steamPaddlePresetStatus, 'error');
       return;
     }
-    updateSessionState(store, { bindingBusy: true });
+    const current = beginBindingWrite();
     setBindingMessage(
       store,
       input,
@@ -601,6 +647,7 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
         profileName: input.activeProfileName || input.profileContextGameName || steamContextGame?.name || null,
         dryRun
       });
+      if (!current()) return;
       const warningText = response.warnings.length ? ` ${response.warnings.join(' ')}` : '';
       setBindingMessage(
         store,
@@ -624,11 +671,10 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
             bindingLabelDraft: parseSteamBindingTriple(selectedPaddle.rawBinding).label
           });
         }
-        void input.refresh().finally(() => {
-          updateSessionState(store, { optimisticBindings: null });
-        });
+        refreshOptimisticBindings(current);
       }
     } catch (caught) {
+      if (!current()) return;
       setBindingMessage(
         store,
         input,
@@ -636,7 +682,7 @@ export function createButtonMappingSession(input: CreateButtonMappingSessionInpu
         'error'
       );
     } finally {
-      updateSessionState(store, { bindingBusy: false });
+      if (current()) updateSessionState(store, { bindingBusy: false });
     }
   };
 

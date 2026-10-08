@@ -39,6 +39,12 @@ export const saveControllerConfig = async (id,config) => { fixture.requests.push
 export const saveProfileConfig = async (id,config) => { fixture.requests.push({kind:'save',id,config:clone(config)}); if(fixture.deferSave) await defer('save',id); return {accepted:true,message:'saved'}; };
 export const runEffectTest = async (request,id) => { fixture.requests.push({kind:'effect',id,request:clone(request)}); if(fixture.deferOff && request.mode==='off') await defer('off',id); if(fixture.deferManual && request.durationMs===30000) await defer('manual',id); return {accepted:true,dryRun:true}; };
 export const createProfile = async (name,options) => {if(fixture.deferCreate)await defer('create','copy');const p=profile('copy-'+snapshot.profiles.length);p.name=name;snapshot.profiles.push(p);return p;};
+export const writeSteamInputBinding = async request => {
+  fixture.requests.push({kind:'binding',request:clone(request)});
+  const binding=snapshot.steamInput.layouts.find(layout=>layout.source===request.layoutSource).bindings.find(binding=>binding.inputId===request.inputId);
+  await defer('binding',request.inputId);
+  return {accepted:true,message:'Obsolete mapping success',warnings:[],binding:{...clone(binding),rawBinding:request.rawBinding}};
+};
 `;
 const hook = `
   dismissOnboarding();
@@ -47,6 +53,8 @@ const hook = `
     reloadController: loadControllerConfig,
     controller: (id) => { selectedControllerId = id; },
     scope: (value) => { selectedTuningScope = value; },
+    game: selectTuningGame, navigate: navigateToView,
+    mapping: () => buttonMappingSession, mappingState: () => structuredClone(buttonMappingSessionState),
     edit: setLightbarBrightness, save: saveActiveProfile, discard: discardDraftChanges,
     stop: stopAppRuntime, manual: toggleBaseFeelTest, reset: restoreDefaults,
     rail: toggleSavedFeelPreview, body: previewBodyHaptics, lights: previewLightbar,
@@ -75,6 +83,29 @@ async function test(name, run) {
   finally { await page.close(); }
 }
 try {
+  for(const transition of ['away','return','teardown']) for(const outcome of ['resolve','reject']) await test(`mounted mapping pending ${outcome} ignores ${transition}`,async page=>{
+    await page.evaluate(async()=>{await appFixture.game(fixture.snapshot.gameDetection.supportedGames[0]);appFixture.navigate('advancedButtonMapping');});
+    await page.waitForFunction(()=>appFixture.mapping().active && appFixture.mapping().focusedSlotSelectedBinding);
+    await page.evaluate(()=>{appFixture.mapping().onRawDraftChange('key_press X, , Old editor');void appFixture.mapping().onSaveBinding();});
+    await page.waitForFunction(()=>fixture.pending.some(p=>p.kind==='binding'));
+    if(transition==='teardown')await page.evaluate(()=>appFixture.stop());
+    else {
+      await page.evaluate(()=>appFixture.navigate('tuning'));
+      await page.waitForFunction(()=>!appFixture.mapping().active);
+      if(transition==='return'){
+        await page.evaluate(()=>appFixture.navigate('advancedButtonMapping'));
+        await page.waitForFunction(()=>appFixture.mapping().active);
+        await page.evaluate(()=>appFixture.mapping().onRawDraftChange('key_press Y, , New editor'));
+      }
+    }
+    const before=await page.evaluate(()=>appFixture.mappingState());
+    assert.equal(before.bindingBusy,false);
+    await page.evaluate(outcome=>fixture[outcome]('binding',fixture.pending.find(p=>p.kind==='binding').id),outcome);
+    await page.waitForTimeout(80);
+    assert.deepEqual(await page.evaluate(()=>appFixture.mappingState()),before);
+    assert.equal(await page.getByText('Obsolete mapping success',{exact:true}).count(),0);
+    assert.equal(await page.getByText('obsolete failure',{exact:true}).count(),0);
+  });
   for (const next of ['manual','body','lights']) for (const completion of ['resolve','reject']) await test(`rail stop settles before ${next} preview (${completion})`, async page => {
     await page.locator('.saved-preview-button').first().click();
     await page.evaluate(()=>fixture.deferOff=true);
