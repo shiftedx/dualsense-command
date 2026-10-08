@@ -46,6 +46,17 @@ save and restart; enable it only on a trusted network.
 If Support reports `api: ok`, record the failed action and exact error: the
 agent is reachable, so investigate that action rather than restarting blindly.
 
+## Settings Cannot Be Loaded Or Saved
+
+Check Status or Support diagnostics for the settings load error. An unreadable
+settings file blocks saved-setting and profile mutations with HTTP 503 for that
+session. Resolve the file lock or permissions, then restart DSCC so it can load
+the original state. Reading status and stopping a runtime test remain available.
+
+Invalid JSON or an unsupported settings version is preserved in an exclusive
+recovery copy before a replacement can be saved. Keep that recovery file when
+investigating missing profiles; do not replace it with another defaults file.
+
 ## Battery Drops Faster Than Expected
 
 Check **Controller details → Power** for write cadence. Dim lights, prefer
@@ -58,6 +69,11 @@ No glyph pack is shipped. Set `DSCC_FORZA_GLYPH_ARCHIVE` to a local
 `ControllerIcons.zip` you have permission to use (maximum 16 MiB), then restart
 the agent. Keep the archive for restore; originals remain backed up beside the
 target files. A missing archive causes an error without changing game files.
+
+Restore originals before switching from an installed archive to a different
+archive. DSCC refuses an ambiguous installed replacement and preserves existing
+original backups. If a backup itself cannot be verified, retain it and verify
+the game files before retrying.
 
 ## Linux Page Does Not Open
 
@@ -77,6 +93,11 @@ Open/create and save a real Steam Input layout for the selected game, then
 refresh DSCC. Placeholder defaults cannot be written back. Edge paddle presets
 require existing **Back Left** and **Back Right** bindings in that layout;
 save it in Steam's configurator before retrying.
+
+Refresh the layout after an external edit or a stale/ambiguous slot error. DSCC
+matches the complete group, source, mode, input and activator identity, and
+refuses a first-match guess. Reapplying an already-current paddle preset should
+leave the file and revision unchanged.
 
 ## Create A Support Bundle
 

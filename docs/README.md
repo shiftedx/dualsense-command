@@ -4,6 +4,7 @@
 | --- | --- |
 | Install / play / troubleshoot | [README](../README.md), [Troubleshooting](troubleshooting.md), [Linux beta](linux-beta.md) |
 | Change code | [Agent guide](../AGENTS.md), [Contributing](contributing.md), [Architecture](architecture.md) |
+| Review codebase findings and performance gaps | [October 7 2026 audit](codebase-audit-2026-10-07.md) |
 | Use domain language / decisions | [Terms](../CONTEXT.md), [ADRs](adr/) |
 | Research protocols / assets | [Provenance policy](provenance-policy.md), [Source ledger](sources.md) |
 | Add game support | [Contribution guide](game-module-contribution-guide.md), [PR template](game-module-template.md), [Draft data-only manifest](module-manifest-format.md) |

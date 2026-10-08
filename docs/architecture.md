@@ -54,9 +54,11 @@ Search symbols with `rg`. Agent paths below are relative to
 | Telemetry freshness | `adapter_runtime.rs`, `assetto_shared_memory.rs`, `effects/materialization.rs`: enabled adapters, changed producer samples, source/session baseline reset. |
 | Input Bridge | `input_bridge.rs`, `dscc-virtual-output`: cached health uses an independent bounded status probe; session creation validates the live provider. |
 | Game detection | `game_detection_cache.rs::DiscoveryCache`, `game_detection/`: cached filesystem metadata, fast process scan. |
-| Persistence | `persistence.rs::{build_persist_snapshot,persist_snapshot}`: ordered atomic saves, isolated test paths. |
+| Persistence | `persistence.rs`: distinguish missing/unreadable/invalid state, exclusive recovery copies, ordered atomic saves; `routes.rs` applies `require_persistence_available` to persisted mutations. |
+| Steam writes | `steam_input/{writer,paddle_preset}.rs`: canonical-target transaction lock, complete slot selectors, exclusive backups, preimage recheck and atomic replacement. |
+| Support privacy | `support_bundle.rs`: opaque path fields and free-text sanitation; no private raw reports or identifiers. |
 | Defaults / paths | `built_in_presets.rs`, `runtime_paths.rs`. |
-| FH6 glyph install | `forza_glyphs.rs`: trusted roots, backups, guarded replacement. |
+| FH6 glyph install | `forza_glyphs.rs`: trusted roots, immutable original backups; restore originals before changing archives. |
 
 ## Device and browser boundaries
 

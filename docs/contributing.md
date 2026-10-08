@@ -66,6 +66,8 @@ for comparisons and diagrams for flows.
 
 Run the matching suite while editing, then the full suite before a PR.
 For docs-only changes, inspect the diff, verify commands and run `check:docs`.
+If Cargo reports invalid cached metadata, preserve the cache and rerun with an
+isolated `CARGO_TARGET_DIR` under ignored `output/`; do not delete unrelated builds.
 
 | Suite | Command | Coverage |
 | --- | --- | --- |
@@ -75,7 +77,7 @@ For docs-only changes, inspect the diff, verify commands and run `check:docs`.
 | Docs | `npm.cmd run check:docs` | Repository-local links; rejects ignored targets. |
 | Release | `npm.cmd run check:release` | Metadata tests, versions, assets and dependency notices. |
 | Rust | `npm.cmd run check:rust` | Format, all-feature workspace tests, Clippy, locked production feature configuration. |
-| Web | `npm.cmd run check:web` | Types, source audit, mapping/DTO/haptics, build, size, visual smoke, curve drag. |
+| Web | `npm.cmd run check:web` | Types, source audit, mapping/DTO/haptics, profile workflows/browser races, build, size, visual smoke, curve drag. |
 | Performance | `npm.cmd run check:perf` | Rust perf guards and button-map p95 budget. |
 
 | Changed area | Focused check / evidence |
@@ -83,6 +85,7 @@ For docs-only changes, inspect the diff, verify commands and run `check:docs`.
 | Steam Input / mapping | `npm.cmd --prefix web run test:button-map` |
 | Snapshot DTOs | `npm.cmd --prefix web run test:snapshot-map` |
 | Haptics math | `npm.cmd --prefix web run test:haptics-graph` |
+| Profile / async UI state | `npm.cmd --prefix web run test:profile-workflows` and `test:profile-browser` |
 | Telemetry / detection | Rust: malformed packets, stale output, profile resolution. |
 | Persistence / filesystem | Rust: isolated temp paths, ordering, replacement, path guards. |
 | HID / Edge / Bridge | Rust + sanitized physical evidence; mocks do not establish hardware support. |

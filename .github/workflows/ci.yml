@@ -80,6 +80,8 @@ jobs:
       - run: npm run test:button-map
       - run: npm run test:snapshot-map
       - run: npm run test:haptics-graph
+      - run: npm run test:profile-workflows
+      - run: npm run test:profile-browser
       - run: npm run build
       - run: npm run test:release-size
       - run: npm run test:visual-smoke
