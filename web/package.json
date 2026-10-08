@@ -29,7 +29,7 @@
     "@sveltejs/vite-plugin-svelte": "^7.2.0",
     "@tsconfig/svelte": "^5.0.4",
     "playwright": "^1.62.0",
-    "svelte": "^5.56.8",
+    "svelte": "^5.57.1",
     "svelte-check": "^4.7.3",
     "typescript": "^6.0.3",
     "vite": "^8.1.5"
