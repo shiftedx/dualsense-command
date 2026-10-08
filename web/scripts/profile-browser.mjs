@@ -80,9 +80,7 @@ try {
     await page.evaluate(()=>fixture.deferOff=true);
     await page.locator('.saved-preview-button').first().click();
     await page.waitForFunction(()=>fixture.pending.some(p=>p.kind==='off'));
-    if(next==='manual') {
-      await page.getByRole('button',{name:'Preview Triggers',exact:true}).click();
-    } else await page.evaluate(next=>void appFixture[next](),next);
+    await page.evaluate(next=>void appFixture[next](),next);
     await page.waitForTimeout(50);
     assert.deepEqual(await page.evaluate(()=>fixture.requests.filter(r=>r.kind==='effect').map(r=>r.request.durationMs)),[3000,100]);
     assert.equal(await page.evaluate(()=>appFixture.state().railBusy),true);
