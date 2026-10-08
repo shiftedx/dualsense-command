@@ -4,14 +4,12 @@ import type {
   ForzaAbsTuningConfiguration,
   ForzaBrakeTuningConfiguration,
   ForzaEffectConfiguration,
-  ForzaEffectRoute,
   ForzaRevLimiterTuningConfiguration,
   ForzaShiftClutchMode,
   ForzaShiftTuningConfiguration,
   ForzaThrottleTuningConfiguration
 } from '../lib/types';
 import {
-  FORZA_SHIFT_THUMP_DEFAULT_INTENSITY,
   forzaEffectMetas,
   forzaRoutes
 } from '../lib/features/haptics/hapticsOptions';
@@ -253,38 +251,4 @@ export const normalizeForzaEffects = (
       route
     };
   });
-};
-
-export const forzaPresetEffects = (preset: 'base' | 'immersive'): ForzaEffectConfiguration[] => {
-  const entries: Array<[string, boolean, number, ForzaEffectRoute]> =
-    preset === 'immersive'
-      ? [
-          ['brake_resistance', true, 77, 'l2'],
-          ['throttle_resistance', true, 100, 'r2'],
-          ['abs_slip_pulse', true, 26, 'l2'],
-          ['handbrake_wall', true, 100, 'l2'],
-          ['rev_limiter_buzz', true, 62, 'r2'],
-          ['gear_shift_thump', true, FORZA_SHIFT_THUMP_DEFAULT_INTENSITY, 'r2_and_body'],
-          ['road_texture', true, 35, 'body_both'],
-          ['rumble_strip', true, 38, 'body_both'],
-          ['tire_slip', true, 30, 'body_right'],
-          ['puddle_drag', true, 32, 'body_left'],
-          ['suspension_impact', true, 82, 'body_both'],
-          ['rpm_leds', true, 100, 'light_led']
-        ]
-      : [
-          ['brake_resistance', true, 77, 'l2'],
-          ['throttle_resistance', true, 100, 'r2'],
-          ['abs_slip_pulse', true, 26, 'l2'],
-          ['handbrake_wall', true, 100, 'l2'],
-          ['rev_limiter_buzz', true, 55, 'r2'],
-          ['gear_shift_thump', true, FORZA_SHIFT_THUMP_DEFAULT_INTENSITY, 'r2_and_body'],
-          ['road_texture', true, 40, 'body_both'],
-          ['rumble_strip', false, 55, 'body_both'],
-          ['tire_slip', false, 65, 'body_right'],
-          ['puddle_drag', false, 50, 'body_left'],
-          ['suspension_impact', false, 70, 'body_both'],
-          ['rpm_leds', true, 100, 'light_led']
-        ];
-  return normalizeForzaEffects(entries.map(([id, enabled, intensity, route]) => ({ id, enabled, intensity, route })));
 };

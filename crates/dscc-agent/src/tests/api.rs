@@ -2,6 +2,32 @@ use super::support::*;
 use super::*;
 
 #[tokio::test]
+async fn diagnostics_loopback_flag_tracks_bind_address_independently_of_output() {
+    for (address, loopback) in [
+        ("127.0.0.1:43473", true),
+        ("[::1]:43473", true),
+        ("0.0.0.0:43473", false),
+        ("[::]:43473", false),
+    ] {
+        for output_enabled in [false, true] {
+            let state = AgentState::mock().with_bind_addr(address.parse().unwrap());
+            let steam = state.cached_steam_input_status_or_refresh().await;
+            let game = state.cached_game_detection().await;
+            let inner = state.inner.read().await;
+            let diagnostics = state.diagnostics_from_inner(
+                &inner,
+                &steam,
+                &game,
+                output_enabled,
+                &state.input_bridge.status_response(),
+            );
+            assert_eq!(diagnostics.loopback_only, loopback, "{address}");
+            assert_eq!(diagnostics.hardware_required, output_enabled);
+        }
+    }
+}
+
+#[tokio::test]
 async fn status_reports_mock_active_state() {
     let response = app(AgentState::mock())
         .oneshot(
@@ -176,6 +202,67 @@ fn support_sanitizer_redacts_absolute_paths_and_steam_ids() {
     assert!(!sanitized.contains("SteamLibrary"));
     assert!(!sanitized.contains("60706926"));
     assert!(!sanitized.contains("76561198000000000"));
+}
+
+#[test]
+fn support_sanitizer_redacts_unc_and_posix_without_redacting_urls() {
+    for path in [
+        r"\\synthetic-server\private-share\config.json",
+        r"\\?\UNC\synthetic-server\private-share\config.json",
+        "/srv/private-fixture/config.json",
+    ] {
+        let sanitized = sanitize_support_text(&format!(
+            "Read failed at '{path}'. See https://example.test/help/path."
+        ));
+        assert!(!sanitized.contains("private"), "{sanitized}");
+        assert!(
+            sanitized.contains("https://example.test/help/path"),
+            "{sanitized}"
+        );
+    }
+}
+
+#[test]
+fn support_sanitizer_preserves_url_query_and_fragment_paths() {
+    for url in [
+        "https://example.test/help?return=/guide/start#/guide/fragment",
+        "http://example.test/help?return=/guide/start#section=/guide/fragment",
+        "HTTPS://example.test/help?return=/guide/start",
+    ] {
+        let sanitized = sanitize_support_text(&format!(
+            "See '{url}' then read '/srv/private-fixture/config.json'."
+        ));
+        assert!(sanitized.contains(url), "{sanitized}");
+        assert!(!sanitized.contains("private-fixture"), "{sanitized}");
+    }
+    let sanitized = sanitize_support_text(
+        "https://example.test/userdata/76561198000000000/help?return=/guide/start",
+    );
+    assert!(!sanitized.contains("76561198000000000"));
+    assert!(
+        sanitized.contains("userdata/<steam-user>/help?return=/guide/start"),
+        "{sanitized}"
+    );
+}
+
+#[tokio::test]
+async fn support_bundle_opaque_path_fields_hide_custom_overrides() {
+    let _env = TestEnv::new(&["DSCC_CONFIG_DIR", "DSCC_WEB_DIST"]);
+    std::env::set_var("DSCC_CONFIG_DIR", "/srv/private-config");
+    std::env::set_var("DSCC_WEB_DIST", r"\\synthetic-server\private-web\dist");
+    let state = AgentState::mock();
+    state
+        .inner
+        .write()
+        .await
+        .app_settings
+        .forza_playstation_glyphs
+        .last_message = r"Failed at \\?\UNC\synthetic-server\private-glyphs\icons.zip".into();
+    let bundle = state.support_bundle().await;
+    let json = serde_json::to_string(&bundle).unwrap();
+    assert!(!json.contains("private-"), "{json}");
+    assert!(!json.contains("synthetic-server"));
+    assert_eq!(bundle.paths.web_dist_dir, "[local-path]");
 }
 
 #[test]

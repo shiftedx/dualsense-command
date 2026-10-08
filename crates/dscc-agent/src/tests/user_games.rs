@@ -595,6 +595,7 @@ fn user_game_detection_keeps_global_profile_until_supported_module_matches() {
         logs: Vec::new(),
         device_backend: DeviceBackendSummary::mock(),
         storage: None,
+        persistence_load_error: None,
         controller_configs: BTreeMap::new(),
         profile_configs: BTreeMap::new(),
         profile_overrides: BTreeMap::new(),

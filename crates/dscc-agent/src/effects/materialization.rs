@@ -292,7 +292,10 @@ pub(crate) fn materialized_telemetry_response(
         let Some(runtime) = inner.adapter_runtime(adapter_id) else {
             return telemetry_response(&inner.telemetry);
         };
-        if source_id != Some(adapter_id) || !runtime.has_recent_packet(now) {
+        if !adapter_enabled(inner, adapter_id)
+            || source_id != Some(adapter_id)
+            || !runtime.has_recent_packet(now)
+        {
             return waiting_telemetry_response(runtime, adapter_id, game_id, game_name, now);
         }
         let mut response = telemetry_response(&inner.telemetry);
@@ -343,7 +346,8 @@ pub(crate) fn hardware_output_runtime_allowed_for_resolution(
     let Some(runtime) = inner.adapter_runtime(adapter_id) else {
         return false;
     };
-    runtime.has_recent_packet(Instant::now())
+    adapter_enabled(inner, adapter_id)
+        && runtime.has_recent_packet(Instant::now())
         && inner.telemetry.text("source.id") == Some(adapter_id)
 }
 
@@ -606,6 +610,13 @@ fn forza_inactive_signal_snapshot(
     SignalSnapshot::from_updates(updates)
 }
 
+fn adapter_enabled(inner: &AgentStateInner, adapter_id: &str) -> bool {
+    inner
+        .adapters
+        .iter()
+        .any(|adapter| adapter.id == adapter_id && adapter.enabled)
+}
+
 pub(crate) fn current_effect_snapshot(
     inner: &AgentStateInner,
     game_detection: Option<&GameDetectionResponse>,
@@ -616,7 +627,10 @@ pub(crate) fn current_effect_snapshot(
         let Some(runtime) = inner.adapter_runtime(adapter_id) else {
             return (inner.telemetry.clone(), false);
         };
-        if source_id != Some(adapter_id) || !runtime.has_recent_packet(now) {
+        if !adapter_enabled(inner, adapter_id)
+            || source_id != Some(adapter_id)
+            || !runtime.has_recent_packet(now)
+        {
             return (
                 waiting_signal_snapshot(runtime, adapter_id, game_id, game_name, now),
                 false,
@@ -644,7 +658,7 @@ pub(crate) fn current_effect_snapshot(
     if let Some(source_id) = inner.telemetry.text("source.id") {
         if let Some(runtime) = inner
             .adapter_runtime(source_id)
-            .filter(|runtime| !runtime.has_recent_packet(now))
+            .filter(|runtime| !adapter_enabled(inner, source_id) || !runtime.has_recent_packet(now))
         {
             return (
                 forza_inactive_signal_snapshot(

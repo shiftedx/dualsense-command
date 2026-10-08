@@ -85,23 +85,34 @@ pub(crate) async fn run_effect_test_for_controller(
     let mut accepted = true;
     let mut status = StatusCode::ACCEPTED;
     let mut message = if hardware_output_enabled {
-        if stop_manual_override {
-            state.clear_manual_output_override();
-        }
-        let generation = if stop_manual_override {
-            None
-        } else {
-            Some(state.begin_manual_output_override(Duration::from_millis(duration_ms)))
-        };
-        match state.write_output_frame_to_controller(&id, &output).await {
-            Ok(write) => {
-                if let Some(generation) = generation {
+        let (generation, deadline) = state
+            .begin_manual_output_override(&id, Duration::from_millis(duration_ms))
+            .await;
+        match state
+            .write_output_frame_with_owner(
+                &id,
+                &output,
+                if stop_manual_override {
+                    OutputWriteOwner::FinishManual(generation)
+                } else {
+                    OutputWriteOwner::Manual(generation)
+                },
+            )
+            .await
+        {
+            Ok(None) => {
+                state.finish_manual_output(&id, generation).await;
+                accepted = false;
+                status = StatusCode::CONFLICT;
+                format!("Hardware effect test for controller {id} was superseded")
+            }
+            Ok(Some(write)) => {
+                if !stop_manual_override {
                     let state_for_reset = state.clone();
                     let id_for_reset = id.clone();
                     let output_for_refresh = output.clone();
                     let base_feel_trigger = base_feel_trigger.clone();
                     tokio::spawn(async move {
-                        let deadline = Instant::now() + Duration::from_millis(duration_ms);
                         let refresh_interval = if base_feel_trigger.is_some() {
                             BASE_FEEL_OUTPUT_REFRESH_INTERVAL
                         } else {
@@ -115,10 +126,13 @@ pub(crate) async fn run_effect_test_for_controller(
                             let sleep_for =
                                 refresh_interval.min(deadline.saturating_duration_since(now));
                             tokio::time::sleep(sleep_for).await;
-                            if !state_for_reset.manual_output_override_active_for(generation) {
-                                if !state_for_reset
-                                    .manual_output_override_generation_matches(generation)
-                                {
+                            if !state_for_reset
+                                .manual_output_override_active_for(&id_for_reset, generation)
+                            {
+                                if !state_for_reset.manual_output_override_generation_matches(
+                                    &id_for_reset,
+                                    generation,
+                                ) {
                                     return;
                                 }
                                 break;
@@ -156,9 +170,10 @@ pub(crate) async fn run_effect_test_for_controller(
                                 output_for_refresh.clone()
                             };
                             if let Err(error) = state_for_reset
-                                .write_output_frame_to_controller(
+                                .write_output_frame_with_owner(
                                     &id_for_reset,
                                     &output_for_refresh,
+                                    OutputWriteOwner::Manual(generation),
                                 )
                                 .await
                             {
@@ -171,17 +186,12 @@ pub(crate) async fn run_effect_test_for_controller(
                             }
                         }
 
-                        if state_for_reset.manual_output_override_generation_matches(generation) {
-                            let _ = state_for_reset
-                                .write_output_frame_to_controller(
-                                    &id_for_reset,
-                                    &ControllerOutputFrame::default(),
-                                )
-                                .await;
+                        if state_for_reset
+                            .manual_output_override_generation_matches(&id_for_reset, generation)
+                        {
                             state_for_reset
-                                .release_output_session_for_controller(&id_for_reset)
+                                .finish_manual_output(&id_for_reset, generation)
                                 .await;
-                            state_for_reset.clear_manual_output_override_if_generation(generation);
                         }
                     });
                     format!(
@@ -189,7 +199,6 @@ pub(crate) async fn run_effect_test_for_controller(
                         write.bytes, write.report_kind
                     )
                 } else {
-                    state.release_output_session_for_controller(&id).await;
                     format!(
                         "Stopped hardware effect test for controller {id} ({} byte {:?} report)",
                         write.bytes, write.report_kind
@@ -197,11 +206,7 @@ pub(crate) async fn run_effect_test_for_controller(
                 }
             }
             Err(error) => {
-                if !stop_manual_override {
-                    state.clear_manual_output_override();
-                } else {
-                    state.release_output_session_for_controller(&id).await;
-                }
+                state.finish_manual_output(&id, generation).await;
                 accepted = false;
                 status = StatusCode::CONFLICT;
                 format!("Hardware effect test for controller {id} was blocked: {error}")

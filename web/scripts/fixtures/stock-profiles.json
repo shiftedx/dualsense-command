@@ -1,0 +1,2007 @@
+[
+  {
+    "active": true,
+    "built_in": true,
+    "config": {
+      "buttons": [
+        {
+          "key": "Cross",
+          "label": "Cross"
+        },
+        {
+          "key": "Circle",
+          "label": "Circle"
+        },
+        {
+          "key": "Square",
+          "label": "Square"
+        },
+        {
+          "key": "Triangle",
+          "label": "Triangle"
+        },
+        {
+          "key": "D-Pad",
+          "label": "D-Pad"
+        },
+        {
+          "key": "L1",
+          "label": "L1"
+        },
+        {
+          "key": "R1",
+          "label": "R1"
+        },
+        {
+          "key": "L2",
+          "label": "L2"
+        },
+        {
+          "key": "R2",
+          "label": "R2"
+        },
+        {
+          "key": "L3",
+          "label": "L3"
+        },
+        {
+          "key": "R3",
+          "label": "R3"
+        },
+        {
+          "key": "Create",
+          "label": "Create"
+        },
+        {
+          "key": "Options",
+          "label": "Options"
+        },
+        {
+          "key": "Touch Pad",
+          "label": "Touch Pad Press"
+        },
+        {
+          "key": "Mute",
+          "label": "Mute"
+        }
+      ],
+      "forza": {
+        "abs": {
+          "brakeThresholdRatio": 0.8,
+          "curve": 1.0,
+          "frequencyHz": 34.0,
+          "maxStrength": 1.0,
+          "minSpeedKmh": 12.0,
+          "minStrength": 0.7619047619047619,
+          "mode": "strong_pulse",
+          "slipSource": "auto_front_first",
+          "slipThreshold": 0.68
+        },
+        "bodyRumbleMode": "native_passthrough",
+        "brake": {
+          "baselineForce": 0.2980392156862745,
+          "endstopBoost": 1.25,
+          "endstopForce": 1.0,
+          "fullForceAt": 0.95,
+          "guardMinEnd": 0.48,
+          "normalForce": 1.0,
+          "rampCurve": 0.8,
+          "wallPosition": 0.98
+        },
+        "effects": [
+          {
+            "enabled": true,
+            "id": "brake_resistance",
+            "intensity": 77,
+            "route": "l2"
+          },
+          {
+            "enabled": true,
+            "id": "abs_slip_pulse",
+            "intensity": 26,
+            "route": "l2"
+          },
+          {
+            "enabled": true,
+            "id": "handbrake_wall",
+            "intensity": 100,
+            "route": "l2"
+          },
+          {
+            "enabled": true,
+            "id": "throttle_resistance",
+            "intensity": 100,
+            "route": "r2"
+          },
+          {
+            "enabled": true,
+            "id": "gear_shift_thump",
+            "intensity": 255,
+            "route": "r2_and_body"
+          },
+          {
+            "enabled": true,
+            "id": "rev_limiter_buzz",
+            "intensity": 120,
+            "route": "r2"
+          },
+          {
+            "enabled": true,
+            "id": "road_texture",
+            "intensity": 60,
+            "route": "body_both"
+          },
+          {
+            "enabled": true,
+            "id": "rumble_strip",
+            "intensity": 72,
+            "route": "body_both"
+          },
+          {
+            "enabled": true,
+            "id": "tire_slip",
+            "intensity": 95,
+            "route": "body_right"
+          },
+          {
+            "enabled": true,
+            "id": "puddle_drag",
+            "intensity": 75,
+            "route": "body_left"
+          },
+          {
+            "enabled": true,
+            "id": "suspension_impact",
+            "intensity": 115,
+            "route": "body_both"
+          },
+          {
+            "enabled": true,
+            "id": "rpm_leds",
+            "intensity": 100,
+            "route": "light_led"
+          }
+        ],
+        "revLimiter": {
+          "bodyHighWeight": 0.8,
+          "bodyLowWeight": 0.2,
+          "curve": 1.0,
+          "frequencyHz": 42.0,
+          "maxStrength": 0.2857142857142857,
+          "minStrength": 0.2857142857142857,
+          "thresholdRatio": 0.93,
+          "wallFormThrottleAt": 0.6,
+          "wallZones": 4.0
+        },
+        "shift": {
+          "bodyHighWeight": 0.84,
+          "bodyLowWeight": 0.92,
+          "clutchBodyCut": 0.78,
+          "clutchMode": "auto",
+          "clutchThreshold": 0.4,
+          "frequencyHz": 34.0,
+          "wallFormAt": 0.15,
+          "wallZones": 4.0,
+          "withClutchDurationMs": 130.0,
+          "withClutchStrength": 0.58,
+          "withoutClutchDurationMs": 240.0,
+          "withoutClutchStrength": 1.0
+        },
+        "throttle": {
+          "baselineForce": 0.01176470588235294,
+          "endstopBoost": 3.0,
+          "endstopForce": 0.41568627450980394,
+          "guardMinEnd": 0.8,
+          "normalForce": 0.10980392156862744,
+          "rampCurve": 2.4,
+          "rampWidth": 0.2,
+          "wallPosition": 0.8
+        }
+      },
+      "inputBridge": {
+        "autoStart": false,
+        "bindings": [
+          {
+            "source": {
+              "button": "cross"
+            },
+            "target": {
+              "button": "a"
+            }
+          },
+          {
+            "source": {
+              "button": "circle"
+            },
+            "target": {
+              "button": "b"
+            }
+          },
+          {
+            "source": {
+              "button": "square"
+            },
+            "target": {
+              "button": "x"
+            }
+          },
+          {
+            "source": {
+              "button": "triangle"
+            },
+            "target": {
+              "button": "y"
+            }
+          },
+          {
+            "source": {
+              "button": "dpad_up"
+            },
+            "target": {
+              "button": "dpad_up"
+            }
+          },
+          {
+            "source": {
+              "button": "dpad_down"
+            },
+            "target": {
+              "button": "dpad_down"
+            }
+          },
+          {
+            "source": {
+              "button": "dpad_left"
+            },
+            "target": {
+              "button": "dpad_left"
+            }
+          },
+          {
+            "source": {
+              "button": "dpad_right"
+            },
+            "target": {
+              "button": "dpad_right"
+            }
+          },
+          {
+            "source": {
+              "button": "l1"
+            },
+            "target": {
+              "button": "left_shoulder"
+            }
+          },
+          {
+            "source": {
+              "button": "r1"
+            },
+            "target": {
+              "button": "right_shoulder"
+            }
+          },
+          {
+            "source": {
+              "button": "l3"
+            },
+            "target": {
+              "button": "left_thumb"
+            }
+          },
+          {
+            "source": {
+              "button": "r3"
+            },
+            "target": {
+              "button": "right_thumb"
+            }
+          },
+          {
+            "source": {
+              "button": "create"
+            },
+            "target": {
+              "button": "back"
+            }
+          },
+          {
+            "source": {
+              "button": "options"
+            },
+            "target": {
+              "button": "start"
+            }
+          },
+          {
+            "source": {
+              "button": "ps"
+            },
+            "target": {
+              "button": "guide"
+            }
+          },
+          {
+            "source": {
+              "button": "edge_back_left"
+            },
+            "target": {
+              "button": "left_thumb"
+            }
+          },
+          {
+            "source": {
+              "button": "edge_back_right"
+            },
+            "target": {
+              "button": "right_thumb"
+            }
+          },
+          {
+            "source": {
+              "button": "edge_fn_left"
+            },
+            "target": {
+              "command": "shift_layer"
+            }
+          },
+          {
+            "source": {
+              "button": "edge_fn_right"
+            },
+            "target": {
+              "command": "shift_layer"
+            }
+          },
+          {
+            "source": {
+              "stick": "left_stick"
+            },
+            "target": {
+              "axis": "left_stick_x"
+            }
+          },
+          {
+            "source": {
+              "stick": "left_stick"
+            },
+            "target": {
+              "axis": "left_stick_y"
+            }
+          },
+          {
+            "source": {
+              "stick": "right_stick"
+            },
+            "target": {
+              "axis": "right_stick_x"
+            }
+          },
+          {
+            "source": {
+              "stick": "right_stick"
+            },
+            "target": {
+              "axis": "right_stick_y"
+            }
+          },
+          {
+            "source": {
+              "axis": "l2"
+            },
+            "target": {
+              "axis": "left_trigger"
+            }
+          },
+          {
+            "source": {
+              "axis": "r2"
+            },
+            "target": {
+              "axis": "right_trigger"
+            }
+          }
+        ],
+        "enabled": false,
+        "outputKind": "xbox360",
+        "shiftBindings": [
+          {
+            "source": {
+              "button": "dpad_left"
+            },
+            "target": {
+              "command": "profile_previous"
+            }
+          },
+          {
+            "source": {
+              "button": "dpad_right"
+            },
+            "target": {
+              "command": "profile_next"
+            }
+          }
+        ]
+      },
+      "inputMode": "native_dualsense",
+      "lightbar": {
+        "brightness": 72,
+        "color": "#4cc9f0",
+        "enabled": true,
+        "rpmColor": "#ff3a2e"
+      },
+      "sticks": {
+        "leftCurve": "Quick",
+        "leftCurveAmount": 48,
+        "leftDeadzone": 4,
+        "rightCurve": "Default",
+        "rightCurveAmount": 62,
+        "rightDeadzone": 8
+      },
+      "trigger": {
+        "effect": "Adaptive resistance",
+        "intensity": "Strong (Standard)",
+        "l2Curve": 1.0,
+        "l2CurvePoints": [
+          {
+            "input": 0,
+            "output": 0
+          },
+          {
+            "input": 25,
+            "output": 25
+          },
+          {
+            "input": 50,
+            "output": 50
+          },
+          {
+            "input": 75,
+            "output": 75
+          },
+          {
+            "input": 100,
+            "output": 100
+          }
+        ],
+        "l2From": 0,
+        "l2To": 100,
+        "r2Curve": 1.85,
+        "r2CurvePoints": [
+          {
+            "input": 0,
+            "output": 0
+          },
+          {
+            "input": 25,
+            "output": 8
+          },
+          {
+            "input": 50,
+            "output": 28
+          },
+          {
+            "input": 75,
+            "output": 59
+          },
+          {
+            "input": 100,
+            "output": 100
+          }
+        ],
+        "r2From": 0,
+        "r2To": 100,
+        "sameRange": false,
+        "vibration": "Medium",
+        "vibrationMode": "Balanced"
+      }
+    },
+    "id": "global",
+    "name": "Global",
+    "schema": "dev.dscc.profile.v1"
+  },
+  {
+    "active": false,
+    "built_in": true,
+    "config": {
+      "buttons": [
+        {
+          "key": "Cross",
+          "label": "Cross"
+        },
+        {
+          "key": "Circle",
+          "label": "Circle"
+        },
+        {
+          "key": "Square",
+          "label": "Square"
+        },
+        {
+          "key": "Triangle",
+          "label": "Triangle"
+        },
+        {
+          "key": "D-Pad",
+          "label": "D-Pad"
+        },
+        {
+          "key": "L1",
+          "label": "L1"
+        },
+        {
+          "key": "R1",
+          "label": "R1"
+        },
+        {
+          "key": "L2",
+          "label": "L2"
+        },
+        {
+          "key": "R2",
+          "label": "R2"
+        },
+        {
+          "key": "L3",
+          "label": "L3"
+        },
+        {
+          "key": "R3",
+          "label": "R3"
+        },
+        {
+          "key": "Create",
+          "label": "Create"
+        },
+        {
+          "key": "Options",
+          "label": "Options"
+        },
+        {
+          "key": "Touch Pad",
+          "label": "Touch Pad Press"
+        },
+        {
+          "key": "Mute",
+          "label": "Mute"
+        }
+      ],
+      "forza": {
+        "abs": {
+          "brakeThresholdRatio": 0.8,
+          "curve": 1.0,
+          "frequencyHz": 34.0,
+          "maxStrength": 1.0,
+          "minSpeedKmh": 12.0,
+          "minStrength": 0.7619047619047619,
+          "mode": "strong_pulse",
+          "slipSource": "auto_front_first",
+          "slipThreshold": 0.68
+        },
+        "bodyRumbleMode": "native_passthrough",
+        "brake": {
+          "baselineForce": 0.2980392156862745,
+          "endstopBoost": 1.25,
+          "endstopForce": 1.0,
+          "fullForceAt": 0.95,
+          "guardMinEnd": 0.48,
+          "normalForce": 1.0,
+          "rampCurve": 0.8,
+          "wallPosition": 0.98
+        },
+        "effects": [
+          {
+            "enabled": true,
+            "id": "brake_resistance",
+            "intensity": 77,
+            "route": "l2"
+          },
+          {
+            "enabled": true,
+            "id": "abs_slip_pulse",
+            "intensity": 26,
+            "route": "l2"
+          },
+          {
+            "enabled": true,
+            "id": "handbrake_wall",
+            "intensity": 100,
+            "route": "l2"
+          },
+          {
+            "enabled": true,
+            "id": "throttle_resistance",
+            "intensity": 100,
+            "route": "r2"
+          },
+          {
+            "enabled": true,
+            "id": "gear_shift_thump",
+            "intensity": 255,
+            "route": "r2_and_body"
+          },
+          {
+            "enabled": true,
+            "id": "rev_limiter_buzz",
+            "intensity": 85,
+            "route": "r2"
+          },
+          {
+            "enabled": true,
+            "id": "road_texture",
+            "intensity": 40,
+            "route": "body_both"
+          },
+          {
+            "enabled": false,
+            "id": "rumble_strip",
+            "intensity": 55,
+            "route": "body_both"
+          },
+          {
+            "enabled": false,
+            "id": "tire_slip",
+            "intensity": 65,
+            "route": "body_right"
+          },
+          {
+            "enabled": false,
+            "id": "puddle_drag",
+            "intensity": 50,
+            "route": "body_left"
+          },
+          {
+            "enabled": false,
+            "id": "suspension_impact",
+            "intensity": 70,
+            "route": "body_both"
+          },
+          {
+            "enabled": true,
+            "id": "rpm_leds",
+            "intensity": 100,
+            "route": "light_led"
+          }
+        ],
+        "revLimiter": {
+          "bodyHighWeight": 0.8,
+          "bodyLowWeight": 0.2,
+          "curve": 1.0,
+          "frequencyHz": 42.0,
+          "maxStrength": 0.2857142857142857,
+          "minStrength": 0.2857142857142857,
+          "thresholdRatio": 0.93,
+          "wallFormThrottleAt": 0.6,
+          "wallZones": 4.0
+        },
+        "shift": {
+          "bodyHighWeight": 0.84,
+          "bodyLowWeight": 0.92,
+          "clutchBodyCut": 0.78,
+          "clutchMode": "auto",
+          "clutchThreshold": 0.4,
+          "frequencyHz": 34.0,
+          "wallFormAt": 0.15,
+          "wallZones": 4.0,
+          "withClutchDurationMs": 130.0,
+          "withClutchStrength": 0.58,
+          "withoutClutchDurationMs": 240.0,
+          "withoutClutchStrength": 1.0
+        },
+        "throttle": {
+          "baselineForce": 0.01176470588235294,
+          "endstopBoost": 3.0,
+          "endstopForce": 0.41568627450980394,
+          "guardMinEnd": 0.8,
+          "normalForce": 0.10980392156862744,
+          "rampCurve": 2.4,
+          "rampWidth": 0.2,
+          "wallPosition": 0.8
+        }
+      },
+      "inputBridge": {
+        "autoStart": false,
+        "bindings": [
+          {
+            "source": {
+              "button": "cross"
+            },
+            "target": {
+              "button": "a"
+            }
+          },
+          {
+            "source": {
+              "button": "circle"
+            },
+            "target": {
+              "button": "b"
+            }
+          },
+          {
+            "source": {
+              "button": "square"
+            },
+            "target": {
+              "button": "x"
+            }
+          },
+          {
+            "source": {
+              "button": "triangle"
+            },
+            "target": {
+              "button": "y"
+            }
+          },
+          {
+            "source": {
+              "button": "dpad_up"
+            },
+            "target": {
+              "button": "dpad_up"
+            }
+          },
+          {
+            "source": {
+              "button": "dpad_down"
+            },
+            "target": {
+              "button": "dpad_down"
+            }
+          },
+          {
+            "source": {
+              "button": "dpad_left"
+            },
+            "target": {
+              "button": "dpad_left"
+            }
+          },
+          {
+            "source": {
+              "button": "dpad_right"
+            },
+            "target": {
+              "button": "dpad_right"
+            }
+          },
+          {
+            "source": {
+              "button": "l1"
+            },
+            "target": {
+              "button": "left_shoulder"
+            }
+          },
+          {
+            "source": {
+              "button": "r1"
+            },
+            "target": {
+              "button": "right_shoulder"
+            }
+          },
+          {
+            "source": {
+              "button": "l3"
+            },
+            "target": {
+              "button": "left_thumb"
+            }
+          },
+          {
+            "source": {
+              "button": "r3"
+            },
+            "target": {
+              "button": "right_thumb"
+            }
+          },
+          {
+            "source": {
+              "button": "create"
+            },
+            "target": {
+              "button": "back"
+            }
+          },
+          {
+            "source": {
+              "button": "options"
+            },
+            "target": {
+              "button": "start"
+            }
+          },
+          {
+            "source": {
+              "button": "ps"
+            },
+            "target": {
+              "button": "guide"
+            }
+          },
+          {
+            "source": {
+              "button": "edge_back_left"
+            },
+            "target": {
+              "button": "left_thumb"
+            }
+          },
+          {
+            "source": {
+              "button": "edge_back_right"
+            },
+            "target": {
+              "button": "right_thumb"
+            }
+          },
+          {
+            "source": {
+              "button": "edge_fn_left"
+            },
+            "target": {
+              "command": "shift_layer"
+            }
+          },
+          {
+            "source": {
+              "button": "edge_fn_right"
+            },
+            "target": {
+              "command": "shift_layer"
+            }
+          },
+          {
+            "source": {
+              "stick": "left_stick"
+            },
+            "target": {
+              "axis": "left_stick_x"
+            }
+          },
+          {
+            "source": {
+              "stick": "left_stick"
+            },
+            "target": {
+              "axis": "left_stick_y"
+            }
+          },
+          {
+            "source": {
+              "stick": "right_stick"
+            },
+            "target": {
+              "axis": "right_stick_x"
+            }
+          },
+          {
+            "source": {
+              "stick": "right_stick"
+            },
+            "target": {
+              "axis": "right_stick_y"
+            }
+          },
+          {
+            "source": {
+              "axis": "l2"
+            },
+            "target": {
+              "axis": "left_trigger"
+            }
+          },
+          {
+            "source": {
+              "axis": "r2"
+            },
+            "target": {
+              "axis": "right_trigger"
+            }
+          }
+        ],
+        "enabled": false,
+        "outputKind": "xbox360",
+        "shiftBindings": [
+          {
+            "source": {
+              "button": "dpad_left"
+            },
+            "target": {
+              "command": "profile_previous"
+            }
+          },
+          {
+            "source": {
+              "button": "dpad_right"
+            },
+            "target": {
+              "command": "profile_next"
+            }
+          }
+        ]
+      },
+      "inputMode": "native_dualsense",
+      "lightbar": {
+        "brightness": 72,
+        "color": "#4cc9f0",
+        "enabled": true,
+        "rpmColor": "#ff3a2e"
+      },
+      "sticks": {
+        "leftCurve": "Quick",
+        "leftCurveAmount": 48,
+        "leftDeadzone": 4,
+        "rightCurve": "Default",
+        "rightCurveAmount": 62,
+        "rightDeadzone": 8
+      },
+      "trigger": {
+        "effect": "Adaptive resistance",
+        "intensity": "Strong (Standard)",
+        "l2Curve": 1.0,
+        "l2CurvePoints": [
+          {
+            "input": 0,
+            "output": 0
+          },
+          {
+            "input": 25,
+            "output": 25
+          },
+          {
+            "input": 50,
+            "output": 50
+          },
+          {
+            "input": 75,
+            "output": 75
+          },
+          {
+            "input": 100,
+            "output": 100
+          }
+        ],
+        "l2From": 0,
+        "l2To": 100,
+        "r2Curve": 2.25,
+        "r2CurvePoints": [
+          {
+            "input": 0,
+            "output": 0
+          },
+          {
+            "input": 25,
+            "output": 4
+          },
+          {
+            "input": 50,
+            "output": 21
+          },
+          {
+            "input": 75,
+            "output": 52
+          },
+          {
+            "input": 100,
+            "output": 100
+          }
+        ],
+        "r2From": 4,
+        "r2To": 100,
+        "sameRange": false,
+        "vibration": "Medium",
+        "vibrationMode": "Balanced"
+      }
+    },
+    "id": "forza-horizon",
+    "name": "Base",
+    "schema": "dev.dscc.profile.v1"
+  },
+  {
+    "active": false,
+    "built_in": true,
+    "config": {
+      "buttons": [
+        {
+          "key": "Cross",
+          "label": "Cross"
+        },
+        {
+          "key": "Circle",
+          "label": "Circle"
+        },
+        {
+          "key": "Square",
+          "label": "Square"
+        },
+        {
+          "key": "Triangle",
+          "label": "Triangle"
+        },
+        {
+          "key": "D-Pad",
+          "label": "D-Pad"
+        },
+        {
+          "key": "L1",
+          "label": "L1"
+        },
+        {
+          "key": "R1",
+          "label": "R1"
+        },
+        {
+          "key": "L2",
+          "label": "L2"
+        },
+        {
+          "key": "R2",
+          "label": "R2"
+        },
+        {
+          "key": "L3",
+          "label": "L3"
+        },
+        {
+          "key": "R3",
+          "label": "R3"
+        },
+        {
+          "key": "Create",
+          "label": "Create"
+        },
+        {
+          "key": "Options",
+          "label": "Options"
+        },
+        {
+          "key": "Touch Pad",
+          "label": "Touch Pad Press"
+        },
+        {
+          "key": "Mute",
+          "label": "Mute"
+        }
+      ],
+      "forza": {
+        "abs": {
+          "brakeThresholdRatio": 0.8,
+          "curve": 1.0,
+          "frequencyHz": 34.0,
+          "maxStrength": 1.0,
+          "minSpeedKmh": 12.0,
+          "minStrength": 0.7619047619047619,
+          "mode": "strong_pulse",
+          "slipSource": "auto_front_first",
+          "slipThreshold": 0.68
+        },
+        "bodyRumbleMode": "native_passthrough",
+        "brake": {
+          "baselineForce": 0.2980392156862745,
+          "endstopBoost": 1.25,
+          "endstopForce": 1.0,
+          "fullForceAt": 0.95,
+          "guardMinEnd": 0.48,
+          "normalForce": 1.0,
+          "rampCurve": 0.8,
+          "wallPosition": 0.98
+        },
+        "effects": [
+          {
+            "enabled": true,
+            "id": "brake_resistance",
+            "intensity": 77,
+            "route": "l2"
+          },
+          {
+            "enabled": true,
+            "id": "abs_slip_pulse",
+            "intensity": 26,
+            "route": "l2"
+          },
+          {
+            "enabled": true,
+            "id": "handbrake_wall",
+            "intensity": 100,
+            "route": "l2"
+          },
+          {
+            "enabled": true,
+            "id": "throttle_resistance",
+            "intensity": 100,
+            "route": "r2"
+          },
+          {
+            "enabled": true,
+            "id": "gear_shift_thump",
+            "intensity": 255,
+            "route": "r2_and_body"
+          },
+          {
+            "enabled": true,
+            "id": "rev_limiter_buzz",
+            "intensity": 95,
+            "route": "r2"
+          },
+          {
+            "enabled": true,
+            "id": "road_texture",
+            "intensity": 35,
+            "route": "body_both"
+          },
+          {
+            "enabled": true,
+            "id": "rumble_strip",
+            "intensity": 38,
+            "route": "body_both"
+          },
+          {
+            "enabled": true,
+            "id": "tire_slip",
+            "intensity": 30,
+            "route": "body_right"
+          },
+          {
+            "enabled": true,
+            "id": "puddle_drag",
+            "intensity": 32,
+            "route": "body_left"
+          },
+          {
+            "enabled": true,
+            "id": "suspension_impact",
+            "intensity": 82,
+            "route": "body_both"
+          },
+          {
+            "enabled": true,
+            "id": "rpm_leds",
+            "intensity": 100,
+            "route": "light_led"
+          }
+        ],
+        "revLimiter": {
+          "bodyHighWeight": 0.8,
+          "bodyLowWeight": 0.2,
+          "curve": 1.0,
+          "frequencyHz": 42.0,
+          "maxStrength": 0.2857142857142857,
+          "minStrength": 0.2857142857142857,
+          "thresholdRatio": 0.93,
+          "wallFormThrottleAt": 0.6,
+          "wallZones": 4.0
+        },
+        "shift": {
+          "bodyHighWeight": 0.84,
+          "bodyLowWeight": 0.92,
+          "clutchBodyCut": 0.78,
+          "clutchMode": "auto",
+          "clutchThreshold": 0.4,
+          "frequencyHz": 34.0,
+          "wallFormAt": 0.15,
+          "wallZones": 4.0,
+          "withClutchDurationMs": 130.0,
+          "withClutchStrength": 0.58,
+          "withoutClutchDurationMs": 240.0,
+          "withoutClutchStrength": 1.0
+        },
+        "throttle": {
+          "baselineForce": 0.01176470588235294,
+          "endstopBoost": 3.0,
+          "endstopForce": 0.41568627450980394,
+          "guardMinEnd": 0.8,
+          "normalForce": 0.10980392156862744,
+          "rampCurve": 2.4,
+          "rampWidth": 0.2,
+          "wallPosition": 0.8
+        }
+      },
+      "inputBridge": {
+        "autoStart": false,
+        "bindings": [
+          {
+            "source": {
+              "button": "cross"
+            },
+            "target": {
+              "button": "a"
+            }
+          },
+          {
+            "source": {
+              "button": "circle"
+            },
+            "target": {
+              "button": "b"
+            }
+          },
+          {
+            "source": {
+              "button": "square"
+            },
+            "target": {
+              "button": "x"
+            }
+          },
+          {
+            "source": {
+              "button": "triangle"
+            },
+            "target": {
+              "button": "y"
+            }
+          },
+          {
+            "source": {
+              "button": "dpad_up"
+            },
+            "target": {
+              "button": "dpad_up"
+            }
+          },
+          {
+            "source": {
+              "button": "dpad_down"
+            },
+            "target": {
+              "button": "dpad_down"
+            }
+          },
+          {
+            "source": {
+              "button": "dpad_left"
+            },
+            "target": {
+              "button": "dpad_left"
+            }
+          },
+          {
+            "source": {
+              "button": "dpad_right"
+            },
+            "target": {
+              "button": "dpad_right"
+            }
+          },
+          {
+            "source": {
+              "button": "l1"
+            },
+            "target": {
+              "button": "left_shoulder"
+            }
+          },
+          {
+            "source": {
+              "button": "r1"
+            },
+            "target": {
+              "button": "right_shoulder"
+            }
+          },
+          {
+            "source": {
+              "button": "l3"
+            },
+            "target": {
+              "button": "left_thumb"
+            }
+          },
+          {
+            "source": {
+              "button": "r3"
+            },
+            "target": {
+              "button": "right_thumb"
+            }
+          },
+          {
+            "source": {
+              "button": "create"
+            },
+            "target": {
+              "button": "back"
+            }
+          },
+          {
+            "source": {
+              "button": "options"
+            },
+            "target": {
+              "button": "start"
+            }
+          },
+          {
+            "source": {
+              "button": "ps"
+            },
+            "target": {
+              "button": "guide"
+            }
+          },
+          {
+            "source": {
+              "button": "edge_back_left"
+            },
+            "target": {
+              "button": "left_thumb"
+            }
+          },
+          {
+            "source": {
+              "button": "edge_back_right"
+            },
+            "target": {
+              "button": "right_thumb"
+            }
+          },
+          {
+            "source": {
+              "button": "edge_fn_left"
+            },
+            "target": {
+              "command": "shift_layer"
+            }
+          },
+          {
+            "source": {
+              "button": "edge_fn_right"
+            },
+            "target": {
+              "command": "shift_layer"
+            }
+          },
+          {
+            "source": {
+              "stick": "left_stick"
+            },
+            "target": {
+              "axis": "left_stick_x"
+            }
+          },
+          {
+            "source": {
+              "stick": "left_stick"
+            },
+            "target": {
+              "axis": "left_stick_y"
+            }
+          },
+          {
+            "source": {
+              "stick": "right_stick"
+            },
+            "target": {
+              "axis": "right_stick_x"
+            }
+          },
+          {
+            "source": {
+              "stick": "right_stick"
+            },
+            "target": {
+              "axis": "right_stick_y"
+            }
+          },
+          {
+            "source": {
+              "axis": "l2"
+            },
+            "target": {
+              "axis": "left_trigger"
+            }
+          },
+          {
+            "source": {
+              "axis": "r2"
+            },
+            "target": {
+              "axis": "right_trigger"
+            }
+          }
+        ],
+        "enabled": false,
+        "outputKind": "xbox360",
+        "shiftBindings": [
+          {
+            "source": {
+              "button": "dpad_left"
+            },
+            "target": {
+              "command": "profile_previous"
+            }
+          },
+          {
+            "source": {
+              "button": "dpad_right"
+            },
+            "target": {
+              "command": "profile_next"
+            }
+          }
+        ]
+      },
+      "inputMode": "native_dualsense",
+      "lightbar": {
+        "brightness": 72,
+        "color": "#4cc9f0",
+        "enabled": true,
+        "rpmColor": "#ff3a2e"
+      },
+      "sticks": {
+        "leftCurve": "Quick",
+        "leftCurveAmount": 48,
+        "leftDeadzone": 4,
+        "rightCurve": "Default",
+        "rightCurveAmount": 62,
+        "rightDeadzone": 8
+      },
+      "trigger": {
+        "effect": "Adaptive resistance",
+        "intensity": "Strong (Standard)",
+        "l2Curve": 1.0,
+        "l2CurvePoints": [
+          {
+            "input": 0,
+            "output": 0
+          },
+          {
+            "input": 25,
+            "output": 25
+          },
+          {
+            "input": 50,
+            "output": 50
+          },
+          {
+            "input": 75,
+            "output": 75
+          },
+          {
+            "input": 100,
+            "output": 100
+          }
+        ],
+        "l2From": 0,
+        "l2To": 100,
+        "r2Curve": 2.25,
+        "r2CurvePoints": [
+          {
+            "input": 0,
+            "output": 0
+          },
+          {
+            "input": 25,
+            "output": 4
+          },
+          {
+            "input": 50,
+            "output": 21
+          },
+          {
+            "input": 75,
+            "output": 52
+          },
+          {
+            "input": 100,
+            "output": 100
+          }
+        ],
+        "r2From": 4,
+        "r2To": 100,
+        "sameRange": false,
+        "vibration": "Medium",
+        "vibrationMode": "Balanced"
+      }
+    },
+    "id": "forza-horizon-immersive",
+    "name": "Immersive",
+    "schema": "dev.dscc.profile.v1"
+  },
+  {
+    "active": false,
+    "built_in": true,
+    "config": {
+      "buttons": [
+        {
+          "key": "Cross",
+          "label": "Cross"
+        },
+        {
+          "key": "Circle",
+          "label": "Circle"
+        },
+        {
+          "key": "Square",
+          "label": "Square"
+        },
+        {
+          "key": "Triangle",
+          "label": "Triangle"
+        },
+        {
+          "key": "D-Pad",
+          "label": "D-Pad"
+        },
+        {
+          "key": "L1",
+          "label": "L1"
+        },
+        {
+          "key": "R1",
+          "label": "R1"
+        },
+        {
+          "key": "L2",
+          "label": "L2"
+        },
+        {
+          "key": "R2",
+          "label": "R2"
+        },
+        {
+          "key": "L3",
+          "label": "L3"
+        },
+        {
+          "key": "R3",
+          "label": "R3"
+        },
+        {
+          "key": "Create",
+          "label": "Create"
+        },
+        {
+          "key": "Options",
+          "label": "Options"
+        },
+        {
+          "key": "Touch Pad",
+          "label": "Touch Pad Press"
+        },
+        {
+          "key": "Mute",
+          "label": "Mute"
+        }
+      ],
+      "forza": {
+        "abs": {
+          "brakeThresholdRatio": 0.8,
+          "curve": 1.0,
+          "frequencyHz": 34.0,
+          "maxStrength": 1.0,
+          "minSpeedKmh": 12.0,
+          "minStrength": 0.7619047619047619,
+          "mode": "strong_pulse",
+          "slipSource": "auto_front_first",
+          "slipThreshold": 0.68
+        },
+        "bodyRumbleMode": "native_passthrough",
+        "brake": {
+          "baselineForce": 0.2980392156862745,
+          "endstopBoost": 1.25,
+          "endstopForce": 1.0,
+          "fullForceAt": 0.95,
+          "guardMinEnd": 0.48,
+          "normalForce": 1.0,
+          "rampCurve": 0.8,
+          "wallPosition": 0.98
+        },
+        "effects": [
+          {
+            "enabled": true,
+            "id": "brake_resistance",
+            "intensity": 100,
+            "route": "l2"
+          },
+          {
+            "enabled": true,
+            "id": "abs_slip_pulse",
+            "intensity": 95,
+            "route": "l2"
+          },
+          {
+            "enabled": true,
+            "id": "handbrake_wall",
+            "intensity": 115,
+            "route": "l2"
+          },
+          {
+            "enabled": true,
+            "id": "throttle_resistance",
+            "intensity": 92,
+            "route": "r2"
+          },
+          {
+            "enabled": true,
+            "id": "gear_shift_thump",
+            "intensity": 255,
+            "route": "r2_and_body"
+          },
+          {
+            "enabled": true,
+            "id": "rev_limiter_buzz",
+            "intensity": 90,
+            "route": "r2"
+          },
+          {
+            "enabled": true,
+            "id": "road_texture",
+            "intensity": 46,
+            "route": "body_both"
+          },
+          {
+            "enabled": true,
+            "id": "rumble_strip",
+            "intensity": 35,
+            "route": "body_both"
+          },
+          {
+            "enabled": true,
+            "id": "tire_slip",
+            "intensity": 62,
+            "route": "body_right"
+          },
+          {
+            "enabled": false,
+            "id": "puddle_drag",
+            "intensity": 28,
+            "route": "body_left"
+          },
+          {
+            "enabled": true,
+            "id": "suspension_impact",
+            "intensity": 64,
+            "route": "body_both"
+          },
+          {
+            "enabled": true,
+            "id": "rpm_leds",
+            "intensity": 100,
+            "route": "light_led"
+          }
+        ],
+        "revLimiter": {
+          "bodyHighWeight": 0.8,
+          "bodyLowWeight": 0.2,
+          "curve": 1.0,
+          "frequencyHz": 42.0,
+          "maxStrength": 0.2857142857142857,
+          "minStrength": 0.2857142857142857,
+          "thresholdRatio": 0.93,
+          "wallFormThrottleAt": 0.6,
+          "wallZones": 4.0
+        },
+        "shift": {
+          "bodyHighWeight": 0.84,
+          "bodyLowWeight": 0.92,
+          "clutchBodyCut": 0.78,
+          "clutchMode": "auto",
+          "clutchThreshold": 0.4,
+          "frequencyHz": 34.0,
+          "wallFormAt": 0.15,
+          "wallZones": 4.0,
+          "withClutchDurationMs": 130.0,
+          "withClutchStrength": 0.58,
+          "withoutClutchDurationMs": 240.0,
+          "withoutClutchStrength": 1.0
+        },
+        "throttle": {
+          "baselineForce": 0.01176470588235294,
+          "endstopBoost": 3.0,
+          "endstopForce": 0.41568627450980394,
+          "guardMinEnd": 0.8,
+          "normalForce": 0.10980392156862744,
+          "rampCurve": 2.4,
+          "rampWidth": 0.2,
+          "wallPosition": 0.8
+        }
+      },
+      "inputBridge": {
+        "autoStart": false,
+        "bindings": [
+          {
+            "source": {
+              "button": "cross"
+            },
+            "target": {
+              "button": "a"
+            }
+          },
+          {
+            "source": {
+              "button": "circle"
+            },
+            "target": {
+              "button": "b"
+            }
+          },
+          {
+            "source": {
+              "button": "square"
+            },
+            "target": {
+              "button": "x"
+            }
+          },
+          {
+            "source": {
+              "button": "triangle"
+            },
+            "target": {
+              "button": "y"
+            }
+          },
+          {
+            "source": {
+              "button": "dpad_up"
+            },
+            "target": {
+              "button": "dpad_up"
+            }
+          },
+          {
+            "source": {
+              "button": "dpad_down"
+            },
+            "target": {
+              "button": "dpad_down"
+            }
+          },
+          {
+            "source": {
+              "button": "dpad_left"
+            },
+            "target": {
+              "button": "dpad_left"
+            }
+          },
+          {
+            "source": {
+              "button": "dpad_right"
+            },
+            "target": {
+              "button": "dpad_right"
+            }
+          },
+          {
+            "source": {
+              "button": "l1"
+            },
+            "target": {
+              "button": "left_shoulder"
+            }
+          },
+          {
+            "source": {
+              "button": "r1"
+            },
+            "target": {
+              "button": "right_shoulder"
+            }
+          },
+          {
+            "source": {
+              "button": "l3"
+            },
+            "target": {
+              "button": "left_thumb"
+            }
+          },
+          {
+            "source": {
+              "button": "r3"
+            },
+            "target": {
+              "button": "right_thumb"
+            }
+          },
+          {
+            "source": {
+              "button": "create"
+            },
+            "target": {
+              "button": "back"
+            }
+          },
+          {
+            "source": {
+              "button": "options"
+            },
+            "target": {
+              "button": "start"
+            }
+          },
+          {
+            "source": {
+              "button": "ps"
+            },
+            "target": {
+              "button": "guide"
+            }
+          },
+          {
+            "source": {
+              "button": "edge_back_left"
+            },
+            "target": {
+              "button": "left_thumb"
+            }
+          },
+          {
+            "source": {
+              "button": "edge_back_right"
+            },
+            "target": {
+              "button": "right_thumb"
+            }
+          },
+          {
+            "source": {
+              "button": "edge_fn_left"
+            },
+            "target": {
+              "command": "shift_layer"
+            }
+          },
+          {
+            "source": {
+              "button": "edge_fn_right"
+            },
+            "target": {
+              "command": "shift_layer"
+            }
+          },
+          {
+            "source": {
+              "stick": "left_stick"
+            },
+            "target": {
+              "axis": "left_stick_x"
+            }
+          },
+          {
+            "source": {
+              "stick": "left_stick"
+            },
+            "target": {
+              "axis": "left_stick_y"
+            }
+          },
+          {
+            "source": {
+              "stick": "right_stick"
+            },
+            "target": {
+              "axis": "right_stick_x"
+            }
+          },
+          {
+            "source": {
+              "stick": "right_stick"
+            },
+            "target": {
+              "axis": "right_stick_y"
+            }
+          },
+          {
+            "source": {
+              "axis": "l2"
+            },
+            "target": {
+              "axis": "left_trigger"
+            }
+          },
+          {
+            "source": {
+              "axis": "r2"
+            },
+            "target": {
+              "axis": "right_trigger"
+            }
+          }
+        ],
+        "enabled": false,
+        "outputKind": "xbox360",
+        "shiftBindings": [
+          {
+            "source": {
+              "button": "dpad_left"
+            },
+            "target": {
+              "command": "profile_previous"
+            }
+          },
+          {
+            "source": {
+              "button": "dpad_right"
+            },
+            "target": {
+              "command": "profile_next"
+            }
+          }
+        ]
+      },
+      "inputMode": "native_dualsense",
+      "lightbar": {
+        "brightness": 72,
+        "color": "#4cc9f0",
+        "enabled": true,
+        "rpmColor": "#ff3a2e"
+      },
+      "sticks": {
+        "leftCurve": "Quick",
+        "leftCurveAmount": 48,
+        "leftDeadzone": 4,
+        "rightCurve": "Default",
+        "rightCurveAmount": 62,
+        "rightDeadzone": 8
+      },
+      "trigger": {
+        "effect": "Adaptive resistance",
+        "intensity": "Strong (Standard)",
+        "l2Curve": 1.0,
+        "l2CurvePoints": [
+          {
+            "input": 0,
+            "output": 0
+          },
+          {
+            "input": 25,
+            "output": 25
+          },
+          {
+            "input": 50,
+            "output": 50
+          },
+          {
+            "input": 75,
+            "output": 75
+          },
+          {
+            "input": 100,
+            "output": 100
+          }
+        ],
+        "l2From": 0,
+        "l2To": 100,
+        "r2Curve": 2.25,
+        "r2CurvePoints": [
+          {
+            "input": 0,
+            "output": 0
+          },
+          {
+            "input": 25,
+            "output": 4
+          },
+          {
+            "input": 50,
+            "output": 21
+          },
+          {
+            "input": 75,
+            "output": 52
+          },
+          {
+            "input": 100,
+            "output": 100
+          }
+        ],
+        "r2From": 4,
+        "r2To": 100,
+        "sameRange": false,
+        "vibration": "Medium",
+        "vibrationMode": "Balanced"
+      }
+    },
+    "game_id": "assetto-corsa-rally",
+    "id": "assetto-corsa-rally",
+    "name": "Rally",
+    "schema": "dev.dscc.profile.v1"
+  }
+]

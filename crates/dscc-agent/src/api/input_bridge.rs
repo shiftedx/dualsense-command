@@ -7,12 +7,7 @@ use dscc_core::input_bridge::DsccBridgeCommand;
 pub(crate) async fn get_input_bridge_status(
     State(state): State<AgentState>,
 ) -> Json<InputBridgeStatusResponse> {
-    Json(
-        state
-            .input_bridge
-            .run_blocking(|bridge| bridge.status_response())
-            .await,
-    )
+    Json(state.input_bridge.status_response())
 }
 
 pub(crate) async fn get_input_bridge_session(

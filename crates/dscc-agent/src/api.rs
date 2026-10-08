@@ -42,6 +42,15 @@ pub(crate) async fn update_adapter(
             "disabled".to_string()
         };
         let mut updated = adapter.clone();
+        if !updated.enabled {
+            inner
+                .adapter_runtime_mut(&updated.id)
+                .invalidate_freshness();
+            if inner.active_adapter_id.as_deref() == Some(updated.id.as_str()) {
+                inner.active_adapter_id = None;
+                inner.forza_effect_runtime = ForzaEffectRuntime::default();
+            }
+        }
         if let Some(runtime) = inner.adapter_runtime(&updated.id) {
             apply_adapter_runtime_summary(
                 &mut updated,

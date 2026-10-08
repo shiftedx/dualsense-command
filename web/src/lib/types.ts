@@ -229,9 +229,7 @@ export interface ExportedProfile {
   id: string;
   name: string;
   built_in?: boolean;
-  builtIn?: boolean;
   game_id?: string | null;
-  gameId?: string | null;
   active?: boolean;
   config?: ProfileConfigPayload | null;
 }
@@ -649,6 +647,8 @@ export interface SteamInputBindingWriteRequest {
   appId?: string | null;
   inputId: string;
   groupId?: string | null;
+  source: string | null;
+  sourceMode: string | null;
   activator?: string | null;
   rawBinding: string;
   profileName?: string | null;

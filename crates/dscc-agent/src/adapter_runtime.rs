@@ -32,6 +32,7 @@ pub(crate) struct AdapterRuntime {
     pub(crate) last_packet_at: Option<Instant>,
     pub(crate) last_packet_len: Option<usize>,
     pub(crate) last_packet_sequence: Option<u64>,
+    pub(crate) last_sample_identity: Option<(String, i32)>,
     pub(crate) parse_error_count: u64,
     pub(crate) last_parse_error_len: Option<usize>,
     pub(crate) last_parse_error: Option<String>,
@@ -57,6 +58,7 @@ impl Default for AdapterRuntime {
             last_packet_at: None,
             last_packet_len: None,
             last_packet_sequence: None,
+            last_sample_identity: None,
             parse_error_count: 0,
             last_parse_error_len: None,
             last_parse_error: None,
@@ -104,6 +106,19 @@ impl AdapterRuntime {
         self.bind_addr = Some(bind_addr);
         self.listener_bound = false;
         self.last_error = Some(error.into());
+    }
+
+    pub(crate) fn invalidate_freshness(&mut self) {
+        self.last_packet_at = None;
+        self.packet_rate_hz = None;
+        self.rate_window_started_at = None;
+        self.rate_window_packet_count = 0;
+    }
+
+    #[cfg(any(target_os = "windows", test))]
+    pub(crate) fn mark_mapping_absent(&mut self) {
+        self.invalidate_freshness();
+        self.last_sample_identity = None;
     }
 
     pub(crate) fn mark_packet(&mut self, packet_len: usize, sequence: u64) -> u16 {

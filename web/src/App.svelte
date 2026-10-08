@@ -13,6 +13,7 @@
   import {
     createButtonMappingSession,
     createButtonMappingSessionState,
+    invalidateButtonMappingSession,
     type ButtonMappingSessionStateStore
   } from './app/buttonMappingSession';
   import { EMPTY_BUTTON_MAPPING_VIEW_SESSION } from './lib/features/buttonMapping/buttonMappingState';
@@ -34,8 +35,6 @@
   } from './app/edgeOnboardProfiles';
   import { markOnboardingDismissed, shouldOpenOnboarding } from './app/onboardingState';
   import {
-    baseForzaTriggerDefaults,
-    buildBuiltInProfileConfig,
     buildControllerConfigDraft,
     buildDefaultControllerConfig as createDefaultControllerConfig,
     editableConfigFromController as createEditableConfigFromController,
@@ -165,7 +164,6 @@
     defaultForzaThrottleTuning,
     forzaIntensityFromPercent,
     forzaIntensityPercent,
-    forzaPresetEffects,
     normalizeEffectId,
     normalizeForzaAbsTuning,
     normalizeForzaBrakeTuning,
@@ -241,6 +239,7 @@
   const FALLBACK_POLL_INTERVAL_MS = 5000;
   const TRIGGER_INPUT_POLL_INTERVAL_MS = 40;
   const BASE_FEEL_TEST_DURATION_MS = 30000;
+  const SAVED_FEEL_PREVIEW_DURATION_MS = 3000;
   const BASE_FEEL_TEST_REFRESH_INTERVAL_MS = 35;
   const SNAPSHOT_INVALIDATION_DEBOUNCE_MS = 500;
   const LIVE_CONFIG_SYNC_DEBOUNCE_MS = 120;
@@ -312,6 +311,14 @@
   let appRuntime: ReturnType<typeof createAppRuntime> | undefined;
   let baseFeelTestActive = false;
   let baseFeelTestBusy = false;
+  let baseFeelTestGeneration = 0;
+  let baseFeelTestController = '';
+  const pendingEffectStops = new Map<string, Promise<void>>();
+  let savedFeelPreviewActive = false;
+  let savedFeelPreviewBusy = false;
+  let savedFeelPreviewTimer = 0;
+  let savedFeelPreviewRequest = 0;
+  let savedFeelPreviewController = '';
   let l2ControllerPress = 0;
   let r2ControllerPress = 0;
   let controllerInputFresh = false;
@@ -850,7 +857,7 @@
 
   const inputBridgeBindingProfileId = () => inputBridgeBindingProfileIdForWorkspace(profileWorkspace);
 
-  $: buttonMappingSession = buttonMappingActive
+  $: buttonMappingSession = buttonMappingActive && appRuntime
     ? createButtonMappingSession({
         state: buttonMappingSessionState,
         store: buttonMappingSessionStore,
@@ -867,7 +874,7 @@
         refresh,
         notify: showToast
       })
-    : EMPTY_BUTTON_MAPPING_VIEW_SESSION;
+    : (invalidateButtonMappingSession(buttonMappingSessionStore), EMPTY_BUTTON_MAPPING_VIEW_SESSION);
 
   const setTriggerRangeValue = (side: TriggerSide, edge: TriggerRangeEdge, rawValue: number | string) => {
     if (side === 'l2') {
@@ -919,14 +926,6 @@
       workspace: targetControllerWorkspace,
       gameId
     });
-
-  const saveControllerConfigForProfileTargets = async (config: EditableControllerConfig) => {
-    const selectedUpdate = await saveControllerConfigForWorkspaceTargets({
-      workspace: targetControllerWorkspace,
-      config
-    });
-    if (selectedUpdate) currentControllerConfig = selectedUpdate;
-  };
 
   const selectTargetController = (controllerId: string) => {
     const selection = targetControllerSelection(targetControllerWorkspace, controllerId);
@@ -1115,6 +1114,23 @@
     if (preferredProfileId) await selectProfileForScope(preferredProfileId, game.gameId, game.name);
   };
 
+  let profileEditorRequest = 0;
+  let profileSaveGeneration = 0;
+  let profileEditorContext = '';
+  let controllerConfigRequest = 0;
+  let edgeProfilesRequest = 0;
+  const editorContextKey = () =>
+    [selectedControllerId, selectedTuningScope, selectedTuningGameId, selectedOverrideProfileId].join('|');
+  const syncProfileEditorContext = (key: string) => {
+    if (key !== profileEditorContext) {
+      profileEditorContext = key;
+      profileEditorRequest += 1;
+      profileSaveGeneration += 1;
+      controllerConfigRequest += 1;
+    }
+  };
+  $: syncProfileEditorContext([selectedControllerId, selectedTuningScope, selectedTuningGameId, selectedOverrideProfileId].join('|'));
+
   const selectProfileForScope = async (
     profileId: string,
     gameId: string | null = profileContextGameId,
@@ -1123,13 +1139,23 @@
     const profile = profiles.find((item) => item.id === profileId);
     if (!snapshot || !profile) return;
     selectedOverrideProfileId = profileId;
+    const context = editorContextKey();
+    syncProfileEditorContext(context);
+    const request = ++profileEditorRequest;
+    profileSaveGeneration += 1;
+    controllerConfigRequest += 1;
+    const current = () => request === profileEditorRequest && context === editorContextKey();
     try {
       const resolution = await setProfileOverrideForTargets(profileId, gameId);
+      if (!current()) return;
       if (resolution) snapshot = { ...snapshot, profileResolution: resolution };
-      await loadProfileConfigForEditor(profile);
+      await loadProfileConfigForEditor(profile, current);
+      if (!current()) return;
       await refresh();
+      if (!current()) return;
       setProfileOverrideMessage(`${profile.name} selected for ${scopeLabel} on ${profileTargetSummary()}`, 'success');
     } catch (caught) {
+      if (!current()) return;
       setProfileOverrideMessage(caught instanceof Error ? caught.message : 'Unable to select profile.', 'error');
       await refresh();
     }
@@ -1165,7 +1191,7 @@
 
   $: profileConfigDirty =
     Boolean(currentControllerConfig && profileSaveBaselineSignature) &&
-    profileConfigSignature(buildControllerConfig()) !== profileSaveBaselineSignature;
+    profileConfigSignature(buildControllerConfig(profileDraftSnapshot)) !== profileSaveBaselineSignature;
 
 
   // Saved rail diff (Task 7). The object literal mirrors
@@ -1444,6 +1470,9 @@
   };
 
   const applyEditableConfig = (config: Omit<ControllerConfiguration, 'controllerId' | 'model'>) => {
+    if (controller) {
+      currentControllerConfig = { ...structuredClone(config), controllerId: controller.id, model: controller.family };
+    }
     l2From = normalizeTriggerPercent(config.trigger.l2From);
     l2To = Math.max(l2From, normalizeTriggerPercent(config.trigger.l2To));
     r2From = normalizeTriggerPercent(config.trigger.r2From);
@@ -1479,6 +1508,9 @@
   };
 
   const loadControllerConfig = async (controllerId: string) => {
+    const request = ++controllerConfigRequest;
+    const context = editorContextKey();
+    const current = () => request === controllerConfigRequest && selectedControllerId === controllerId && context === editorContextKey();
     configLoadedFor = controllerId;
     configLoadError = '';
     currentControllerConfig = null;
@@ -1486,10 +1518,10 @@
     profileSaveBaselineConfig = null;
     try {
       const config = await getControllerConfig(controllerId);
-      if (config.controllerId !== controllerId || selectedControllerId !== controllerId) return;
+      if (config.controllerId !== controllerId || !current()) return;
       applyControllerConfig(config);
     } catch (caught) {
-      if (selectedControllerId !== controllerId) return;
+      if (!current()) return;
       configLoadError = caught instanceof Error ? caught.message : 'Unable to load controller configuration.';
       showToast(configLoadError, 'error');
     }
@@ -1507,20 +1539,28 @@
     ) {
       return;
     }
+    if (controller?.id !== controllerId) return;
+    const request = ++edgeProfilesRequest;
+    const current = () => request === edgeProfilesRequest && selectedControllerId === controllerId;
+    if (edgeProfilesLoadedFor !== controllerId) edgeProfiles = null;
     edgeProfilesLoadedFor = controllerId;
     edgeProfilesLoading = true;
     edgeProfilesError = '';
     try {
-      edgeProfiles = await getEdgeProfiles(controllerId);
+      const response = await getEdgeProfiles(controllerId);
+      if (!current()) return;
+      edgeProfiles = response;
     } catch (caught) {
+      if (!current()) return;
       edgeProfiles = null;
       edgeProfilesError = friendlyEdgeSlotsError(caught, 'Unable to read Edge onboard slots.');
     } finally {
-      edgeProfilesLoading = false;
+      if (current()) edgeProfilesLoading = false;
     }
   };
 
   const resetEdgeProfiles = () => {
+    edgeProfilesRequest += 1;
     const empty = emptyEdgeOnboardProfileState();
     edgeProfilesLoadedFor = empty.loadedFor;
     edgeProfiles = empty.profiles;
@@ -1560,20 +1600,6 @@
     }
   };
 
-  const builtInProfileConfig = (profileId: string): EditableControllerConfig =>
-    buildBuiltInProfileConfig({
-      profileId,
-      isEdge: isEdgeController(),
-      defaultForzaEffects: defaultForzaEffects(),
-      defaultForzaBrakeTuning: defaultForzaBrakeTuning(),
-      defaultForzaAbsTuning: defaultForzaAbsTuning(),
-      defaultForzaThrottleTuning: defaultForzaThrottleTuning(),
-      defaultForzaShiftTuning: defaultForzaShiftTuning(),
-      defaultForzaRevLimiterTuning: defaultForzaRevLimiterTuning(),
-      builtInForzaEffects: forzaPresetEffects(profileId === 'forza-horizon-immersive' ? 'immersive' : 'base'),
-      profileAssignments: currentControllerConfig?.profileAssignments ?? []
-    });
-
   const editableConfigFromProfileExport = (config: NonNullable<ExportedProfile['config']>): EditableControllerConfig =>
     createEditableConfigFromProfileExport(config, {
       isEdge: isEdgeController(),
@@ -1586,15 +1612,10 @@
       profileAssignments: currentControllerConfig?.profileAssignments ?? []
     });
 
-  const loadProfileConfigForEditor = async (profile: ProfileSummary) => {
-    let config: EditableControllerConfig | null = null;
-    if (profile.builtIn) {
-      config = builtInProfileConfig(profile.id);
-    } else {
-      const exported = await exportProfile(profile.id);
-      config = exported.config ? editableConfigFromProfileExport(exported.config) : buildControllerConfig();
-    }
-
+  const loadProfileConfigForEditor = async (profile: ProfileSummary, current: () => boolean) => {
+    const exported = await exportProfile(profile.id);
+    if (!current()) return;
+    const config = exported.config ? editableConfigFromProfileExport(exported.config) : buildControllerConfig();
     applyEditableConfig(config);
     captureProfileSaveBaseline();
   };
@@ -1614,12 +1635,23 @@
     vibrationMode = trigger.vibrationMode ?? DEFAULT_BODY_FEEL;
   };
 
-  const resetTriggerCurvesToProfileDefaults = () => {
-    applyTriggerConfig(baseForzaTriggerDefaults());
-    scheduleBaseFeelTestRefresh();
-    scheduleLiveControllerConfigSync();
-    const profileLabel = activeProfile?.builtIn ? activeProfile.name : 'Base';
-    setApplyMessage(`Reset trigger curves to ${profileLabel} defaults`);
+  const resetTriggerCurvesToProfileDefaults = async () => {
+    const selected = selectedActionProfile;
+    const profileId = selected?.builtIn ? selected.id : defaultProfileIdForGame(profileContextGame, profiles, activeProfileId, currentControllerConfig) || 'global';
+    const context = editorContextKey();
+    const request = ++profileEditorRequest;
+    try {
+      const exported = await exportProfile(profileId);
+      if (request !== profileEditorRequest || context !== editorContextKey() || !exported.config) return;
+      applyTriggerConfig(exported.config.trigger);
+      scheduleBaseFeelTestRefresh();
+      scheduleLiveControllerConfigSync();
+      setApplyMessage(`Reset trigger curves to ${exported.name} defaults`);
+    } catch (caught) {
+      if (request === profileEditorRequest && context === editorContextKey()) {
+        setApplyMessage(caught instanceof Error ? caught.message : 'Unable to reset trigger curves', 'error');
+      }
+    }
   };
 
   const currentProfileDraftValues = (): ProfileDraftValues => ({
@@ -1655,12 +1687,12 @@
     rightStickDeadzone
   });
 
-  const buildControllerConfig = (): EditableControllerConfig => {
+  const buildControllerConfig = (draft: ProfileDraftValues = currentProfileDraftValues()): EditableControllerConfig => {
     const base = currentControllerConfig
       ? editableConfigFromController(currentControllerConfig)
       : buildDefaultControllerConfig();
 
-    return buildControllerConfigDraft(base, currentProfileDraftValues(), {
+    return buildControllerConfigDraft(base, draft, {
       isEdge: isEdgeController(),
       normalizeForzaBrakeTuning,
       normalizeForzaEffects,
@@ -1964,8 +1996,6 @@
     getActiveProfileId: () => activeProfileId,
     getSelectedActionProfile: () => selectedActionProfile ?? null,
     getProfileContextGame: () => profileContextGame ?? null,
-    getProfileContextGameId: () => profileContextGameId,
-    getSelectedTuningScope: () => selectedTuningScope,
     getSelectedOverrideProfileId: () => selectedOverrideProfileId,
     setSelectedOverrideProfileId: (id) => {
       selectedOverrideProfileId = id;
@@ -1980,13 +2010,26 @@
     loadControllerConfig,
     buildControllerConfig: () => buildControllerConfig(),
     profileConfigSignature: (config) => profileConfigSignature(config),
-    setProfileSaveBaseline: (signature) => {
+    setProfileSaveBaseline: (signature, config) => {
       profileSaveBaselineSignature = signature;
-      // Saving makes the current draft the new saved truth for the rail diff.
-      profileSaveBaselineConfig = buildControllerConfig();
+      profileSaveBaselineConfig = structuredClone(config);
     },
-    saveControllerConfigForProfileTargets,
-    setProfileOverrideForTargets: (profileId, gameId) => setProfileOverrideForTargets(profileId, gameId),
+    captureSaveContext: () => {
+      const workspace = structuredClone(targetControllerWorkspace);
+      const gameId = profileContextGameId;
+      const key = editorContextKey();
+      const generation = profileSaveGeneration;
+      const isCurrent = () => generation === profileSaveGeneration && key === editorContextKey();
+      return {
+        gameId,
+        isCurrent,
+        saveControllerConfig: async (config) => {
+          const updated = await saveControllerConfigForWorkspaceTargets({ workspace, config });
+          if (updated && isCurrent()) currentControllerConfig = updated;
+        },
+        setProfileOverride: (profileId) => setProfileOverrideForWorkspaceTargets({ workspace, profileId, gameId })
+      };
+    },
     refresh,
     notify: setApplyMessage
   });
@@ -2024,6 +2067,8 @@
   }
 
   function markBaseFeelTestInactive() {
+    baseFeelTestGeneration += 1;
+    baseFeelTestController = '';
     baseFeelTestActive = false;
     baseFeelTestBusy = false;
     clearBaseFeelTestTimers();
@@ -2078,15 +2123,45 @@
     trigger: buildControllerConfig().trigger
   });
 
+  // Retain controller ownership until the off request settles, including when
+  // selection leaves and returns. All preview entry points share this barrier.
+  const stopControllerEffect = (controllerId: string): Promise<void> => {
+    const existing = pendingEffectStops.get(controllerId);
+    if (existing) return existing;
+    const pending = runEffectTest(
+      { target: 'base_feel', mode: 'off', intensity: 0, durationMs: 100 },
+      controllerId
+    ).then(() => {}).finally(() => {
+      if (pendingEffectStops.get(controllerId) === pending) pendingEffectStops.delete(controllerId);
+    });
+    pendingEffectStops.set(controllerId, pending);
+    return pending;
+  };
+
+  const waitForEffectStop = async (controllerId: string) => {
+    while (pendingEffectStops.has(controllerId)) {
+      // The stop owner reports errors. A settled failure must release the UI.
+      await pendingEffectStops.get(controllerId)?.catch(() => {});
+    }
+  };
+
   const startBaseFeelTest = async (refreshOnly = false) => {
-    if (!snapshot) return;
+    if (!snapshot || !controller || (refreshOnly && !baseFeelTestActive)) return;
+    const controllerId = controller.id;
+    const request = refreshOnly ? baseFeelTestGeneration : ++baseFeelTestGeneration;
+    baseFeelTestController = controllerId;
+    const current = () => Boolean(appRuntime) && request === baseFeelTestGeneration && selectedControllerId === controllerId;
     if (!refreshOnly) baseFeelTestBusy = true;
     try {
+      if (!refreshOnly && (savedFeelPreviewActive || savedFeelPreviewBusy)) await stopSavedFeelPreview();
+      await waitForEffectStop(controllerId);
+      if (!current()) return;
       if (!refreshOnly) await pollTriggerInput();
-      // The test response's output frame has no UI consumers; reassigning the
-      // whole snapshot here invalidated every snapshot-derived statement per
-      // 35ms refresh tick. The 1Hz snapshot stream keeps effectState current.
-      await runEffectTest(baseFeelTestRequest(), controller?.id);
+      if (!current()) return;
+      // Snapshot polling owns displayed output state; avoid a full snapshot
+      // invalidation on each existing 35ms manual refresh tick.
+      await runEffectTest(baseFeelTestRequest(), controllerId);
+      if (!current()) return;
       baseFeelTestActive = true;
       startTriggerInputPolling();
       armBaseFeelTestTimer();
@@ -2094,38 +2169,34 @@
         setApplyMessage('Base feel test is live. Squeeze L2/R2 while adjusting curves; hardware output now follows the same curve shown in the graph.');
       }
     } catch (caught) {
+      if (!current()) return;
       setApplyMessage(caught instanceof Error ? caught.message : 'Base feel test failed');
       markBaseFeelTestInactive();
     } finally {
-      if (!refreshOnly) baseFeelTestBusy = false;
+      if (!refreshOnly && current()) baseFeelTestBusy = false;
     }
   };
 
   const stopBaseFeelTest = async () => {
-    if (!snapshot) {
-      markBaseFeelTestInactive();
-      return;
-    }
+    const controllerId = baseFeelTestController;
+    if (!controllerId) return;
+    markBaseFeelTestInactive();
+    if (!snapshot || !controllerId) return;
+    const request = baseFeelTestGeneration;
+    const generation = profileSaveGeneration;
+    const current = () => Boolean(appRuntime) && generation === profileSaveGeneration && request === baseFeelTestGeneration && selectedControllerId === controllerId;
     baseFeelTestBusy = true;
-    baseFeelTestRefreshTask.clear();
     try {
-      // Output frame has no UI consumers; the 1Hz snapshot stream keeps state current.
-      await runEffectTest(
-        {
-          target: 'base_feel',
-          mode: 'off',
-          intensity: 0,
-          durationMs: 100
-        },
-        controller?.id
-      );
-      setApplyMessage('Base feel test stopped');
+      await stopControllerEffect(controllerId);
+      if (current()) setApplyMessage('Base feel test stopped');
     } catch (caught) {
-      setApplyMessage(caught instanceof Error ? caught.message : 'Unable to stop Base feel test');
+      if (current()) setApplyMessage(caught instanceof Error ? caught.message : 'Unable to stop Base feel test');
     } finally {
-      markBaseFeelTestInactive();
+      if (request === baseFeelTestGeneration) baseFeelTestBusy = false;
     }
   };
+
+  $: if (baseFeelTestController && selectedControllerId !== baseFeelTestController) void stopBaseFeelTest();
 
   const toggleBaseFeelTest = async () => {
     if (baseFeelTestBusy) return;
@@ -2136,8 +2207,65 @@
     }
   };
 
+  const stopSavedFeelPreview = async () => {
+    const controllerId = savedFeelPreviewController;
+    if (!controllerId) return;
+    const request = ++savedFeelPreviewRequest;
+    const generation = profileSaveGeneration;
+    window.clearTimeout(savedFeelPreviewTimer);
+    savedFeelPreviewController = '';
+    savedFeelPreviewActive = false;
+    savedFeelPreviewBusy = true;
+    try {
+      await stopControllerEffect(controllerId);
+    } catch (caught) {
+      if (appRuntime && generation === profileSaveGeneration && request === savedFeelPreviewRequest && controller?.id === controllerId) {
+        setApplyMessage(caught instanceof Error ? caught.message : 'Unable to stop preview', 'error');
+      }
+    } finally {
+      if (request === savedFeelPreviewRequest) savedFeelPreviewBusy = false;
+    }
+  };
+
+  const toggleSavedFeelPreview = async () => {
+    if (savedFeelPreviewBusy || !controller) return;
+    if (savedFeelPreviewActive) return stopSavedFeelPreview();
+    const controllerId = controller.id;
+    const request = ++savedFeelPreviewRequest;
+    savedFeelPreviewController = controllerId;
+    savedFeelPreviewBusy = true;
+    const current = () => Boolean(appRuntime) && request === savedFeelPreviewRequest && controller?.id === controllerId;
+    try {
+      if (baseFeelTestActive || baseFeelTestBusy) await stopBaseFeelTest();
+      await waitForEffectStop(controllerId);
+      if (!current()) return;
+      const deadline = Date.now() + SAVED_FEEL_PREVIEW_DURATION_MS;
+      await runEffectTest({ ...baseFeelTestRequest(), durationMs: SAVED_FEEL_PREVIEW_DURATION_MS }, controllerId);
+      if (!current()) return;
+      savedFeelPreviewActive = true;
+      // The agent expires this timed request. Do not send a late off frame that
+      // could interrupt a newer effect started by another preview control.
+      savedFeelPreviewTimer = window.setTimeout(() => {
+        savedFeelPreviewController = '';
+        savedFeelPreviewActive = false;
+      }, Math.max(0, deadline - Date.now()));
+    } catch (caught) {
+      if (current()) {
+        savedFeelPreviewController = '';
+        setApplyMessage(caught instanceof Error ? caught.message : 'Preview failed', 'error');
+      }
+    } finally {
+      if (current()) savedFeelPreviewBusy = false;
+    }
+  };
+
+  $: if (savedFeelPreviewController && selectedControllerId !== savedFeelPreviewController) void stopSavedFeelPreview();
+
   const previewBodyHaptics = async () => {
-    if (!snapshot) return;
+    if (!snapshot || !controller) return;
+    const controllerId = controller.id;
+    const generation = profileSaveGeneration;
+    const current = () => Boolean(appRuntime) && generation === profileSaveGeneration && selectedControllerId === controllerId;
     const intensity = vibrationIntensityPercent(vibrationIntensity);
     if (intensity <= 0) {
       setApplyMessage('Body haptics are off; raise Body strength to preview.');
@@ -2145,6 +2273,8 @@
     }
 
     try {
+      await waitForEffectStop(controllerId);
+      if (!current()) return;
       // Output frame has no UI consumers; the 1Hz snapshot stream keeps state current.
       await runEffectTest(
         {
@@ -2153,10 +2283,12 @@
           intensity,
           durationMs: 900
         },
-        controller?.id
+        controllerId
       );
+      if (!current()) return;
       setApplyMessage(`${vibrationMode} body haptics previewed`);
     } catch (caught) {
+      if (!current()) return;
       setApplyMessage(caught instanceof Error ? caught.message : 'Body haptics preview failed');
     }
   };
@@ -2164,10 +2296,15 @@
   const previewLightbarColor = async (color: string, label: string) => {
     // /test-effect takes parameters in the request body, so preview first
     // and only persist the config if the preview is accepted by the agent.
-    if (!snapshot) return;
+    if (!snapshot || !controller) return;
+    const controllerId = controller.id;
+    const generation = profileSaveGeneration;
+    const current = () => Boolean(appRuntime) && generation === profileSaveGeneration && selectedControllerId === controllerId;
 
     const intensity = lightbarEnabled ? lightbarBrightness : 0;
     try {
+      await waitForEffectStop(controllerId);
+      if (!current()) return;
       // Output frame has no UI consumers; the 1Hz snapshot stream keeps state current.
       await runEffectTest(
         {
@@ -2176,16 +2313,19 @@
           intensity,
           durationMs: 650
         },
-        controller?.id
+        controllerId
       );
     } catch (caught) {
+      if (!current()) return;
       setApplyMessage(caught instanceof Error ? caught.message : `${label} preview failed`);
       return;
     }
 
+    if (!current()) return;
     const saved = await saveCurrentConfig();
-    if (!saved) return;
+    if (!saved || !current()) return;
     await refresh();
+    if (!current()) return;
     setApplyMessage(`${label} ${color} previewed`);
   };
 
@@ -2213,8 +2353,14 @@
         syncTriggerInputPolling();
       },
       onStop: () => {
+        profileEditorRequest += 1;
+        profileSaveGeneration += 1;
+        controllerConfigRequest += 1;
+        edgeProfilesRequest += 1;
+        invalidateButtonMappingSession(buttonMappingSessionStore);
+        void stopSavedFeelPreview();
         liveConfigSync.clear();
-        clearBaseFeelTestTimers();
+        markBaseFeelTestInactive();
         stopTriggerInputPolling();
         window.clearTimeout(savedRailDiffTimer);
       }
@@ -2654,12 +2800,12 @@
             profileName={savedRailProfileName}
             rows={savedRailRows}
             dirty={profileConfigDirty}
-            previewActive={baseFeelTestActive}
-            previewBusy={baseFeelTestBusy}
+            previewActive={savedFeelPreviewActive}
+            previewBusy={savedFeelPreviewBusy}
             previewDisabled={!snapshot}
             saveBusy={profileSaveBusy}
             canSave={Boolean(selectedActionProfile) && profileConfigDirty}
-            onPreviewFeel={toggleBaseFeelTest}
+            onPreviewFeel={toggleSavedFeelPreview}
             onSave={saveActiveProfile}
             onDiscard={discardDraftChanges}
           />

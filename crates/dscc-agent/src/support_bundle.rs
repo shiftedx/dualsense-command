@@ -191,10 +191,7 @@ impl AgentState {
         let steam_input = self.cached_steam_input_status_or_refresh().await;
         let hardware_output_enabled = self.hardware_output_enabled();
         let output_diagnostics = self.output_diagnostics_snapshot();
-        let input_bridge = self
-            .input_bridge
-            .run_blocking(|bridge| bridge.status_response())
-            .await;
+        let input_bridge = self.input_bridge.status_response();
         let inner = self.inner.read().await;
         let diagnostics = self.diagnostics_from_inner(
             &inner,
@@ -416,7 +413,7 @@ pub(crate) fn support_steam_input_summary(status: &SteamInputStatus) -> SupportS
                 title: layout.title.clone(),
                 controller_type: layout.controller_type.clone(),
                 controller_label: layout.controller_label.clone(),
-                source: sanitize_support_text(&layout.source),
+                source: sanitize_support_path(&layout.source),
                 binding_count: layout.binding_count,
             })
             .collect(),
@@ -456,12 +453,12 @@ fn duration_millis_u64(duration: Duration) -> u64 {
     duration.as_millis().min(u128::from(u64::MAX)) as u64
 }
 
-fn sanitize_support_path(path: &str) -> String {
-    sanitize_support_text(path)
+fn sanitize_support_path(_path: &str) -> String {
+    "[local-path]".to_string()
 }
 
 pub(crate) fn sanitize_support_text(value: &str) -> String {
-    let mut redacted = redact_windows_absolute_paths(value.to_string());
+    let mut redacted = redact_absolute_paths(value.to_string());
     for (raw, replacement) in support_redaction_roots() {
         if !raw.is_empty() {
             redacted = redacted.replace(&raw, &replacement);
@@ -517,12 +514,15 @@ fn redact_steam_user_ids(mut value: String) -> String {
     value
 }
 
-fn redact_windows_absolute_paths(value: String) -> String {
+fn redact_absolute_paths(value: String) -> String {
     let chars = value.chars().collect::<Vec<_>>();
     let mut redacted = String::with_capacity(value.len());
     let mut index = 0;
     while index < chars.len() {
-        if let Some(end) = windows_absolute_path_end(&chars, index) {
+        if let Some(end) = http_url_end(&chars, index) {
+            redacted.extend(&chars[index..end]);
+            index = end;
+        } else if let Some(end) = absolute_path_end(&chars, index) {
             redacted.push_str("[local-path]");
             index = end;
         } else {
@@ -533,8 +533,41 @@ fn redact_windows_absolute_paths(value: String) -> String {
     redacted
 }
 
-fn windows_absolute_path_end(chars: &[char], start: usize) -> Option<usize> {
-    if !starts_extended_windows_path(chars, start) && !starts_windows_drive_path(chars, start) {
+fn http_url_end(chars: &[char], start: usize) -> Option<usize> {
+    let starts_url = ["http://", "https://"].iter().any(|scheme| {
+        chars
+            .get(start..start + scheme.len())
+            .is_some_and(|prefix| {
+                prefix
+                    .iter()
+                    .zip(scheme.chars())
+                    .all(|(actual, expected)| actual.eq_ignore_ascii_case(&expected))
+            })
+    });
+    if !starts_url {
+        return None;
+    }
+    // Query and fragment values may themselves start with '/', so skip the
+    // complete URL before recognizing local paths. Identifier redaction still
+    // runs over the result afterward.
+    let end = chars[start..]
+        .iter()
+        .position(|ch| ch.is_whitespace() || matches!(ch, '\'' | '"' | '<' | '>'))
+        .map_or(chars.len(), |offset| start + offset);
+    Some(end)
+}
+
+fn absolute_path_end(chars: &[char], start: usize) -> Option<usize> {
+    let boundary = start == 0
+        || chars[start - 1].is_whitespace()
+        || matches!(chars[start - 1], '\'' | '"' | '(' | '=' | '[' | ':');
+    let starts_path = starts_windows_drive_path(chars, start)
+        || (chars[start] == '\\' && chars.get(start + 1) == Some(&'\\'))
+        || (chars[start] == '/'
+            && chars
+                .get(start + 1)
+                .is_some_and(|ch| *ch != '/' && !ch.is_whitespace()));
+    if !boundary || !starts_path {
         return None;
     }
 
@@ -551,17 +584,6 @@ fn windows_absolute_path_end(chars: &[char], start: usize) -> Option<usize> {
         end += 1;
     }
     Some(end)
-}
-
-fn starts_extended_windows_path(chars: &[char], start: usize) -> bool {
-    start + 6 < chars.len()
-        && chars[start] == '\\'
-        && chars[start + 1] == '\\'
-        && (chars[start + 2] == '?' || chars[start + 2] == '.')
-        && chars[start + 3] == '\\'
-        && chars[start + 4].is_ascii_alphabetic()
-        && chars[start + 5] == ':'
-        && is_windows_separator(chars[start + 6])
 }
 
 fn starts_windows_drive_path(chars: &[char], start: usize) -> bool {

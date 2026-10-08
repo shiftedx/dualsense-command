@@ -73,6 +73,7 @@ export async function importProfile(profile: {
   schema: string;
   id?: string | null;
   name: string;
+  game_id?: string | null;
   config?: ExportedProfile['config'];
 }): Promise<ProfileSummary> {
   if (import.meta.env.DEV && isMockApiEnabled()) return (await loadMockApi()).importMockProfile(profile);
