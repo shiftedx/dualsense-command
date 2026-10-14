@@ -10,10 +10,9 @@ or command line. Linux remains [beta](docs/linux-beta.md).
 
 ## Install and play
 
-**0.5.1 installers are staged and awaiting publication.**
-The release will be available on the [Releases page](https://github.com/shiftedx/dualsense-command/releases)
-after validation and publication. Windows MSIs remain unsigned; expect trust prompts.
-[Build from source](docs/contributing.md) while release staging completes.
+Download the **Standard unsigned Windows MSI** from [release 0.5.1](https://github.com/shiftedx/dualsense-command/releases/tag/v0.5.1).
+Windows may show trust prompts. Bridge installers are experimental.
+[Build from source](docs/contributing.md) if needed.
 
 1. Verify the MSI's SHA256 checksum and signing status using [Release Trust](docs/release-trust.md).
 2. Quit any running DSCC from its tray menu, then run the MSI to install or update. Profiles/settings stay in your user folder. Leave **Start with Windows** unchecked until its [validation caveat](docs/release-trust.md) is resolved.
