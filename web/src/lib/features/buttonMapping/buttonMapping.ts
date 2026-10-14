@@ -1,0 +1,362 @@
+import type { ControllerStatus, SteamInputBinding } from '../../types';
+
+export type SteamBindingSlot = {
+  key: string;
+  label: string;
+  group: string;
+  source?: string;
+  inputIds: string[];
+  defaultRawBinding?: string;
+};
+
+export type SteamBindingTriple = {
+  command: string;
+  param: string;
+  icon: string;
+  label: string;
+};
+
+export type SteamSlotGlyph = {
+  icon?: string;
+  focus?: string;
+  region?: 'face' | 'dpad' | 'shoulder' | 'trigger' | 'stick' | 'touch' | 'system' | 'edge' | 'motion';
+};
+
+export type SteamMirrorPlacement = 'left' | 'right' | 'center' | 'bottom';
+
+export type SteamMirrorRow = {
+  key: string;
+  slot: SteamBindingSlot;
+  binding: SteamInputBinding | null;
+  displayLabel: string;
+  iconUrl: string | null;
+  selected: boolean;
+};
+
+export type SteamMirrorGroup = {
+  key: string;
+  label: string;
+  placement: SteamMirrorPlacement;
+  rows: SteamMirrorRow[];
+  staticRows?: string[];
+};
+
+export const steamBindingSlots: SteamBindingSlot[] = [
+  { key: 'cross', label: 'Cross', group: 'Face Buttons', source: 'Face Buttons', inputIds: ['button_a'], defaultRawBinding: 'xinput_button a, , Cross' },
+  { key: 'circle', label: 'Circle', group: 'Face Buttons', source: 'Face Buttons', inputIds: ['button_b'], defaultRawBinding: 'xinput_button b, , Circle' },
+  { key: 'square', label: 'Square', group: 'Face Buttons', source: 'Face Buttons', inputIds: ['button_x'], defaultRawBinding: 'xinput_button x, , Square' },
+  { key: 'triangle', label: 'Triangle', group: 'Face Buttons', source: 'Face Buttons', inputIds: ['button_y'], defaultRawBinding: 'xinput_button y, , Triangle' },
+  { key: 'dpadUp', label: 'D-Pad Up', group: 'Directional Pad', source: 'Directional Pad', inputIds: ['dpad_north'], defaultRawBinding: 'xinput_button dpad_up, , D-Pad Up' },
+  { key: 'dpadDown', label: 'D-Pad Down', group: 'Directional Pad', source: 'Directional Pad', inputIds: ['dpad_south'], defaultRawBinding: 'xinput_button dpad_down, , D-Pad Down' },
+  { key: 'dpadLeft', label: 'D-Pad Left', group: 'Directional Pad', source: 'Directional Pad', inputIds: ['dpad_west'], defaultRawBinding: 'xinput_button dpad_left, , D-Pad Left' },
+  { key: 'dpadRight', label: 'D-Pad Right', group: 'Directional Pad', source: 'Directional Pad', inputIds: ['dpad_east'], defaultRawBinding: 'xinput_button dpad_right, , D-Pad Right' },
+  { key: 'l1', label: 'L1', group: 'Shoulders', source: 'Switches', inputIds: ['left_bumper', 'button_should_left'], defaultRawBinding: 'xinput_button shoulder_left, , L1' },
+  { key: 'r1', label: 'R1', group: 'Shoulders', source: 'Switches', inputIds: ['right_bumper', 'button_should_right'], defaultRawBinding: 'xinput_button shoulder_right, , R1' },
+  { key: 'l2', label: 'L2', group: 'Triggers', source: 'Left Trigger', inputIds: ['click:left_trigger', 'left_trigger:click'], defaultRawBinding: 'xinput_button trigger_left, , L2' },
+  { key: 'r2', label: 'R2', group: 'Triggers', source: 'Right Trigger', inputIds: ['click:right_trigger', 'right_trigger:click'], defaultRawBinding: 'xinput_button trigger_right, , R2' },
+  { key: 'create', label: 'Create', group: 'System', source: 'Switches', inputIds: ['button_menu'], defaultRawBinding: 'xinput_button select, , Create' },
+  { key: 'options', label: 'Options', group: 'System', source: 'Switches', inputIds: ['button_escape'], defaultRawBinding: 'xinput_button start, , Options' },
+  { key: 'l3', label: 'L3', group: 'Sticks', source: 'Left Joystick', inputIds: ['click:left_joystick', 'left_joystick:click', 'click:joystick', 'joystick:click'], defaultRawBinding: 'xinput_button joystick_left, , L3' },
+  { key: 'r3', label: 'R3', group: 'Sticks', source: 'Right Joystick', inputIds: ['click:right_joystick', 'right_joystick:click'], defaultRawBinding: 'xinput_button joystick_right, , R3' },
+  { key: 'touchPressLeft', label: 'Touchpad Left Press', group: 'Trackpad', source: 'Left Trackpad', inputIds: ['click:left_trackpad', 'left_trackpad:click'], defaultRawBinding: 'xinput_button touchpad_left, , Touchpad Left Press' },
+  { key: 'touchPressRight', label: 'Touchpad Right Press', group: 'Trackpad', source: 'Right Trackpad', inputIds: ['click:right_trackpad', 'right_trackpad:click'], defaultRawBinding: 'xinput_button touchpad_right, , Touchpad Right Press' },
+  { key: 'swipeUp', label: 'Touchpad Swipe Up', group: 'Trackpad', source: 'Right Trackpad', inputIds: ['dpad_up', 'dpad_north:right_trackpad', 'dpad_up:right_trackpad'] },
+  { key: 'swipeDown', label: 'Touchpad Swipe Down', group: 'Trackpad', source: 'Right Trackpad', inputIds: ['dpad_down', 'dpad_south:right_trackpad', 'dpad_down:right_trackpad'] },
+  { key: 'swipeLeft', label: 'Touchpad Swipe Left', group: 'Trackpad', source: 'Right Trackpad', inputIds: ['dpad_left', 'dpad_west:right_trackpad', 'dpad_left:right_trackpad'] },
+  { key: 'swipeRight', label: 'Touchpad Swipe Right', group: 'Trackpad', source: 'Right Trackpad', inputIds: ['dpad_right', 'dpad_east:right_trackpad', 'dpad_right:right_trackpad'] },
+  { key: 'centerSwipeUp', label: 'Center Swipe Up', group: 'Center Trackpad', source: 'Center Trackpad', inputIds: ['dpad_north:center_trackpad', 'center_trackpad:dpad_north', 'dpad_up:center_trackpad', 'center_trackpad:dpad_up'] },
+  { key: 'centerSwipeDown', label: 'Center Swipe Down', group: 'Center Trackpad', source: 'Center Trackpad', inputIds: ['dpad_south:center_trackpad', 'center_trackpad:dpad_south', 'dpad_down:center_trackpad', 'center_trackpad:dpad_down'] },
+  { key: 'centerSwipeLeft', label: 'Center Swipe Left', group: 'Center Trackpad', source: 'Center Trackpad', inputIds: ['dpad_west:center_trackpad', 'center_trackpad:dpad_west', 'dpad_left:center_trackpad', 'center_trackpad:dpad_left'] },
+  { key: 'centerSwipeRight', label: 'Center Swipe Right', group: 'Center Trackpad', source: 'Center Trackpad', inputIds: ['dpad_east:center_trackpad', 'center_trackpad:dpad_east', 'dpad_right:center_trackpad', 'center_trackpad:dpad_right'] },
+  { key: 'gyro', label: 'Gyro', group: 'Motion', source: 'Gyro', inputIds: ['gyro', 'click:gyro'] },
+  { key: 'edgeBackLeft', label: 'Back Left', group: 'DualSense Edge', source: 'Switches', inputIds: ['button_back_left'], defaultRawBinding: 'xinput_button joystick_left, , L3' },
+  { key: 'edgeBackRight', label: 'Back Right', group: 'DualSense Edge', source: 'Switches', inputIds: ['button_back_right'], defaultRawBinding: 'xinput_button joystick_right, , R3' },
+  { key: 'edgeFnLeft', label: 'Fn Left', group: 'DualSense Edge', source: 'Switches', inputIds: ['button_back_left_upper'], defaultRawBinding: 'key_press PAGE_UP, , Previous DSCC Profile' },
+  { key: 'edgeFnRight', label: 'Fn Right', group: 'DualSense Edge', source: 'Switches', inputIds: ['button_back_right_upper'], defaultRawBinding: 'key_press PAGE_DOWN, , Next DSCC Profile' }
+];
+
+export const steamSlotGlyphs: Record<string, SteamSlotGlyph> = {
+  cross: { icon: 'face_cross', focus: 'cross', region: 'face' },
+  circle: { icon: 'face_circle', focus: 'circle', region: 'face' },
+  square: { icon: 'face_square', focus: 'square', region: 'face' },
+  triangle: { icon: 'face_triangle', focus: 'triangle', region: 'face' },
+  dpadUp: { icon: 'arrow_up', focus: 'up', region: 'dpad' },
+  dpadDown: { icon: 'arrow_down', focus: 'down', region: 'dpad' },
+  dpadLeft: { icon: 'arrow_left', focus: 'left', region: 'dpad' },
+  dpadRight: { icon: 'arrow_right', focus: 'right', region: 'dpad' },
+  l1: { icon: 'l1', focus: 'L1', region: 'shoulder' },
+  r1: { icon: 'r1', focus: 'R1', region: 'shoulder' },
+  l2: { icon: 'l2', focus: 'L2', region: 'trigger' },
+  r2: { icon: 'r2', focus: 'R2', region: 'trigger' },
+  l3: { icon: 'l3', focus: 'Lstick', region: 'stick' },
+  r3: { icon: 'r3', focus: 'Rstick', region: 'stick' },
+  create: { icon: 'create', focus: 'create', region: 'system' },
+  options: { icon: 'options', focus: 'options', region: 'system' },
+  touchPressLeft: { icon: 'tap', focus: 'touchpad', region: 'touch' },
+  touchPressRight: { icon: 'tap', focus: 'touchpad', region: 'touch' },
+  swipeUp: { icon: 'arrow_up', focus: 'touchpad', region: 'touch' },
+  swipeDown: { icon: 'arrow_down', focus: 'touchpad', region: 'touch' },
+  swipeLeft: { icon: 'arrow_left', focus: 'touchpad', region: 'touch' },
+  swipeRight: { icon: 'arrow_right', focus: 'touchpad', region: 'touch' },
+  centerSwipeUp: { icon: 'swipe', focus: 'touchpad', region: 'touch' },
+  centerSwipeDown: { icon: 'swipe', focus: 'touchpad', region: 'touch' },
+  centerSwipeLeft: { icon: 'swipe', focus: 'touchpad', region: 'touch' },
+  centerSwipeRight: { icon: 'swipe', focus: 'touchpad', region: 'touch' },
+  gyro: { icon: 'analog_stick_l', region: 'motion' },
+  edgeBackLeft: { icon: 'fn', focus: 'rear_L', region: 'edge' },
+  edgeBackRight: { icon: 'fn', focus: 'rear_R', region: 'edge' },
+  edgeFnLeft: { icon: 'fn', region: 'edge' },
+  edgeFnRight: { icon: 'fn', region: 'edge' }
+};
+
+const steamMirrorDefinitions: Array<{
+  key: string;
+  label: string;
+  placement: SteamMirrorPlacement;
+  slotKeys: string[];
+  optionalWhenUnbound?: boolean;
+  staticRows?: string[];
+}> = [
+  {
+    key: 'left-rail',
+    label: 'Left Controls',
+    placement: 'left',
+    slotKeys: ['l1', 'l2', 'edgeFnLeft', 'edgeBackLeft', 'create']
+  },
+  {
+    key: 'left-trackpad',
+    label: 'Left Trackpad',
+    placement: 'left',
+    slotKeys: ['touchPressLeft']
+  },
+  {
+    key: 'center-trackpad',
+    label: 'Center Trackpad',
+    placement: 'center',
+    slotKeys: ['centerSwipeUp', 'centerSwipeDown', 'centerSwipeLeft', 'centerSwipeRight'],
+    optionalWhenUnbound: true,
+    staticRows: ['Directional Swipe']
+  },
+  {
+    key: 'right-rail',
+    label: 'Right Controls',
+    placement: 'right',
+    slotKeys: ['r1', 'r2', 'edgeFnRight', 'edgeBackRight', 'options']
+  },
+  {
+    key: 'right-trackpad',
+    label: 'Right Trackpad',
+    placement: 'right',
+    slotKeys: ['touchPressRight']
+  },
+  {
+    key: 'dpad',
+    label: 'Directional Pad',
+    placement: 'bottom',
+    slotKeys: ['dpadUp', 'dpadDown', 'dpadLeft', 'dpadRight']
+  },
+  {
+    key: 'left-joystick',
+    label: 'Left Joystick',
+    placement: 'bottom',
+    slotKeys: ['l3'],
+    staticRows: ['Joystick']
+  },
+  {
+    key: 'gyro',
+    label: 'Gyro',
+    placement: 'bottom',
+    slotKeys: ['gyro'],
+    optionalWhenUnbound: true
+  },
+  {
+    key: 'right-joystick',
+    label: 'Right Joystick',
+    placement: 'bottom',
+    slotKeys: ['r3'],
+    staticRows: ['Joystick']
+  },
+  {
+    key: 'face-buttons',
+    label: 'Face Buttons',
+    placement: 'bottom',
+    slotKeys: ['cross', 'circle', 'square', 'triangle']
+  }
+];
+
+export const parseSteamBindingTriple = (raw: string | null | undefined): SteamBindingTriple => {
+  const value = (raw ?? '').trim();
+  if (!value) return { command: '', param: '', icon: '', label: '' };
+  const firstComma = value.indexOf(',');
+  const head = firstComma === -1 ? value : value.slice(0, firstComma).trim();
+  const tail = firstComma === -1 ? '' : value.slice(firstComma + 1);
+  const tailParts = tail.split(',');
+  const icon = (tailParts[0] ?? '').trim();
+  const label = tailParts.slice(1).join(',').trim();
+  const spaceIdx = head.indexOf(' ');
+  const command = spaceIdx === -1 ? head : head.slice(0, spaceIdx);
+  const param = spaceIdx === -1 ? '' : head.slice(spaceIdx + 1).trim();
+  return { command, param, icon, label };
+};
+
+export const assembleSteamBindingRaw = (triple: SteamBindingTriple): string => {
+  const head = triple.param ? `${triple.command} ${triple.param}` : triple.command;
+  return `${head}, ${triple.icon ?? ''}, ${triple.label ?? ''}`;
+};
+
+export const steamBindingTargetPart = (raw: string): string => {
+  const { command, param } = parseSteamBindingTriple(raw);
+  return assembleSteamBindingRaw({ command, param, icon: '', label: '' });
+};
+
+export const steamBindingUserLabel = (binding: { rawBinding?: string | null } | null | undefined) =>
+  parseSteamBindingTriple(binding?.rawBinding ?? '').label;
+
+export const chipDisplayLabel = (binding: SteamInputBinding | null | undefined) => {
+  if (!binding) return 'Unassigned';
+  const userLabel = steamBindingUserLabel(binding);
+  return userLabel || binding.binding;
+};
+
+export const defaultSteamBindingForSlot = (slot: SteamBindingSlot): SteamInputBinding | null => {
+  if (!slot.defaultRawBinding) return null;
+  return {
+    input: slot.label,
+    inputId: slot.inputIds[0] ?? slot.key,
+    binding: slot.label,
+    rawBinding: slot.defaultRawBinding,
+    kind: 'Default',
+    source: slot.source ?? null,
+    sourceMode: slot.group,
+    activator: 'Full Press',
+    groupId: null,
+    synthetic: true
+  };
+};
+
+export const buildDefaultSteamBindingBySlotKey = (
+  controllerFamily?: ControllerStatus['family'] | null
+): Map<string, SteamInputBinding> => {
+  const result = new Map<string, SteamInputBinding>();
+  for (const slot of steamBindingSlots) {
+    if (slot.group === 'DualSense Edge' && controllerFamily !== 'DualSense Edge') continue;
+    const binding = defaultSteamBindingForSlot(slot);
+    if (binding) result.set(slot.key, binding);
+  }
+  return result;
+};
+
+export const steamSlotIconUrl = (key: string): string | null => {
+  const icon = steamSlotGlyphs[key]?.icon;
+  return icon ? `/controller-diagram/${icon}.svg` : null;
+};
+
+export const steamBindingKey = (binding: SteamInputBinding) =>
+  [
+    binding.groupId ?? '',
+    binding.source ?? '',
+    binding.sourceMode ?? '',
+    binding.inputId ?? '',
+    binding.activator ?? ''
+  ].join('|');
+
+export const steamBindingSignature = (binding: SteamInputBinding) => {
+  const inputId = binding.inputId ?? '';
+  const source = (binding.source ?? '').toLowerCase().replaceAll(' ', '_');
+  return source ? [`${inputId}:${source}`, `${source}:${inputId}`, inputId] : [inputId];
+};
+
+export function buildSteamBindingBySlotKey(
+  bindings: SteamInputBinding[],
+  slots: SteamBindingSlot[] = steamBindingSlots
+): Map<string, SteamInputBinding> {
+  const result = new Map<string, SteamInputBinding>();
+  const pendingSlots = slots.slice();
+
+  for (const binding of bindings) {
+    const signatures = new Set(steamBindingSignature(binding));
+    for (let index = pendingSlots.length - 1; index >= 0; index -= 1) {
+      const slot = pendingSlots[index];
+      if (slot.inputIds.some((inputId) => signatures.has(inputId))) {
+        result.set(slot.key, binding);
+        pendingSlots.splice(index, 1);
+        break;
+      }
+    }
+    if (!pendingSlots.length) break;
+  }
+
+  return result;
+}
+
+export type FocusedSlotInput = {
+  hoveredKey: string;
+  activeKey: string;
+  bindingBySlotKey: ReadonlyMap<string, SteamInputBinding>;
+  selectedBindingKey: string;
+};
+
+/**
+ * Resolve which mapping slot holds the controller-stage focus highlight.
+ * Precedence: an explicit hover wins, then an explicitly-clicked slot, then the
+ * slot owning the currently selected binding. Returns '' when nothing is
+ * focused. Pure — the interface is the test surface (button-mapping-p95.mjs).
+ */
+export function resolveFocusedSlotKey(input: FocusedSlotInput): string {
+  if (input.hoveredKey) return input.hoveredKey;
+  if (input.activeKey) return input.activeKey;
+  const fromBinding = steamBindingSlots.find((slot) => {
+    const binding = input.bindingBySlotKey.get(slot.key);
+    return Boolean(binding && steamBindingKey(binding) === input.selectedBindingKey);
+  });
+  return fromBinding?.key ?? '';
+}
+
+export function createSteamMirrorGroups(options: {
+  bindingBySlotKey: Map<string, SteamInputBinding>;
+  controllerFamily?: ControllerStatus['family'] | null;
+  selectedBindingKey: string;
+  activeSlotKey: string;
+  slots?: SteamBindingSlot[];
+}): SteamMirrorGroup[] {
+  const slots = options.slots ?? steamBindingSlots;
+  const slotByKey = new Map(slots.map((slot) => [slot.key, slot]));
+  const groups: SteamMirrorGroup[] = [];
+
+  for (const group of steamMirrorDefinitions) {
+    const rows = group.slotKeys
+      .map((slotKey) => {
+        const slot = slotByKey.get(slotKey);
+        if (!slot) return null;
+        const binding = options.bindingBySlotKey.get(slot.key) ?? null;
+        if (slot.group === 'DualSense Edge' && options.controllerFamily !== 'DualSense Edge' && !binding) {
+          return null;
+        }
+        if (!binding && group.optionalWhenUnbound) {
+          return null;
+        }
+        return {
+          key: slot.key,
+          slot,
+          binding,
+          displayLabel: chipDisplayLabel(binding),
+          iconUrl: steamSlotIconUrl(slot.key),
+          selected:
+            options.activeSlotKey === slot.key ||
+            Boolean(binding && steamBindingKey(binding) === options.selectedBindingKey)
+        };
+      })
+      .filter((value): value is SteamMirrorRow => value !== null);
+
+    if (!rows.length && !group.staticRows?.length) continue;
+    groups.push({
+      key: group.key,
+      label: group.label,
+      placement: group.placement,
+      rows,
+      ...(group.staticRows ? { staticRows: group.staticRows } : {})
+    });
+  }
+
+  return groups;
+}

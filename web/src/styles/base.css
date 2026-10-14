@@ -1,0 +1,43 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  min-width: 320px;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled,
+select:disabled,
+input:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+code,
+.dm-module-title code,
+.dm-slider-row code,
+.dm-fader-value,
+.dm-led-row code,
+.dm-effects-count code,
+.dm-curve-tooltip {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}

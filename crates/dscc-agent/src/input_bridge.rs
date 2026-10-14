@@ -1,0 +1,1255 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex, MutexGuard,
+};
+
+use dscc_core::input_bridge::{
+    DsccBridgeCommand, InputBridgeConfig, InputBridgeSource, InputBridgeTarget, VirtualAxis,
+};
+use dscc_device::ControllerInputState;
+#[cfg(any(test, debug_assertions, feature = "test-mocks"))]
+use dscc_virtual_output::MockVirtualOutputBackend;
+use dscc_virtual_output::{
+    HidMaestroBrokerBackend, VirtualButtonState, VirtualGamepadState, VirtualOutputBackend,
+    VirtualOutputBackendState, VirtualOutputBackendStatus, VirtualOutputError, VirtualOutputKind,
+    VirtualOutputTarget,
+};
+use serde::{Deserialize, Serialize};
+
+const KNOWN_INPUT_BUTTON_COUNT: usize = 23;
+const PROVIDER_HEALTH_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
+struct ProviderHealth {
+    status: VirtualOutputBackendStatus,
+    next_refresh: std::time::Instant,
+    in_flight: bool,
+}
+
+impl ProviderHealth {
+    fn new(status: VirtualOutputBackendStatus) -> Self {
+        Self {
+            status,
+            next_refresh: std::time::Instant::now(),
+            in_flight: false,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct InputBridgeService {
+    backend: Arc<dyn VirtualOutputBackend>,
+    provider: String,
+    sessions: Arc<Mutex<BTreeMap<String, InputBridgeSessionRecord>>>,
+    operations: Arc<tokio::sync::Mutex<()>>,
+    stopping: Arc<AtomicBool>,
+    health: Arc<Mutex<ProviderHealth>>,
+    status_probe: Arc<dyn Fn() -> VirtualOutputBackendStatus + Send + Sync>,
+}
+
+#[derive(Clone, Debug)]
+struct InputBridgeSessionRecord {
+    controller_id: String,
+    state: InputBridgeSessionState,
+    target: Option<VirtualOutputTarget>,
+    message: String,
+    updated_at_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InputBridgeSessionState {
+    Disabled,
+    Starting,
+    Ready,
+    Active,
+    Stale,
+    Stopping,
+    Faulted,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InputBridgeStatusResponse {
+    pub available: bool,
+    pub backend_id: String,
+    pub provider: String,
+    pub state: String,
+    pub message: String,
+    pub supported_kinds: Vec<String>,
+    pub sessions: Vec<InputBridgeSessionSummary>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InputBridgeSessionSummary {
+    pub controller_id: String,
+    pub state: InputBridgeSessionState,
+    pub session_id: Option<String>,
+    pub output_kind: Option<String>,
+    pub message: String,
+    pub updated_at_ms: u64,
+}
+
+impl InputBridgeService {
+    pub(crate) fn begin_shutdown(&self) {
+        let _health = self
+            .health
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        self.stopping.store(true, Ordering::SeqCst);
+    }
+
+    pub(crate) fn shutdown(&self) {
+        self.begin_shutdown();
+        let ids = self.lock().keys().cloned().collect::<Vec<_>>();
+        for id in ids {
+            self.stop_session(&id, 0);
+        }
+    }
+
+    pub(crate) async fn run_blocking<T: Send + 'static>(
+        &self,
+        operation: impl FnOnce(Self) -> T + Send + 'static,
+    ) -> T {
+        let service = self.clone();
+        let guard = self.operations.clone().lock_owned().await;
+        tokio::task::spawn_blocking(move || {
+            let _guard = guard;
+            operation(service)
+        })
+        .await
+        .expect("Input Bridge worker panicked")
+    }
+
+    pub(crate) fn production() -> Self {
+        let initial = VirtualOutputBackendStatus {
+            backend_id: "hidmaestro".into(),
+            state: VirtualOutputBackendState::Unavailable,
+            message: "Provider health check pending.".into(),
+            supported_kinds: Vec::new(),
+        };
+        Self {
+            backend: Arc::new(HidMaestroBrokerBackend::from_env_or_default()),
+            provider: "hidmaestro".to_string(),
+            sessions: Arc::new(Mutex::new(BTreeMap::new())),
+            operations: Arc::new(tokio::sync::Mutex::new(())),
+            stopping: Arc::new(AtomicBool::new(false)),
+            health: Arc::new(Mutex::new(ProviderHealth::new(initial))),
+            // A status-only connection cannot contend with forwarding. Its
+            // backend drops (shutdown + process reap) before this probe returns.
+            status_probe: Arc::new(|| HidMaestroBrokerBackend::from_env_or_default().status()),
+        }
+    }
+
+    #[cfg(any(test, debug_assertions, feature = "test-mocks"))]
+    pub(crate) fn mock() -> Self {
+        Self {
+            backend: Arc::new(MockVirtualOutputBackend::new()),
+            provider: "mock".to_string(),
+            sessions: Arc::new(Mutex::new(BTreeMap::new())),
+            operations: Arc::new(tokio::sync::Mutex::new(())),
+            stopping: Arc::new(AtomicBool::new(false)),
+            health: Arc::new(Mutex::new(ProviderHealth::new(
+                MockVirtualOutputBackend::new().status(),
+            ))),
+            status_probe: Arc::new(|| MockVirtualOutputBackend::new().status()),
+        }
+    }
+
+    fn cached_provider_status(&self) -> VirtualOutputBackendStatus {
+        let mut health = self
+            .health
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let status = health.status.clone();
+        if !self.stopping.load(Ordering::SeqCst)
+            && !health.in_flight
+            && std::time::Instant::now() >= health.next_refresh
+        {
+            health.in_flight = true;
+            health.next_refresh = std::time::Instant::now() + PROVIDER_HEALTH_REFRESH_INTERVAL;
+            let weak_health = Arc::downgrade(&self.health);
+            let stopping = self.stopping.clone();
+            let probe = self.status_probe.clone();
+            if std::thread::Builder::new()
+                .name("dscc-provider-health".into())
+                .spawn(move || {
+                    if stopping.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    let status = probe();
+                    if let Some(health) = weak_health.upgrade() {
+                        let mut health = health.lock().unwrap_or_else(|error| error.into_inner());
+                        health.in_flight = false;
+                        if !stopping.load(Ordering::SeqCst) {
+                            health.status = status;
+                            health.next_refresh =
+                                std::time::Instant::now() + PROVIDER_HEALTH_REFRESH_INTERVAL;
+                        }
+                    }
+                })
+                .is_err()
+            {
+                health.in_flight = false;
+            }
+        }
+        status
+    }
+
+    pub(crate) fn status_response(&self) -> InputBridgeStatusResponse {
+        let backend = self.cached_provider_status();
+        let sessions = self.session_summaries();
+        InputBridgeStatusResponse {
+            available: backend.state == VirtualOutputBackendState::Available,
+            backend_id: public_backend_id(&backend.backend_id),
+            provider: self.provider.clone(),
+            state: backend_state_label(backend.state).to_string(),
+            message: public_backend_status_message(&backend.message, backend.state),
+            supported_kinds: backend
+                .supported_kinds
+                .into_iter()
+                .map(output_kind_label)
+                .collect(),
+            sessions,
+            warnings: input_bridge_warnings(&self.provider, backend.state),
+        }
+    }
+
+    pub(crate) fn session_summary(&self, controller_id: &str) -> InputBridgeSessionSummary {
+        self.lock()
+            .get(controller_id)
+            .map(session_record_summary)
+            .unwrap_or_else(|| InputBridgeSessionSummary {
+                controller_id: controller_id.to_string(),
+                state: InputBridgeSessionState::Disabled,
+                session_id: None,
+                output_kind: None,
+                message: "DSCC Input Bridge is not running for this controller.".to_string(),
+                updated_at_ms: 0,
+            })
+    }
+
+    pub(crate) fn start_session(
+        &self,
+        controller_id: &str,
+        output_kind: VirtualOutputKind,
+        updated_at_ms: u64,
+    ) -> Result<(InputBridgeSessionSummary, bool), String> {
+        if self.stopping.load(Ordering::SeqCst) {
+            return Err("agent is shutting down".to_string());
+        }
+        let old_target = {
+            let mut sessions = self.lock();
+            if let Some(record) = sessions.get(controller_id) {
+                if matches!(
+                    record.state,
+                    InputBridgeSessionState::Active | InputBridgeSessionState::Starting
+                ) {
+                    return Ok((session_record_summary(record), false));
+                }
+            }
+            let old_target = sessions
+                .get_mut(controller_id)
+                .and_then(|record| record.target.take());
+            let record = InputBridgeSessionRecord {
+                controller_id: controller_id.to_string(),
+                state: InputBridgeSessionState::Starting,
+                target: None,
+                message: "DSCC Input Bridge is starting virtual output.".to_string(),
+                updated_at_ms,
+            };
+            sessions.insert(controller_id.to_string(), record);
+            old_target
+        };
+        if let Some(target) = old_target.as_ref() {
+            let _ = self.backend.reset(target);
+            let _ = self.backend.drop_session(target);
+        }
+
+        let target = match self.backend.create_session(controller_id, output_kind) {
+            Ok(target) => target,
+            Err(error) => {
+                let message = public_virtual_output_error(&error);
+                let mut sessions = self.lock();
+                let record = InputBridgeSessionRecord {
+                    controller_id: controller_id.to_string(),
+                    state: InputBridgeSessionState::Faulted,
+                    target: None,
+                    message: message.clone(),
+                    updated_at_ms,
+                };
+                sessions.insert(controller_id.to_string(), record);
+                return Err(message);
+            }
+        };
+        let mut sessions = self.lock();
+        let record = InputBridgeSessionRecord {
+            controller_id: controller_id.to_string(),
+            state: InputBridgeSessionState::Active,
+            target: Some(target),
+            message: "DSCC Input Bridge session is active.".to_string(),
+            updated_at_ms,
+        };
+        let summary = session_record_summary(&record);
+        sessions.insert(controller_id.to_string(), record);
+        Ok((summary, true))
+    }
+
+    pub(crate) fn is_active(&self, controller_id: &str) -> bool {
+        self.lock()
+            .get(controller_id)
+            .is_some_and(|record| record.state == InputBridgeSessionState::Active)
+    }
+
+    pub(crate) fn submit_virtual_state(
+        &self,
+        controller_id: &str,
+        state: &VirtualGamepadState,
+        updated_at_ms: u64,
+    ) -> Result<InputBridgeSessionSummary, String> {
+        if self.stopping.load(Ordering::SeqCst) {
+            return Err("agent is shutting down".to_string());
+        }
+        let target = self
+            .lock()
+            .get(controller_id)
+            .and_then(|record| record.target.clone())
+            .ok_or_else(|| "DSCC Input Bridge session is not active".to_string())?;
+        self.backend
+            .submit_state(&target, state)
+            .map_err(|error| public_virtual_output_error(&error))?;
+        let mut sessions = self.lock();
+        let record = sessions
+            .get_mut(controller_id)
+            .ok_or_else(|| "DSCC Input Bridge session disappeared".to_string())?;
+        record.state = InputBridgeSessionState::Active;
+        record.message = "DSCC Input Bridge is forwarding typed controller input.".to_string();
+        record.updated_at_ms = updated_at_ms;
+        Ok(session_record_summary(record))
+    }
+
+    pub(crate) fn neutralize_session(
+        &self,
+        controller_id: &str,
+        state: InputBridgeSessionState,
+        message: impl Into<String>,
+        updated_at_ms: u64,
+    ) -> InputBridgeSessionSummary {
+        let target = {
+            let mut sessions = self.lock();
+            sessions
+                .get_mut(controller_id)
+                .and_then(|record| record.target.take())
+        };
+        if let Some(target) = target.as_ref() {
+            let _ = self.backend.reset(target);
+            let _ = self.backend.drop_session(target);
+        }
+        let mut sessions = self.lock();
+        if let Some(record) = sessions.get_mut(controller_id) {
+            record.state = state;
+            record.target = None;
+            record.message = message.into();
+            record.updated_at_ms = updated_at_ms;
+            return session_record_summary(record);
+        }
+        InputBridgeSessionSummary {
+            controller_id: controller_id.to_string(),
+            state: InputBridgeSessionState::Disabled,
+            session_id: None,
+            output_kind: None,
+            message: "DSCC Input Bridge is not running for this controller.".to_string(),
+            updated_at_ms,
+        }
+    }
+
+    pub(crate) fn stop_session(
+        &self,
+        controller_id: &str,
+        updated_at_ms: u64,
+    ) -> InputBridgeSessionSummary {
+        let record = {
+            let mut sessions = self.lock();
+            sessions.remove(controller_id)
+        };
+        let Some(record) = record else {
+            return InputBridgeSessionSummary {
+                controller_id: controller_id.to_string(),
+                state: InputBridgeSessionState::Disabled,
+                session_id: None,
+                output_kind: None,
+                message: "DSCC Input Bridge was already stopped for this controller.".to_string(),
+                updated_at_ms,
+            };
+        };
+        if let Some(target) = record.target.as_ref() {
+            let _ = self.backend.reset(target);
+            let _ = self.backend.drop_session(target);
+        }
+        InputBridgeSessionSummary {
+            controller_id: controller_id.to_string(),
+            state: InputBridgeSessionState::Disabled,
+            session_id: None,
+            output_kind: None,
+            message: "DSCC Input Bridge stopped and neutralized virtual output.".to_string(),
+            updated_at_ms,
+        }
+    }
+
+    fn session_summaries(&self) -> Vec<InputBridgeSessionSummary> {
+        self.lock().values().map(session_record_summary).collect()
+    }
+
+    fn lock(&self) -> MutexGuard<'_, BTreeMap<String, InputBridgeSessionRecord>> {
+        match self.sessions.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+}
+
+fn session_record_summary(record: &InputBridgeSessionRecord) -> InputBridgeSessionSummary {
+    InputBridgeSessionSummary {
+        controller_id: record.controller_id.clone(),
+        state: record.state,
+        session_id: record
+            .target
+            .as_ref()
+            .map(|target| public_session_id(&target.session_id)),
+        output_kind: record
+            .target
+            .as_ref()
+            .map(|target| output_kind_label(target.kind)),
+        message: record.message.clone(),
+        updated_at_ms: record.updated_at_ms,
+    }
+}
+
+fn backend_state_label(state: VirtualOutputBackendState) -> &'static str {
+    match state {
+        VirtualOutputBackendState::Available => "available",
+        VirtualOutputBackendState::Unavailable => "unavailable",
+        VirtualOutputBackendState::Faulted => "faulted",
+    }
+}
+
+fn public_backend_status_message(message: &str, state: VirtualOutputBackendState) -> String {
+    let trimmed = message.trim();
+    let safe = !trimmed.is_empty()
+        && trimmed.len() <= 180
+        && !trimmed.contains(":\\")
+        && !trimmed.contains("\\\\")
+        && !trimmed.contains('/');
+    if safe {
+        return trimmed.to_string();
+    }
+    match state {
+        VirtualOutputBackendState::Available => "Virtual output backend is available.".to_string(),
+        VirtualOutputBackendState::Unavailable => {
+            "Virtual output backend is unavailable.".to_string()
+        }
+        VirtualOutputBackendState::Faulted => "Virtual output backend fault.".to_string(),
+    }
+}
+
+fn input_bridge_warnings(provider: &str, state: VirtualOutputBackendState) -> Vec<String> {
+    #[cfg(any(test, debug_assertions, feature = "test-mocks"))]
+    if provider == "mock" {
+        return vec!["Input Bridge is using the in-memory test backend.".to_string()];
+    }
+
+    match (provider, state) {
+        ("hidmaestro", VirtualOutputBackendState::Available) => vec![
+            "HIDMaestro creates the virtual controller; HidHide remains optional for duplicate-input control.".to_string(),
+        ],
+        ("hidmaestro", _) => vec![
+            "Install or configure the DSCC HIDMaestro broker before starting bridge sessions.".to_string(),
+        ],
+        _ => Vec::new(),
+    }
+}
+
+fn public_backend_id(raw: &str) -> String {
+    public_identifier(raw, "virtual-output", 32).to_ascii_lowercase()
+}
+
+fn public_session_id(raw: &str) -> String {
+    public_identifier(raw, "virtual-session", 64)
+}
+
+fn public_identifier(raw: &str, fallback: &str, max_len: usize) -> String {
+    let trimmed = raw.trim();
+    let is_safe = !trimmed.is_empty()
+        && trimmed.len() <= max_len
+        && trimmed
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'));
+    if is_safe {
+        trimmed.to_string()
+    } else {
+        fallback.to_string()
+    }
+}
+
+fn output_kind_label(kind: VirtualOutputKind) -> String {
+    match kind {
+        VirtualOutputKind::Xbox360 => "xbox360".to_string(),
+    }
+}
+
+fn public_virtual_output_error(error: &VirtualOutputError) -> String {
+    match error {
+        VirtualOutputError::Unavailable(_) => "Virtual output backend is unavailable.".to_string(),
+        VirtualOutputError::SessionNotFound(_) => {
+            "Virtual output session was not found.".to_string()
+        }
+        VirtualOutputError::BackendFault(_) => "Virtual output backend fault.".to_string(),
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct BridgeFrame {
+    pub(crate) state: VirtualGamepadState,
+    /// Read by unit tests asserting shift-layer resolution; the session loop
+    /// consumes `state` and the command flags only.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) shift_held: bool,
+    pub(crate) profile_next: bool,
+    pub(crate) profile_prev: bool,
+}
+
+#[cfg(test)]
+pub(crate) fn virtual_state_from_input(
+    input: &ControllerInputState,
+    config: &InputBridgeConfig,
+) -> VirtualGamepadState {
+    bridge_frame_from_input(input, config).state
+}
+
+pub(crate) fn bridge_frame_from_input(
+    input: &ControllerInputState,
+    config: &InputBridgeConfig,
+) -> BridgeFrame {
+    let input_view = BridgeInputView::new(input);
+    let shift_held = config.bindings.iter().any(|binding| {
+        binding.target == InputBridgeTarget::Command(DsccBridgeCommand::ShiftLayer)
+            && source_pressed(&input_view, &binding.source)
+    });
+    let shifted_sources: BTreeSet<&InputBridgeSource> = if shift_held {
+        config
+            .shift_bindings
+            .iter()
+            .map(|binding| &binding.source)
+            .collect()
+    } else {
+        BTreeSet::new()
+    };
+
+    let mut state = VirtualGamepadState::neutral();
+    let mut buttons = BTreeMap::new();
+    let mut profile_next = false;
+    let mut profile_prev = false;
+    let normal_layer = config
+        .bindings
+        .iter()
+        .filter(|binding| !shift_held || !shifted_sources.contains(&binding.source));
+    let shift_layer = config.shift_bindings.iter().filter(|_| shift_held);
+    for binding in normal_layer.chain(shift_layer) {
+        match binding.target {
+            InputBridgeTarget::Disabled | InputBridgeTarget::PassThrough => {}
+            InputBridgeTarget::Command(command) => {
+                let pressed = source_pressed(&input_view, &binding.source);
+                match command {
+                    DsccBridgeCommand::ShiftLayer => {}
+                    DsccBridgeCommand::ProfileNext => profile_next |= pressed,
+                    DsccBridgeCommand::ProfilePrevious => profile_prev |= pressed,
+                }
+            }
+            InputBridgeTarget::Button(button) => {
+                let pressed = source_pressed(&input_view, &binding.source);
+                *buttons.entry(button.id().to_string()).or_insert(false) |= pressed;
+            }
+            InputBridgeTarget::Axis(axis) => {
+                let value = source_axis_value(&input_view, &binding.source, axis);
+                apply_axis(&mut state, axis, value);
+            }
+        }
+    }
+    state.buttons = VirtualButtonState { buttons };
+    BridgeFrame {
+        state,
+        shift_held,
+        profile_next,
+        profile_prev,
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct BridgeCommandEdges {
+    profile_next: bool,
+    profile_prev: bool,
+}
+
+impl BridgeCommandEdges {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn rising(&mut self, frame: &BridgeFrame) -> Vec<DsccBridgeCommand> {
+        let mut fired = Vec::new();
+        if frame.profile_next && !self.profile_next {
+            fired.push(DsccBridgeCommand::ProfileNext);
+        }
+        if frame.profile_prev && !self.profile_prev {
+            fired.push(DsccBridgeCommand::ProfilePrevious);
+        }
+        self.profile_next = frame.profile_next;
+        self.profile_prev = frame.profile_prev;
+        fired
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct BridgeButtonSample {
+    pressed: bool,
+    value: f64,
+}
+
+struct BridgeInputView<'a> {
+    input: &'a ControllerInputState,
+    buttons: [Option<BridgeButtonSample>; KNOWN_INPUT_BUTTON_COUNT],
+}
+
+impl<'a> BridgeInputView<'a> {
+    fn new(input: &'a ControllerInputState) -> Self {
+        let mut buttons = [None; KNOWN_INPUT_BUTTON_COUNT];
+        for button in &input.buttons {
+            if let Some(index) = known_button_index(button.id) {
+                buttons[index] = Some(BridgeButtonSample {
+                    pressed: button.pressed,
+                    value: button.value,
+                });
+            }
+        }
+        Self { input, buttons }
+    }
+
+    fn button(&self, id: &str) -> Option<BridgeButtonSample> {
+        known_button_index(id)
+            .and_then(|index| self.buttons[index])
+            .or_else(|| {
+                self.input
+                    .buttons
+                    .iter()
+                    .find(|button| button.id == id)
+                    .map(|button| BridgeButtonSample {
+                        pressed: button.pressed,
+                        value: button.value,
+                    })
+            })
+    }
+}
+
+fn known_button_index(id: &str) -> Option<usize> {
+    match id {
+        "dpad_up" => Some(0),
+        "dpad_right" => Some(1),
+        "dpad_down" => Some(2),
+        "dpad_left" => Some(3),
+        "square" => Some(4),
+        "cross" => Some(5),
+        "circle" => Some(6),
+        "triangle" => Some(7),
+        "l1" => Some(8),
+        "r1" => Some(9),
+        "l2" => Some(10),
+        "r2" => Some(11),
+        "create" => Some(12),
+        "options" => Some(13),
+        "l3" => Some(14),
+        "r3" => Some(15),
+        "ps" => Some(16),
+        "touchpad" => Some(17),
+        "mute" => Some(18),
+        "edge_fn_left" => Some(19),
+        "edge_fn_right" => Some(20),
+        "edge_back_left" => Some(21),
+        "edge_back_right" => Some(22),
+        _ => None,
+    }
+}
+
+fn source_pressed(input: &BridgeInputView<'_>, source: &InputBridgeSource) -> bool {
+    match source {
+        InputBridgeSource::Button(id) => input.button(id).is_some_and(|button| button.pressed),
+        InputBridgeSource::Axis(id) => source_axis_unit(input, id) > 0.5,
+        InputBridgeSource::Stick(id) => match id.as_str() {
+            "left_stick" => input.input.left_stick.magnitude > 0.5,
+            "right_stick" => input.input.right_stick.magnitude > 0.5,
+            _ => false,
+        },
+    }
+}
+
+fn source_axis_value(
+    input: &BridgeInputView<'_>,
+    source: &InputBridgeSource,
+    target_axis: VirtualAxis,
+) -> f64 {
+    match source {
+        InputBridgeSource::Button(id) => input
+            .button(id)
+            .map(|button| if button.pressed { 1.0 } else { 0.0 })
+            .unwrap_or(0.0),
+        InputBridgeSource::Axis(id) => source_axis_unit(input, id),
+        InputBridgeSource::Stick(id) => match (id.as_str(), target_axis) {
+            ("left_stick", VirtualAxis::LeftStickX) => input.input.left_stick.x,
+            ("left_stick", VirtualAxis::LeftStickY) => input.input.left_stick.y,
+            ("right_stick", VirtualAxis::RightStickX) => input.input.right_stick.x,
+            ("right_stick", VirtualAxis::RightStickY) => input.input.right_stick.y,
+            _ => 0.0,
+        },
+    }
+}
+
+fn source_axis_unit(input: &BridgeInputView<'_>, id: &str) -> f64 {
+    match id {
+        "l2" => input.input.l2,
+        "r2" => input.input.r2,
+        _ => input.button(id).map(|button| button.value).unwrap_or(0.0),
+    }
+    .clamp(0.0, 1.0)
+}
+
+fn apply_axis(state: &mut VirtualGamepadState, axis: VirtualAxis, value: f64) {
+    match axis {
+        VirtualAxis::LeftStickX => state.left_stick.x = value.clamp(-1.0, 1.0),
+        VirtualAxis::LeftStickY => state.left_stick.y = value.clamp(-1.0, 1.0),
+        VirtualAxis::RightStickX => state.right_stick.x = value.clamp(-1.0, 1.0),
+        VirtualAxis::RightStickY => state.right_stick.y = value.clamp(-1.0, 1.0),
+        VirtualAxis::LeftTrigger => state.triggers.l2 = value.clamp(0.0, 1.0),
+        VirtualAxis::RightTrigger => state.triggers.r2 = value.clamp(0.0, 1.0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dscc_core::input_bridge::{DsccBridgeCommand, InputBridgeBindingConfig, VirtualButton};
+    use dscc_device::{ControllerInputButtonState, ControllerInputStickState};
+    use dscc_virtual_output::VirtualOutputBackendStatus;
+
+    fn pressed_button(id: &'static str) -> ControllerInputButtonState {
+        ControllerInputButtonState {
+            id,
+            label: id,
+            pressed: true,
+            value: 1.0,
+        }
+    }
+
+    #[test]
+    fn shift_held_routes_dpad_to_profile_commands() {
+        let input = test_input(vec![
+            pressed_button("edge_fn_left"),
+            pressed_button("dpad_right"),
+        ]);
+        let config = InputBridgeConfig::default().normalized();
+
+        let frame = bridge_frame_from_input(&input, &config);
+
+        assert!(frame.shift_held);
+        assert!(frame.profile_next);
+        assert!(!frame.profile_prev);
+        assert_ne!(
+            frame.state.buttons.buttons.get("dpad_right"),
+            Some(&true),
+            "shifted source must not emit its normal virtual button"
+        );
+    }
+
+    #[test]
+    fn unshifted_dpad_passes_through_without_commands() {
+        let input = test_input(vec![pressed_button("dpad_right")]);
+        let config = InputBridgeConfig::default().normalized();
+
+        let frame = bridge_frame_from_input(&input, &config);
+
+        assert!(!frame.shift_held);
+        assert!(!frame.profile_next);
+        assert_eq!(frame.state.buttons.buttons.get("dpad_right"), Some(&true));
+    }
+
+    #[test]
+    fn unshifted_sources_keep_normal_targets_while_shift_held() {
+        let input = test_input(vec![
+            pressed_button("edge_fn_right"),
+            pressed_button("cross"),
+        ]);
+        let config = InputBridgeConfig::default().normalized();
+
+        let frame = bridge_frame_from_input(&input, &config);
+
+        assert!(frame.shift_held);
+        assert_eq!(frame.state.buttons.buttons.get("a"), Some(&true));
+    }
+
+    #[test]
+    fn shift_layer_output_targets_replace_normal_outputs() {
+        let input = test_input(vec![
+            pressed_button("edge_fn_left"),
+            pressed_button("dpad_up"),
+            pressed_button("cross"),
+        ]);
+        let config = InputBridgeConfig {
+            shift_bindings: vec![
+                InputBridgeBindingConfig {
+                    source: InputBridgeSource::Button("dpad_up".to_string()),
+                    target: InputBridgeTarget::Button(VirtualButton::Y),
+                },
+                InputBridgeBindingConfig {
+                    source: InputBridgeSource::Button("cross".to_string()),
+                    target: InputBridgeTarget::Axis(VirtualAxis::LeftTrigger),
+                },
+            ],
+            ..InputBridgeConfig::default()
+        }
+        .normalized();
+
+        let frame = bridge_frame_from_input(&input, &config);
+
+        assert!(frame.shift_held);
+        assert_eq!(
+            frame.state.buttons.buttons.get("y"),
+            Some(&true),
+            "shift-layer button target must be emitted while shift is held"
+        );
+        assert_ne!(
+            frame.state.buttons.buttons.get("dpad_up"),
+            Some(&true),
+            "shifted source must not emit its normal virtual button"
+        );
+        assert_ne!(
+            frame.state.buttons.buttons.get("a"),
+            Some(&true),
+            "shifted source must not emit its normal virtual button"
+        );
+        assert_eq!(
+            frame.state.triggers.l2, 1.0,
+            "shift-layer axis target must be driven by the shifted source"
+        );
+    }
+
+    #[test]
+    fn normal_layer_command_binding_dispatches_without_shift() {
+        let input = test_input(vec![pressed_button("mute")]);
+        let config = InputBridgeConfig {
+            bindings: vec![InputBridgeBindingConfig {
+                source: InputBridgeSource::Button("mute".to_string()),
+                target: InputBridgeTarget::Command(DsccBridgeCommand::ProfileNext),
+            }],
+            ..InputBridgeConfig::default()
+        }
+        .normalized();
+
+        let frame = bridge_frame_from_input(&input, &config);
+
+        assert!(!frame.shift_held);
+        assert!(frame.profile_next);
+    }
+
+    #[test]
+    fn command_edges_fire_once_per_press() {
+        let mut edges = BridgeCommandEdges::new();
+        let config = InputBridgeConfig::default().normalized();
+
+        let held = bridge_frame_from_input(
+            &test_input(vec![
+                pressed_button("edge_fn_left"),
+                pressed_button("dpad_right"),
+            ]),
+            &config,
+        );
+        assert_eq!(edges.rising(&held), vec![DsccBridgeCommand::ProfileNext]);
+        assert_eq!(edges.rising(&held), Vec::<DsccBridgeCommand>::new());
+
+        // Releasing shift while dpad_right stays held: level drops, nothing fires.
+        let shift_released =
+            bridge_frame_from_input(&test_input(vec![pressed_button("dpad_right")]), &config);
+        assert_eq!(
+            edges.rising(&shift_released),
+            Vec::<DsccBridgeCommand>::new()
+        );
+
+        // Fresh shifted press fires again.
+        assert_eq!(edges.rising(&held), vec![DsccBridgeCommand::ProfileNext]);
+    }
+
+    fn test_input(buttons: Vec<ControllerInputButtonState>) -> ControllerInputState {
+        ControllerInputState {
+            left_stick: ControllerInputStickState {
+                x: 0.0,
+                y: 0.0,
+                magnitude: 0.0,
+            },
+            right_stick: ControllerInputStickState {
+                x: 0.0,
+                y: 0.0,
+                magnitude: 0.0,
+            },
+            l2: 0.0,
+            r2: 0.0,
+            buttons,
+        }
+    }
+
+    #[test]
+    fn duplicate_virtual_button_targets_or_pressed_sources() {
+        let input = test_input(vec![
+            ControllerInputButtonState {
+                id: "l3",
+                label: "L3",
+                pressed: true,
+                value: 1.0,
+            },
+            ControllerInputButtonState {
+                id: "edge_back_left",
+                label: "Back Left",
+                pressed: false,
+                value: 0.0,
+            },
+        ]);
+        let config = InputBridgeConfig {
+            enabled: true,
+            bindings: vec![
+                InputBridgeBindingConfig {
+                    source: InputBridgeSource::Button("l3".to_string()),
+                    target: InputBridgeTarget::Button(VirtualButton::LeftThumb),
+                },
+                InputBridgeBindingConfig {
+                    source: InputBridgeSource::Button("edge_back_left".to_string()),
+                    target: InputBridgeTarget::Button(VirtualButton::LeftThumb),
+                },
+            ],
+            ..InputBridgeConfig::default()
+        };
+
+        let state = virtual_state_from_input(&input, &config);
+
+        assert_eq!(
+            state.buttons.buttons.get("left_thumb"),
+            Some(&true),
+            "idle duplicate source must not cancel a pressed source"
+        );
+    }
+
+    #[test]
+    fn fallback_button_lookup_supports_future_typed_sources() {
+        let input = test_input(vec![ControllerInputButtonState {
+            id: "custom_pressure",
+            label: "Custom Pressure",
+            pressed: false,
+            value: 0.75,
+        }]);
+        let config = InputBridgeConfig {
+            enabled: true,
+            bindings: vec![InputBridgeBindingConfig {
+                source: InputBridgeSource::Axis("custom_pressure".to_string()),
+                target: InputBridgeTarget::Axis(VirtualAxis::LeftTrigger),
+            }],
+            ..InputBridgeConfig::default()
+        };
+
+        let state = virtual_state_from_input(&input, &config);
+
+        assert_eq!(state.triggers.l2, 0.75);
+    }
+
+    #[test]
+    fn neutralize_session_drops_target_before_restart() {
+        let service = InputBridgeService::mock();
+        let first = service
+            .start_session("controller-1", VirtualOutputKind::Xbox360, 1)
+            .unwrap()
+            .0;
+        assert_eq!(first.state, InputBridgeSessionState::Active);
+        let first_session_id = first.session_id.clone();
+
+        let stale =
+            service.neutralize_session("controller-1", InputBridgeSessionState::Stale, "stale", 2);
+        assert_eq!(stale.state, InputBridgeSessionState::Stale);
+        assert_eq!(stale.session_id, None);
+
+        let second = service
+            .start_session("controller-1", VirtualOutputKind::Xbox360, 3)
+            .unwrap()
+            .0;
+        assert_eq!(second.state, InputBridgeSessionState::Active);
+        assert_ne!(second.session_id, first_session_id);
+    }
+
+    #[test]
+    fn duplicate_start_reuses_active_session() {
+        let service = InputBridgeService::mock();
+        let (first, started) = service
+            .start_session("controller-1", VirtualOutputKind::Xbox360, 1)
+            .unwrap();
+        let (second, reused) = service
+            .start_session("controller-1", VirtualOutputKind::Xbox360, 2)
+            .unwrap();
+
+        assert!(started);
+        assert!(!reused, "only the creator owns the input loop");
+        assert_eq!(second.state, InputBridgeSessionState::Active);
+        assert_eq!(second.session_id, first.session_id);
+        assert_eq!(second.updated_at_ms, first.updated_at_ms);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn backend_work_runs_off_the_runtime_thread() {
+        let service = InputBridgeService::mock();
+        let runtime_thread = std::thread::current().id();
+        let worker_thread = service.run_blocking(|_| std::thread::current().id()).await;
+        assert_ne!(runtime_thread, worker_thread);
+    }
+
+    #[tokio::test]
+    async fn concurrent_starts_have_one_input_loop_owner() {
+        let service = InputBridgeService::mock();
+        let (first, second) = tokio::join!(
+            service.run_blocking(|bridge| bridge.start_session(
+                "controller-1",
+                VirtualOutputKind::Xbox360,
+                1
+            )),
+            service.run_blocking(|bridge| bridge.start_session(
+                "controller-1",
+                VirtualOutputKind::Xbox360,
+                2
+            )),
+        );
+        let (first, first_owner) = first.unwrap();
+        let (second, second_owner) = second.unwrap();
+        assert_ne!(first_owner, second_owner);
+        assert_eq!(first.session_id, second.session_id);
+    }
+
+    #[test]
+    fn public_status_redacts_private_backend_and_session_ids() {
+        let service = InputBridgeService {
+            backend: Arc::new(PrivateIdBackend),
+            provider: "hidmaestro".to_string(),
+            sessions: Arc::new(Mutex::new(BTreeMap::new())),
+            operations: Arc::new(tokio::sync::Mutex::new(())),
+            stopping: Arc::new(AtomicBool::new(false)),
+            health: Arc::new(Mutex::new(ProviderHealth::new(PrivateIdBackend.status()))),
+            status_probe: Arc::new(|| PrivateIdBackend.status()),
+        };
+
+        let status = service.status_response();
+        let summary = service
+            .start_session("controller-1", VirtualOutputKind::Xbox360, 1)
+            .unwrap()
+            .0;
+
+        assert_eq!(status.backend_id, "virtual-output");
+        assert_eq!(summary.session_id.as_deref(), Some("virtual-session"));
+        assert_eq!(summary.message, "DSCC Input Bridge session is active.");
+    }
+
+    struct PrivateIdBackend;
+
+    impl VirtualOutputBackend for PrivateIdBackend {
+        fn status(&self) -> VirtualOutputBackendStatus {
+            VirtualOutputBackendStatus {
+                backend_id: r"\\.\pipe\dscc-provider\private-token".to_string(),
+                state: VirtualOutputBackendState::Available,
+                message: "available".to_string(),
+                supported_kinds: vec![VirtualOutputKind::Xbox360],
+            }
+        }
+
+        fn create_session(
+            &self,
+            _controller_id: &str,
+            kind: VirtualOutputKind,
+        ) -> Result<VirtualOutputTarget, VirtualOutputError> {
+            Ok(VirtualOutputTarget {
+                session_id: r"\\.\pipe\session\private-token".to_string(),
+                kind,
+            })
+        }
+
+        fn submit_state(
+            &self,
+            _target: &VirtualOutputTarget,
+            _state: &VirtualGamepadState,
+        ) -> Result<(), VirtualOutputError> {
+            Ok(())
+        }
+
+        fn drop_session(&self, _target: &VirtualOutputTarget) -> Result<(), VirtualOutputError> {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod audit_health_tests {
+    use super::*;
+    use dscc_virtual_output::VirtualOutputBackendStatus;
+    use std::time::{Duration, Instant};
+
+    struct SlowHealthBackend {
+        output: MockVirtualOutputBackend,
+    }
+    impl VirtualOutputBackend for SlowHealthBackend {
+        fn status(&self) -> VirtualOutputBackendStatus {
+            std::thread::sleep(Duration::from_millis(300));
+            self.output.status()
+        }
+        fn create_session(
+            &self,
+            id: &str,
+            kind: VirtualOutputKind,
+        ) -> Result<VirtualOutputTarget, VirtualOutputError> {
+            self.output.create_session(id, kind)
+        }
+        fn submit_state(
+            &self,
+            target: &VirtualOutputTarget,
+            state: &VirtualGamepadState,
+        ) -> Result<(), VirtualOutputError> {
+            self.output.submit_state(target, state)
+        }
+        fn drop_session(&self, target: &VirtualOutputTarget) -> Result<(), VirtualOutputError> {
+            self.output.drop_session(target)
+        }
+    }
+
+    #[tokio::test]
+    async fn audit_slow_provider_status_does_not_block_snapshot_or_submission() {
+        let mut service = InputBridgeService::mock();
+        service.backend = Arc::new(SlowHealthBackend {
+            output: MockVirtualOutputBackend::new(),
+        });
+        let slow = service.backend.clone();
+        service.status_probe = Arc::new(move || slow.status());
+        service
+            .start_session("test", VirtualOutputKind::Xbox360, 0)
+            .unwrap();
+        let started = Instant::now();
+        service.status_response();
+        assert!(
+            started.elapsed() < Duration::from_millis(100),
+            "snapshot waited for provider I/O: {:?}",
+            started.elapsed()
+        );
+        let started = Instant::now();
+        service
+            .run_blocking(|bridge| {
+                bridge.submit_virtual_state("test", &VirtualGamepadState::neutral(), 1)
+            })
+            .await
+            .unwrap();
+        assert!(started.elapsed() < Duration::from_millis(100));
+        service.shutdown();
+    }
+}
+
+#[cfg(test)]
+mod audit_probe_lifecycle_tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+    use std::time::{Duration, Instant};
+
+    async fn wait_for(check: impl Fn() -> bool) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !check() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    #[test]
+    fn audit_cached_availability_cannot_bypass_live_start_validation() {
+        let mut service = InputBridgeService::mock();
+        service.backend = Arc::new(MockVirtualOutputBackend::unavailable("offline"));
+        assert!(service.status_response().available);
+        assert!(service
+            .start_session("controller", VirtualOutputKind::Xbox360, 0)
+            .is_err());
+        assert_eq!(
+            service.session_summary("controller").state,
+            InputBridgeSessionState::Faulted
+        );
+    }
+
+    #[tokio::test]
+    async fn audit_health_probe_recovers_and_discards_shutdown_result() {
+        let mut service = InputBridgeService::mock();
+        let (release, replies) = std::sync::mpsc::channel();
+        let replies = Arc::new(Mutex::new(replies));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let probe_calls = calls.clone();
+        service.status_probe = Arc::new(move || {
+            probe_calls.fetch_add(1, Ordering::SeqCst);
+            let state = replies.lock().unwrap().recv().unwrap();
+            VirtualOutputBackendStatus {
+                backend_id: "mock".into(),
+                state,
+                message: "controlled probe".into(),
+                supported_kinds: vec![VirtualOutputKind::Xbox360],
+            }
+        });
+        service
+            .start_session("controller", VirtualOutputKind::Xbox360, 0)
+            .unwrap();
+        let initial = service.status_response();
+        wait_for(|| calls.load(Ordering::SeqCst) == 1).await;
+        let start = Instant::now();
+        for _ in 0..100 {
+            assert_eq!(service.status_response(), initial);
+        }
+        let snapshot_elapsed = start.elapsed();
+        let start = Instant::now();
+        service
+            .run_blocking(|bridge| {
+                bridge.submit_virtual_state("controller", &VirtualGamepadState::neutral(), 1)
+            })
+            .await
+            .unwrap();
+        let submit_elapsed = start.elapsed();
+        assert!(snapshot_elapsed < Duration::from_millis(100));
+        assert!(submit_elapsed < Duration::from_millis(100));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        eprintln!("blocked probe: 100 cached snapshots={snapshot_elapsed:?}, queued submission={submit_elapsed:?}");
+        release.send(VirtualOutputBackendState::Faulted).unwrap();
+        wait_for(|| !service.health.lock().unwrap().in_flight).await;
+        assert_eq!(service.status_response().state, "faulted");
+        service.health.lock().unwrap().next_refresh = Instant::now();
+        service.status_response();
+        wait_for(|| calls.load(Ordering::SeqCst) == 2).await;
+        release.send(VirtualOutputBackendState::Available).unwrap();
+        wait_for(|| !service.health.lock().unwrap().in_flight).await;
+        assert!(service.status_response().available);
+        service.health.lock().unwrap().next_refresh = Instant::now();
+        service.status_response();
+        wait_for(|| calls.load(Ordering::SeqCst) == 3).await;
+        service.shutdown();
+        let stopped = service.status_response();
+        release
+            .send(VirtualOutputBackendState::Unavailable)
+            .unwrap();
+        wait_for(|| !service.health.lock().unwrap().in_flight).await;
+        assert_eq!(service.status_response(), stopped);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert!(service
+            .start_session("new", VirtualOutputKind::Xbox360, 2)
+            .is_err());
+    }
+}

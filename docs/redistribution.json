@@ -1,0 +1,67 @@
+[
+  {
+    "path": "web/public/controller-diagram",
+    "status": "verified",
+    "source": "Original DSCC geometric SVG controller diagram and labeled keys, created 2026-09-30; no external artwork copied",
+    "license": "Apache-2.0, repository LICENSE",
+    "hashes": {
+      "analog_stick_l.svg": "4371b2b23511d29aaf920fe7b00cb6615f7ab26c8daa2f9fbe5d1245e67d1a8e",
+      "arrow_down.svg": "2d05967a9e0245aca6288f0fb1144cc77ea45ae701c051d4113c36b077b5f343",
+      "arrow_left.svg": "12e5cd27170513d9a67ea50d7fef077cd0fe5ca8c52fa023ecf3008619e7332b",
+      "arrow_right.svg": "28c38581219be56ba9a5b0811ebaeffdb17d30aebf8cf1a7e807e23fa638807a",
+      "arrow_up.svg": "dd6aa7dd0f2476dc483465972d93278640422abcd9d1c9d2094b5deeb5962cea",
+      "controller.svg": "53714f44fc07a29af20fea2244b3a6c683d0f2e7ab8d69d1084163dcd89dd127",
+      "create.svg": "beefbb0695c5f8237b30dcd1c1c6d61b7332b14147a6f3a1b3ed6f32f467c02c",
+      "face_circle.svg": "91ebb2cc7dc509fa1749843b778ce54e74ad4933dc5fa560046db08fa94d6666",
+      "face_cross.svg": "d43a6f292f2600eac1881da52ccea8e04d433823a81a12afa4b8e30f12e8c0b9",
+      "face_square.svg": "f4ae2584547c2e664edda02fa48d8302d4928c7b5d71a1617b2bd3ab94cc4abc",
+      "face_triangle.svg": "781668d9a7baaa000af73e0c00c3437d10892eef8cafc34647d92e93f1492b1d",
+      "fn.svg": "843dcd091b58239c38dedc1d2df8ed4349ce19f2aa13231fd213c28ac5bc1aa9",
+      "l1.svg": "824fed180b87d8b613f3ab550cfb3b6545e6bd6d73a93c17110a457703e74912",
+      "l2.svg": "8ac21c3b7501a64761d92e64b7ff989af9c7e86c5e7328a30e6624f92ff070a0",
+      "l3.svg": "fe0ce5c2e3c7801702b8b53b9bc00e399489330270aaca4062f0927b71f6114f",
+      "options.svg": "d0d050a0851bdf2cd704405fbada6b0a9fadc3b36438f80f43f5265b2b3f6d01",
+      "r1.svg": "223c43558bea2aaace55205a63c77383be01ee894245e2338a50831951b3114b",
+      "r2.svg": "04bc69a121c7d6648c0bf425251fda23c0d896bdfb78b14943902017242ce2d3",
+      "r3.svg": "99483d042e63ed7dd39f13c203b33ede8d498e11ddaf4f39695c019aa308c776",
+      "swipe.svg": "341e65c4f62d5e43f7493e53f7317052336329d5980fe9064128fc55cb3190b8",
+      "tap.svg": "155fcc42a3a05d08525f2768fd25db3b904f52f28ecbd781f66e410c37f31a6e"
+    }
+  },
+  {
+    "path": "crates/dscc-tray/assets/dscc-tray.ico",
+    "status": "verified",
+    "source": "SVG Repo https://www.svgrepo.com/svg/324525/dualsense; user-provided SVG rasterized for DSCC; provenance recorded 2026-05-18 and CC0 source rechecked 2026-09-30",
+    "license": "CC0",
+    "hashes": {
+      "": "9bbdcc17b34e4bdbd5195304cdced962c67aedced05f8205253a252403c33eb5"
+    }
+  },
+  {
+    "path": "web/public/dualsense-controller.svg",
+    "status": "verified",
+    "source": "SVG Repo https://www.svgrepo.com/svg/324525/dualsense; matching bundled source SVG",
+    "license": "CC0",
+    "hashes": {
+      "": "095c64cb886b780424df54ac69c9bc4e1d7b8849752aaf2b38cd8d32a9864e3f"
+    }
+  },
+  {
+    "path": "crates/dscc-tray/assets/dualsense-svgrepo-com.svg",
+    "status": "verified",
+    "source": "SVG Repo https://www.svgrepo.com/svg/324525/dualsense; source for tray ICO",
+    "license": "CC0",
+    "hashes": {
+      "": "ec93150629fd8af1e6cc7e9d43f88f71b5ac1a6ba53a202065907d18469680dc"
+    }
+  },
+  {
+    "path": "web/public/favicon.svg",
+    "status": "verified",
+    "source": "Original DSCC geometric favicon maintained in repository",
+    "license": "Apache-2.0",
+    "hashes": {
+      "": "9a53da6e1cc537c82a02369307af161ff2fcd7e51998e7a87b6c3580ca0fe949"
+    }
+  }
+]

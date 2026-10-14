@@ -1,0 +1,691 @@
+/* Advanced — Controller details + Edge onboard slots.
+   Layout truth: status-advanced-v2-psblue mockup. Calm, flat, hairlines;
+   live meters use --accent-bright. Live readouts are for checking, not for
+   everyday tuning. */
+
+.ctl-view {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
+.ctl-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.ctl-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ctl-sub {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+/* Groups row — intrinsic widths, wraps naturally (same rhythm as Status). */
+.ctl-groups {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px 22px;
+  margin-top: 14px;
+}
+
+.ctl-group {
+  flex: 1 1 280px;
+  min-width: 260px;
+  max-width: 420px;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.ctl-group.narrow {
+  flex: 1 1 240px;
+  min-width: 230px;
+  max-width: 360px;
+}
+
+.ctl-group-controllers {
+  flex: 1 1 100%;
+  max-width: none;
+}
+
+.ctl-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ctl-sublabel {
+  margin-top: 10px;
+}
+
+.ctl-controller-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* Bounded fields only where content needs one. */
+.ctl-surf {
+  padding: 12px 14px;
+  background: var(--surface);
+  border-radius: var(--radius-m);
+}
+
+.ctl-empty {
+  display: grid;
+  gap: 4px;
+}
+
+.ctl-empty strong {
+  font-weight: 600;
+}
+
+.ctl-empty span {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.ctl-mut {
+  color: var(--ink-muted);
+}
+
+.ctl-mono {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+/* Hairline rows (srow pattern from the mockup). */
+.ctl-rows {
+  display: grid;
+}
+
+.ctl-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 11px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.ctl-row:last-child {
+  border-bottom: 0;
+}
+
+.ctl-row > span:last-child {
+  text-align: right;
+}
+
+/* Live meters — label/value row plus a 4px accent-bright bar. */
+.ctl-meter-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 11px;
+}
+
+.ctl-meter-row + .ctl-meter,
+.ctl-meter + .ctl-meter-row,
+.ctl-meter-row + .ctl-meter-row {
+  margin-top: 3px;
+}
+
+.ctl-meter + .ctl-meter-row {
+  margin-top: 8px;
+}
+
+.ctl-meter {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+
+.ctl-meter span {
+  display: block;
+  width: var(--trigger-fill, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent-bright);
+}
+
+/* Stick plots — flat field, hairline crosshair, accent-bright dot. */
+.ctl-stick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.ctl-stick {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 14px;
+  background: var(--surface);
+  border-radius: var(--radius-m);
+}
+
+.ctl-stick-plot {
+  position: relative;
+  width: min(150px, 100%);
+  aspect-ratio: 1;
+  margin: 0 auto;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 50%;
+  background:
+    linear-gradient(var(--hairline), var(--hairline)) 50% 0 / 1px 100% no-repeat,
+    linear-gradient(90deg, var(--hairline), var(--hairline)) 0 50% / 100% 1px no-repeat;
+}
+
+.ctl-stick-ring {
+  position: absolute;
+  inset: calc(50% - var(--stick-mag, 8%) / 2);
+  border: 1px solid var(--accent-outline);
+  border-radius: 50%;
+}
+
+.ctl-stick-dot {
+  position: absolute;
+  left: var(--stick-x, 50%);
+  top: var(--stick-y, 50%);
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--accent-bright);
+  transform: translate(-50%, -50%);
+}
+
+.ctl-deadzone-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.ctl-deadzone-row input[type='range'] {
+  width: 100%;
+  min-width: 0;
+  accent-color: var(--accent-bright);
+}
+
+.ctl-deadzone-row .ctl-mono {
+  color: var(--ink);
+}
+
+/* Live button states — flat chips; pressed lights the accent. */
+.ctl-button-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.ctl-button-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 11px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+}
+
+.ctl-button-state.pressed {
+  border-color: var(--accent-outline);
+  background: var(--accent-tint);
+}
+
+.ctl-button-state span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ctl-button-state .ctl-mono {
+  color: var(--ink-muted);
+}
+
+.ctl-button-state.pressed .ctl-mono {
+  color: var(--accent-text);
+}
+
+/* Buttons — quiet by default, accent for the primary action. */
+.ctl-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ctl-button {
+  min-height: 28px;
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--surface-raised);
+  border: 0;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  transition: background var(--speed) var(--ease);
+}
+
+.ctl-button.active {
+  color: var(--accent-text);
+  background: var(--accent-tint);
+  outline: 1px solid var(--accent-outline);
+}
+
+.ctl-button.primary {
+  color: #ffffff;
+  background: var(--accent);
+}
+
+.ctl-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.ctl-button:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 1px;
+}
+
+.ctl-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink-muted);
+}
+
+.ctl-note.status {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.ctl-note-label {
+  flex: none;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.ctl-note.error {
+  color: var(--danger);
+}
+
+.ctl-note.error .ctl-note-label {
+  color: var(--danger);
+}
+
+.ctl-suggestions {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ctl-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ctl-setting-row > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ctl-setting-row strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ctl-setting-row span {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink-muted);
+}
+
+.ctl-setting-row .ctl-button {
+  flex: none;
+}
+
+/* Support group */
+.ctl-support {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+  font-size: 11px;
+}
+
+/* Edge onboard slots */
+.edge-slots-view {
+  max-width: 980px;
+  margin-inline: auto;
+}
+
+@media (min-width: 1800px) {
+  .edge-slots-view {
+    padding-top: 44px;
+  }
+
+  .edge-slots-view .ctl-groups {
+    max-width: 980px;
+  }
+
+  .edge-slots-view .ctl-group {
+    max-width: 560px;
+  }
+}
+
+.edge-slot-list {
+  display: grid;
+}
+
+.edge-slot-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.edge-slot-row:last-child {
+  border-bottom: 0;
+}
+
+.edge-slot-row.disabled {
+  opacity: 0.6;
+}
+
+.edge-slot-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.edge-slot-copy strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.edge-slot-copy small {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+/* Controller card (rendered in the Controller details chooser).
+   Moved from the retired games.css; HUD-era alias tokens translated to the
+   calm-console tokens. */
+.dm-controller-card {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  min-height: 0;
+  padding: 12px 12px 14px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-m);
+  color: var(--ink);
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color var(--speed) var(--ease),
+    background-color var(--speed) var(--ease),
+    box-shadow var(--speed) var(--ease);
+}
+
+.dm-controller-card:hover,
+.dm-controller-card.active {
+  border-color: var(--accent-outline);
+  background-color: var(--accent-tint);
+}
+
+.dm-controller-card:focus-visible,
+.dm-controller-select-zone:focus-visible,
+.dm-controller-rename-button:focus-visible,
+.dm-controller-expand-button:focus-visible,
+.dm-controller-rename-actions button:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: 2px;
+}
+
+.dm-controller-card.disconnected {
+  opacity: 0.62;
+}
+
+.dm-controller-select-zone {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: center;
+}
+
+.dm-controller-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-width: 0;
+}
+
+.dm-controller-card-top code {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.dm-battery-pill.compact {
+  font-size: 11px;
+}
+
+.dm-controller-glyph {
+  flex: 0 0 auto;
+  color: var(--ink);
+  background: currentColor;
+  mask: url("/dualsense-controller.svg") center / contain no-repeat;
+  -webkit-mask: url("/dualsense-controller.svg") center / contain no-repeat;
+}
+
+.dm-controller-glyph.controller-card {
+  width: min(140px, 78%);
+  height: 80px;
+  margin: 2px 0 0;
+  opacity: 0.95;
+}
+
+.dm-controller-copy {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  min-width: 0;
+  text-align: center;
+}
+
+.dm-controller-copy strong {
+  overflow-wrap: break-word;
+  line-height: 1.18;
+  font-size: 15px;
+}
+
+.dm-controller-copy small {
+  overflow-wrap: break-word;
+  line-height: 1.3;
+  color: var(--ink-muted);
+}
+
+.dm-controller-copy .dm-controller-id {
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  opacity: 0.78;
+}
+
+.dm-controller-capabilities {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.dm-controller-capabilities em {
+  padding: 3px 6px;
+  border-radius: 4px;
+  color: var(--ink);
+  background: var(--surface-raised);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.dm-controller-capabilities.expanded {
+  justify-content: flex-start;
+  margin-top: 4px;
+}
+
+.dm-controller-rename-button,
+.dm-controller-expand-button,
+.dm-controller-rename-actions button {
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-s);
+  color: var(--ink);
+  background: var(--surface-raised);
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.dm-controller-rename-button:hover,
+.dm-controller-expand-button:hover,
+.dm-controller-rename-actions button:hover {
+  border-color: var(--accent-outline);
+  background: var(--accent-tint);
+}
+
+.dm-controller-card-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
+.dm-controller-details {
+  width: 100%;
+  margin-top: 6px;
+  padding: 12px;
+  border-top: 1px solid var(--hairline);
+  background: var(--bg-rail);
+  border-radius: 0 0 var(--radius-s) var(--radius-s);
+  text-align: left;
+}
+
+.dm-controller-details-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+  margin: 0;
+}
+
+.dm-controller-details-grid > div {
+  min-width: 0;
+}
+
+.dm-controller-details-grid > div.wide {
+  grid-column: 1 / -1;
+}
+
+.dm-controller-details-grid dt {
+  margin: 0 0 2px;
+  color: var(--ink-muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.dm-controller-details-grid dd {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: break-word;
+}
+
+.dm-controller-details-grid dd.mono {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+}
+
+.dm-controller-rename-input {
+  width: min(240px, 100%);
+  height: 34px;
+  border: 1px solid var(--accent-outline);
+  border-radius: var(--radius-s);
+  color: var(--ink);
+  background: var(--surface-raised);
+  font-size: 13px;
+  font-weight: 800;
+  outline: none;
+  padding: 0 10px;
+  text-align: center;
+}
+
+.dm-controller-rename-wrap {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  width: 100%;
+}
+
+.dm-controller-rename-actions {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+
+@media (max-width: 720px) {
+  .dm-controller-card {
+    min-height: 220px;
+  }
+}

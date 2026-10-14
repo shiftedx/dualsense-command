@@ -1,0 +1,88 @@
+name: CI
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  release-contract:
+    name: Release metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - run: node --test tools/check-release.test.mjs
+      - run: node tools/check-docs.mjs
+      - run: node tools/check-release.mjs
+
+  rust:
+    name: Rust ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      # hidapi (and friends) need libudev on Linux runners.
+      - name: Install Linux build deps
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - name: Format check
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Test
+        run: cargo test --workspace --all-features
+      - name: Production feature configuration
+        run: cargo check --workspace --release --locked
+      - name: Installer smoke preflight tests
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./packaging/windows-installer-smoke.test.ps1
+
+  broker:
+    name: Broker build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet build tools/dscc-hidmaestro-broker --configuration Release --nologo
+
+  web:
+    name: Web build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run typecheck
+      - run: npm run test:source-audit
+      - run: npm run test:button-map
+      - run: npm run test:snapshot-map
+      - run: npm run test:haptics-graph
+      - run: npm run test:profile-workflows
+      - run: npm run test:profile-browser
+      - run: npm run build
+      - run: npm run test:release-size
+      - run: npm run test:visual-smoke
+      - run: npm run test:curve-drag

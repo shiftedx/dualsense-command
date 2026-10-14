@@ -1,0 +1,80 @@
+/* Narrow-viewport adjustments for the tuning instruments. The document
+   scroll model lives in shell-v2.css and needs no overrides here. */
+
+@media (max-width: 1180px) {
+  .dm-parameter-strip {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+
+  .dm-physics {
+    grid-template-rows: auto auto auto;
+  }
+
+  .dm-curve-stack {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: none;
+    align-items: start;
+  }
+
+  .dm-curve-module {
+    grid-template-rows: auto 220px auto;
+  }
+
+  .dm-curve-frame {
+    height: 220px;
+  }
+
+  .dm-trigger-curve {
+    min-height: 0;
+  }
+}
+
+@media (max-width: 900px) {
+  .dm-curve-stack {
+    grid-template-columns: 1fr;
+  }
+
+  .dm-curve-module {
+    grid-template-rows: auto 180px auto;
+  }
+
+  .dm-curve-frame {
+    height: 180px;
+  }
+
+  .dm-slider-bank {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .dm-physics {
+    padding: 14px;
+  }
+
+  .dm-curve-module {
+    grid-template-rows: auto 170px auto;
+  }
+
+  .dm-curve-frame {
+    height: 170px;
+  }
+
+  .dm-slider-bank,
+  .dm-channel-strip,
+  .dm-led-row,
+  .dm-support-panel,
+  .dm-global-feel-controls,
+  .dm-pattern-grid,
+  .dm-vibration-mode-grid,
+  .dm-body-mode-toggle,
+  .dm-effect-advanced-grid,
+  .dm-channel-signal-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .dm-channel-strip {
+    align-items: stretch;
+  }
+}

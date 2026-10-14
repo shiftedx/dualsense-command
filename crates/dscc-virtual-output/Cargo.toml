@@ -1,0 +1,14 @@
+[package]
+name = "dscc-virtual-output"
+version = "0.5.1"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+test-mocks = []
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

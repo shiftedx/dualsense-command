@@ -1,0 +1,741 @@
+param(
+    [string]$Version = "0.5.1",
+    [string]$TargetTriple,
+    [switch]$SkipWebBuild,
+    [switch]$AllowDebugAgent,
+    [ValidateSet("Standard", "Bridge", "BridgeFrameworkDependent")]
+    [string]$InstallerFlavor = "Standard",
+    [switch]$FrameworkDependentBroker,
+    [string]$BrokerPublishPath,
+    [string]$CertificatePath,
+    [string]$CertificatePassword,
+    [switch]$Unsigned,
+    [string]$TimestampUrl = 'http://timestamp.digicert.com',
+    [ValidateSet("0", "1")]
+    [string]$DefaultStartWithWindows = "0",
+    [ValidateSet("0", "1")]
+    [string]$DefaultCreateDesktopShortcut = "0",
+    [ValidateSet("0", "1")]
+    [string]$DefaultLaunchAfterInstall = "1"
+)
+
+$ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($CertificatePath) -and -not $Unsigned) {
+    throw "MSI packaging requires -CertificatePath or explicit -Unsigned for clearly labeled unsigned artifacts."
+}
+if ($Unsigned -and -not [string]::IsNullOrWhiteSpace($CertificatePath)) {
+    throw "Choose a signed artifact or -Unsigned, not both."
+}
+
+function Resolve-RepoRoot {
+    $scriptDir = Split-Path -Parent $PSCommandPath
+    return (Resolve-Path (Join-Path $scriptDir "..")).Path
+}
+
+function Escape-Xml([string]$Value) {
+    return [System.Security.SecurityElement]::Escape($Value)
+}
+
+function New-SafeId([string]$Prefix, [int]$Index) {
+    return "{0}_{1}" -f $Prefix, $Index
+}
+
+function New-ComponentGuid([string]$Seed) {
+    $md5 = [System.Security.Cryptography.MD5]::Create()
+    try {
+        $hash = $md5.ComputeHash([System.Text.Encoding]::UTF8.GetBytes("DualSenseCommandCenter|$Seed"))
+        $guidBytes = New-Object byte[] 16
+        [Array]::Copy($hash, $guidBytes, 16)
+        return "{0}{1}{2}" -f "{", ([Guid]::new($guidBytes)).ToString().ToUpperInvariant(), "}"
+    } finally {
+        $md5.Dispose()
+    }
+}
+
+function Add-TextFile([string]$Path, [string]$Content) {
+    $dir = Split-Path -Parent $Path
+    if (-not (Test-Path $dir)) {
+        New-Item -ItemType Directory -Path $dir | Out-Null
+    }
+    Set-Content -LiteralPath $Path -Value $Content -Encoding ASCII
+}
+
+function Assert-InstallerTargetPath([string]$Path) {
+    $resolved = [IO.Path]::GetFullPath($Path)
+    $allowed = [IO.Path]::GetFullPath($targetRoot).TrimEnd('\') + '\'
+    if ((Test-Path -LiteralPath $targetRoot) -and ((Get-Item -LiteralPath $targetRoot -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw "Refusing installer cleanup under redirected target root."
+    }
+    if (-not $resolved.StartsWith($allowed, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing filesystem cleanup outside installer target: $resolved"
+    }
+    $ancestor = $resolved
+    while ($ancestor -and $ancestor.StartsWith($allowed, [StringComparison]::OrdinalIgnoreCase)) {
+        if ((Test-Path -LiteralPath $ancestor) -and ((Get-Item -LiteralPath $ancestor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "Refusing installer cleanup through redirected path: $ancestor"
+        }
+        $ancestor = Split-Path -Parent $ancestor
+    }
+}
+
+function Copy-DirectoryClean([string]$Source, [string]$Destination) {
+    Assert-InstallerTargetPath $Destination
+    if (Test-Path $Destination) {
+        Remove-Item -LiteralPath $Destination -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $Destination | Out-Null
+    Copy-Item -Path (Join-Path $Source "*") -Destination $Destination -Recurse -Force
+}
+
+function Copy-FilesClean([string[]]$Files, [string]$Destination) {
+    Assert-InstallerTargetPath $Destination
+    if (Test-Path $Destination) {
+        Remove-Item -LiteralPath $Destination -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $Destination | Out-Null
+    foreach ($file in $Files) {
+        Copy-Item -LiteralPath $file -Destination $Destination -Force
+    }
+}
+
+function Assert-InstallerFlavorStaging {
+    param(
+        [Parameter(Mandatory = $true)][string]$StagingRoot,
+        [Parameter(Mandatory = $true)][string]$EffectiveFlavor
+    )
+
+    $brokerDir = Join-Path $StagingRoot "hidmaestro"
+    $brokerExists = Test-Path -LiteralPath $brokerDir
+    if ($EffectiveFlavor -eq "Standard") {
+        if ($brokerExists) {
+            throw "Standard installer staging must not include the HIDMaestro broker."
+        }
+        return
+    }
+
+    if (-not $brokerExists) {
+        throw "$EffectiveFlavor installer staging must include the HIDMaestro broker."
+    }
+
+    foreach ($required in @("dscc-hidmaestro-broker.exe", "HIDMaestro.Core.dll", "THIRD_PARTY_NOTICES.txt")) {
+        if (-not (Test-Path -LiteralPath (Join-Path $brokerDir $required))) {
+            throw "$EffectiveFlavor installer staging is missing $required."
+        }
+    }
+
+    if ($EffectiveFlavor -eq "BridgeFrameworkDependent") {
+        foreach ($required in @("dscc-hidmaestro-broker.dll", "dscc-hidmaestro-broker.deps.json", "dscc-hidmaestro-broker.runtimeconfig.json")) {
+            if (-not (Test-Path -LiteralPath (Join-Path $brokerDir $required))) {
+                throw "BridgeFrameworkDependent installer staging is missing $required."
+            }
+        }
+    }
+}
+
+function Assert-FileSha256([string]$Path, [string]$ExpectedHash) {
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Expected file does not exist: $Path"
+    }
+    $actualHash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToUpperInvariant()
+    if ($actualHash -ne $ExpectedHash.ToUpperInvariant()) {
+        throw "Hash mismatch for $Path. Expected $ExpectedHash but found $actualHash."
+    }
+}
+
+function Ensure-Wix3([string]$TargetRoot) {
+    $toolDir = Join-Path $TargetRoot "tools\wix314"
+    $candle = Join-Path $toolDir "candle.exe"
+    $light = Join-Path $toolDir "light.exe"
+    $wixSha256 = "6AC824E1642D6F7277D0ED7EA09411A508F6116BA6FAE0AA5F2C7DAA2FF43D31"
+
+    if ((Test-Path $candle) -and (Test-Path $light)) {
+        return @{
+            Candle = $candle
+            Light = $light
+        }
+    }
+
+    $toolsRoot = Join-Path $TargetRoot "tools"
+    $zipPath = Join-Path $toolsRoot "wix314-binaries.zip"
+    New-Item -ItemType Directory -Path $toolsRoot -Force | Out-Null
+
+    if (-not (Test-Path $zipPath)) {
+        $wixUrl = "https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip"
+        Write-Output "Downloading WiX Toolset v3.14.1 portable binaries..."
+        Invoke-WebRequest -Uri $wixUrl -OutFile $zipPath
+    }
+    Assert-FileSha256 -Path $zipPath -ExpectedHash $wixSha256
+
+    if (Test-Path $toolDir) {
+        Assert-InstallerTargetPath $toolDir
+        Remove-Item -LiteralPath $toolDir -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $toolDir -Force | Out-Null
+    Expand-Archive -LiteralPath $zipPath -DestinationPath $toolDir -Force
+
+    if (-not ((Test-Path $candle) -and (Test-Path $light))) {
+        throw "WiX portable binaries did not extract correctly."
+    }
+
+    return @{
+        Candle = $candle
+        Light = $light
+    }
+}
+
+function Find-SignTool {
+    # Search common Windows 10/11 SDK locations for the newest x64 signtool.exe.
+    $candidates = @()
+    $sdkRoots = @(
+        (Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'),
+        (Join-Path $env:ProgramFiles 'Windows Kits\10\bin')
+    )
+    foreach ($root in $sdkRoots) {
+        if ([string]::IsNullOrWhiteSpace($root)) { continue }
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        $candidates += Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                $exe = Join-Path $_.FullName 'x64\signtool.exe'
+                if (Test-Path -LiteralPath $exe) {
+                    [pscustomobject]@{ Version = $_.Name; Path = $exe }
+                }
+            }
+    }
+
+    if ($candidates.Count -eq 0) {
+        # Fall back to PATH lookup.
+        $onPath = Get-Command signtool.exe -ErrorAction SilentlyContinue
+        if ($onPath) { return $onPath.Source }
+        return $null
+    }
+
+    # Sort by version-folder name (lexicographic on the 10.0.x.0 strings works well enough);
+    # try a real System.Version parse first and fall back to the string sort.
+    $sorted = $candidates | Sort-Object -Property @{
+        Expression = {
+            try { [System.Version]::Parse($_.Version) } catch { [System.Version]::new(0, 0) }
+        }
+    }, Version -Descending
+    return $sorted[0].Path
+}
+
+function Invoke-Signtool {
+    param(
+        [Parameter(Mandatory = $true)][string]$SignTool,
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string]$CertificatePath,
+        [Parameter(Mandatory = $true)][string]$CertificatePassword,
+        [Parameter(Mandatory = $true)][string]$TimestampUrl,
+        [string]$Description = 'DualSense Command Center'
+    )
+    & $SignTool sign /f $CertificatePath /p $CertificatePassword /tr $TimestampUrl /td sha256 /fd sha256 /d $Description $FilePath
+    if ($LASTEXITCODE -ne 0) {
+        throw "signtool failed for '$FilePath' with exit code $LASTEXITCODE."
+    }
+    & $SignTool verify /pa /all /tw $FilePath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Signature verification failed for '$FilePath'."
+    }
+}
+
+function Write-DirectoryXml {
+    param(
+        [string]$DirectoryPath,
+        [string]$DirectoryId,
+        [int]$Indent,
+        [ref]$NextId,
+        [System.Collections.Generic.List[string]]$ComponentRefs,
+        [System.Collections.Generic.List[string]]$Lines
+    )
+
+    $pad = " " * $Indent
+    $cleanupComponentId = New-SafeId "RemoveFolderComponent" $NextId.Value
+    $cleanupId = New-SafeId "RemoveFolder" $NextId.Value
+    $cleanupGuid = New-ComponentGuid ("folder:{0}" -f $DirectoryId)
+    $NextId.Value += 1
+    $ComponentRefs.Add(("      <ComponentRef Id=""{0}"" />" -f $cleanupComponentId))
+    $Lines.Add(('{0}<Component Id="{1}" Guid="{2}">' -f $pad, $cleanupComponentId, $cleanupGuid))
+    $Lines.Add(('{0}  <RemoveFolder Id="{1}" Directory="{2}" On="uninstall" />' -f $pad, $cleanupId, $DirectoryId))
+    $Lines.Add(('{0}  <RegistryValue Root="HKCU" Key="Software\DualSenseCommand\DualSenseCommandCenter\Folders" Name="{1}" Type="integer" Value="1" KeyPath="yes" />' -f $pad, $cleanupComponentId))
+    $Lines.Add(('{0}</Component>' -f $pad))
+
+    foreach ($file in Get-ChildItem -LiteralPath $DirectoryPath -File | Sort-Object Name) {
+        if ($DirectoryId -eq "INSTALLFOLDER" -and $file.Name -eq "dscc-tray.exe") {
+            $componentId = "TrayExeComponent"
+            $fileId = "TrayExe"
+        } elseif ($DirectoryId -eq "INSTALLFOLDER" -and $file.Name -eq "dscc-agent.exe") {
+            $componentId = "AgentExeComponent"
+            $fileId = "AgentExe"
+        } else {
+            $componentId = New-SafeId "Component" $NextId.Value
+            $fileId = New-SafeId "File" $NextId.Value
+        }
+        $componentGuid = New-ComponentGuid ("file:{0}:{1}" -f $DirectoryId, $file.Name)
+        $NextId.Value += 1
+        $ComponentRefs.Add(("      <ComponentRef Id=""{0}"" />" -f $componentId))
+        $Lines.Add(('{0}<Component Id="{1}" Guid="{2}">' -f $pad, $componentId, $componentGuid))
+        $Lines.Add(('{0}  <File Id="{1}" Source="{2}" />' -f $pad, $fileId, (Escape-Xml $file.FullName)))
+        $Lines.Add(('{0}  <RegistryValue Root="HKCU" Key="Software\DualSenseCommand\DualSenseCommandCenter\Files" Name="{1}" Type="integer" Value="1" KeyPath="yes" />' -f $pad, $componentId))
+        $Lines.Add(('{0}</Component>' -f $pad))
+    }
+
+    foreach ($dir in Get-ChildItem -LiteralPath $DirectoryPath -Directory | Sort-Object Name) {
+        $childDirId = New-SafeId "Dir" $NextId.Value
+        $NextId.Value += 1
+        $Lines.Add(('{0}<Directory Id="{1}" Name="{2}">' -f $pad, $childDirId, (Escape-Xml $dir.Name)))
+        Write-DirectoryXml -DirectoryPath $dir.FullName -DirectoryId $childDirId -Indent ($Indent + 2) -NextId $NextId -ComponentRefs $ComponentRefs -Lines $Lines
+        $Lines.Add(('{0}</Directory>' -f $pad))
+    }
+}
+
+$repoRoot = Resolve-RepoRoot
+$webRoot = Join-Path $repoRoot "web"
+$licensePath = Join-Path $repoRoot "LICENSE"
+$thirdPartyNoticesPath = Join-Path $repoRoot "THIRD_PARTY_NOTICES.md"
+$dependencyNoticesPath = Join-Path $repoRoot "DEPENDENCY_LICENSES.txt"
+& node (Join-Path $repoRoot 'tools/check-release.mjs') --distribution
+if ($LASTEXITCODE -ne 0) { throw 'Redistribution/license checks failed before packaging.' }
+$trayIconPath = Join-Path $repoRoot "crates\dscc-tray\assets\dscc-tray.ico"
+$targetRoot = Join-Path $repoRoot "target"
+$stagingRoot = Join-Path $targetRoot "installer\staging"
+$wixRoot = Join-Path $targetRoot "installer\wix"
+$msiRoot = Join-Path $targetRoot "installer"
+$effectiveFlavor = if ($FrameworkDependentBroker) { "BridgeFrameworkDependent" } else { $InstallerFlavor }
+$includeBroker = $effectiveFlavor -ne "Standard"
+$frameworkDependentBroker = $effectiveFlavor -eq "BridgeFrameworkDependent"
+$installerFlavorSlug = switch ($effectiveFlavor) {
+    "Standard" { "standard" }
+    "Bridge" { "bridge" }
+    "BridgeFrameworkDependent" { "bridge-framework-dependent" }
+}
+$installerFlavorLabel = switch ($effectiveFlavor) {
+    "Standard" { "DSCC Standard" }
+    "Bridge" { "DSCC Bridge" }
+    "BridgeFrameworkDependent" { "DSCC Bridge Framework-Dependent" }
+}
+$msiName = "DualSenseCommandCenter-{0}-{1}.msi" -f $Version, $installerFlavorSlug
+$msiPath = Join-Path $msiRoot $msiName
+
+if (-not $SkipWebBuild) {
+    Push-Location $webRoot
+    try {
+        & npm.cmd run build
+    } finally {
+        Pop-Location
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($TargetTriple)) {
+    $buildRoot = $targetRoot
+} else {
+    $buildRoot = Join-Path $targetRoot $TargetTriple
+}
+
+$releaseAgent = Join-Path $buildRoot "release\dscc-agent.exe"
+$debugAgent = Join-Path $buildRoot "debug\dscc-agent.exe"
+$releaseTray = Join-Path $buildRoot "release\dscc-tray.exe"
+$debugTray = Join-Path $buildRoot "debug\dscc-tray.exe"
+$releaseCli = Join-Path $buildRoot "release\dscc-cli.exe"
+$debugCli = Join-Path $buildRoot "debug\dscc-cli.exe"
+$defaultBrokerPublish = Join-Path $repoRoot "tools\dscc-hidmaestro-broker\bin\Release\net10.0\win-x64\publish"
+$brokerPublish = if ([string]::IsNullOrWhiteSpace($BrokerPublishPath)) {
+    $defaultBrokerPublish
+} else {
+    (Resolve-Path -LiteralPath $BrokerPublishPath).Path
+}
+$brokerExe = Join-Path $brokerPublish "dscc-hidmaestro-broker.exe"
+$brokerDll = Join-Path $brokerPublish "dscc-hidmaestro-broker.dll"
+$brokerDepsJson = Join-Path $brokerPublish "dscc-hidmaestro-broker.deps.json"
+$brokerRuntimeConfigJson = Join-Path $brokerPublish "dscc-hidmaestro-broker.runtimeconfig.json"
+$brokerCoreDll = Join-Path $brokerPublish "HIDMaestro.Core.dll"
+$brokerFlavor = if (-not $includeBroker) {
+    "not bundled"
+} elseif ($frameworkDependentBroker) {
+    "framework-dependent"
+} else {
+    "self-contained"
+}
+if (Test-Path $releaseAgent) {
+    $agentExe = $releaseAgent
+} elseif ($AllowDebugAgent -and (Test-Path $debugAgent)) {
+    $agentExe = $debugAgent
+} else {
+    $targetHint = if ([string]::IsNullOrWhiteSpace($TargetTriple)) { "" } else { " --target $TargetTriple" }
+    throw "No release dscc-agent.exe found. Build with cargo build -p dscc-agent --release$targetHint, or pass -AllowDebugAgent for a local test MSI."
+}
+if (Test-Path $releaseTray) {
+    $trayExe = $releaseTray
+} elseif ($AllowDebugAgent -and (Test-Path $debugTray)) {
+    $trayExe = $debugTray
+} else {
+    $targetHint = if ([string]::IsNullOrWhiteSpace($TargetTriple)) { "" } else { " --target $TargetTriple" }
+    throw "No release dscc-tray.exe found. Build with cargo build -p dscc-tray --release$targetHint, or pass -AllowDebugAgent for a local test MSI."
+}
+if (Test-Path $releaseCli) {
+    $cliExe = $releaseCli
+} elseif ($AllowDebugAgent -and (Test-Path $debugCli)) {
+    $cliExe = $debugCli
+} else {
+    $targetHint = if ([string]::IsNullOrWhiteSpace($TargetTriple)) { "" } else { " --target $TargetTriple" }
+    throw "No release dscc-cli.exe found. Build with cargo build -p dscc-cli --release$targetHint, or pass -AllowDebugAgent for a local test MSI."
+}
+
+$webDist = Join-Path $webRoot "dist"
+if (-not (Test-Path (Join-Path $webDist "index.html"))) {
+    throw "web/dist is missing. Run npm run build first."
+}
+if (Test-Path -LiteralPath (Join-Path $webDist 'dualsense')) {
+    throw "web/dist contains removed, unverified controller PNG assets. Rebuild the web UI before packaging."
+}
+if (-not (Test-Path -LiteralPath $licensePath)) {
+    throw "LICENSE is missing."
+}
+if (-not (Test-Path -LiteralPath $thirdPartyNoticesPath)) {
+    throw "THIRD_PARTY_NOTICES.md is missing."
+}
+if (-not (Test-Path -LiteralPath $trayIconPath)) {
+    throw "DSCC tray icon is missing: $trayIconPath"
+}
+if ($includeBroker -and -not (Test-Path $brokerExe)) {
+    if ($frameworkDependentBroker) {
+        throw "HIDMaestro framework-dependent broker publish output is missing. Build it with dotnet publish tools/dscc-hidmaestro-broker -c Release -r win-x64 --self-contained false -p:PublishSingleFile=false -p:DebugType=None -p:DebugSymbols=false -p:HidMaestroCoreDll=<path-to-HIDMaestro.Core.dll> before packaging. Target machines must have the x64 .NET 10 Runtime installed."
+    }
+    throw "HIDMaestro broker publish output is missing. Build it with dotnet publish tools/dscc-hidmaestro-broker -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=None -p:DebugSymbols=false -p:HidMaestroCoreDll=<path-to-HIDMaestro.Core.dll> before packaging."
+}
+if ($includeBroker -and -not (Test-Path $brokerCoreDll)) {
+    throw "HIDMaestro.Core.dll is missing from the broker publish output. Publish with -p:HidMaestroCoreDll=<path-to-HIDMaestro.Core.dll>; the file must remain next to the broker exe so the provider can start."
+}
+if ($includeBroker -and $frameworkDependentBroker) {
+    $frameworkDependentFiles = @($brokerDll, $brokerDepsJson, $brokerRuntimeConfigJson)
+    foreach ($requiredBrokerFile in $frameworkDependentFiles) {
+        if (-not (Test-Path -LiteralPath $requiredBrokerFile)) {
+            throw "HIDMaestro framework-dependent broker publish output is incomplete. Missing '$requiredBrokerFile'. Rebuild with dotnet publish tools/dscc-hidmaestro-broker -c Release -r win-x64 --self-contained false -p:PublishSingleFile=false -p:DebugType=None -p:DebugSymbols=false -p:HidMaestroCoreDll=<path-to-HIDMaestro.Core.dll>."
+        }
+    }
+    $runtimeConfig = Get-Content -LiteralPath $brokerRuntimeConfigJson -Raw
+    if ($runtimeConfig -match '"includedFrameworks"') {
+        throw "HIDMaestro broker runtimeconfig is self-contained. Rebuild with --self-contained false for the framework-dependent installer."
+    }
+    if ($runtimeConfig -notmatch '"framework"') {
+        throw "HIDMaestro broker runtimeconfig does not declare a shared .NET framework prerequisite."
+    }
+} elseif ($includeBroker) {
+    $frameworkDependentMarkers = @($brokerDll, $brokerDepsJson, $brokerRuntimeConfigJson)
+    foreach ($markerFile in $frameworkDependentMarkers) {
+        if (Test-Path -LiteralPath $markerFile) {
+            throw "HIDMaestro broker publish output appears to be framework-dependent because '$markerFile' exists. Rebuild the broker with --self-contained true and -p:PublishSingleFile=true, or use -InstallerFlavor BridgeFrameworkDependent for the prerequisite-based MSI."
+        }
+    }
+}
+
+if (Test-Path $stagingRoot) {
+    Assert-InstallerTargetPath $stagingRoot
+    Remove-Item -LiteralPath $stagingRoot -Recurse -Force
+}
+New-Item -ItemType Directory -Path $stagingRoot | Out-Null
+New-Item -ItemType Directory -Path $wixRoot -Force | Out-Null
+
+Copy-Item -LiteralPath $agentExe -Destination (Join-Path $stagingRoot "dscc-agent.exe") -Force
+Copy-Item -LiteralPath $trayExe -Destination (Join-Path $stagingRoot "dscc-tray.exe") -Force
+Copy-Item -LiteralPath $cliExe -Destination (Join-Path $stagingRoot "dscc-cli.exe") -Force
+Copy-Item -LiteralPath $licensePath -Destination (Join-Path $stagingRoot "LICENSE.txt") -Force
+Copy-Item -LiteralPath $thirdPartyNoticesPath -Destination (Join-Path $stagingRoot "THIRD_PARTY_NOTICES.txt") -Force
+if (-not (Test-Path -LiteralPath $dependencyNoticesPath)) { throw "Generate DEPENDENCY_LICENSES.txt before packaging." }
+Copy-Item -LiteralPath $dependencyNoticesPath -Destination (Join-Path $stagingRoot "DEPENDENCY_LICENSES.txt") -Force
+Copy-DirectoryClean -Source $webDist -Destination (Join-Path $stagingRoot "web\dist")
+if ($includeBroker) {
+    if ($frameworkDependentBroker) {
+        Copy-FilesClean -Files @($brokerExe, $brokerDll, $brokerDepsJson, $brokerRuntimeConfigJson, $brokerCoreDll) -Destination (Join-Path $stagingRoot "hidmaestro")
+    } else {
+        if (-not (Test-Path -LiteralPath (Join-Path $brokerPublish 'DOTNET_RUNTIME_NOTICES.txt'))) {
+            throw "Self-contained Bridge requires DOTNET_RUNTIME_NOTICES.txt from the exact restored .NET runtime pack licenses."
+        }
+        Copy-DirectoryClean -Source $brokerPublish -Destination (Join-Path $stagingRoot "hidmaestro")
+    }
+    Copy-Item -LiteralPath $thirdPartyNoticesPath -Destination (Join-Path $stagingRoot "hidmaestro\THIRD_PARTY_NOTICES.txt") -Force
+}
+Assert-InstallerFlavorStaging -StagingRoot $stagingRoot -EffectiveFlavor $effectiveFlavor
+
+# Resolve signtool once if signing was requested, and prompt for the password if it
+# wasn't supplied. Sign the staged binaries here (before WiX harvests them) so the
+# bundled .exe files inside the MSI carry the signature too.
+$signTool = $null
+if (-not [string]::IsNullOrWhiteSpace($CertificatePath)) {
+    if (-not (Test-Path -LiteralPath $CertificatePath)) {
+        throw "CertificatePath '$CertificatePath' does not exist."
+    }
+    if ([string]::IsNullOrEmpty($CertificatePassword)) {
+        $secure = Read-Host -AsSecureString -Prompt "Password for $CertificatePath"
+        $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+        try {
+            $CertificatePassword = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+        } finally {
+            [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+        }
+    }
+    $signTool = Find-SignTool
+    if (-not $signTool) {
+        throw "Code signing requested but signtool.exe could not be located. Install the Windows 10/11 SDK or add signtool.exe to PATH."
+    }
+
+    $signingFiles = @((Join-Path $stagingRoot 'dscc-agent.exe'), (Join-Path $stagingRoot 'dscc-tray.exe'), (Join-Path $stagingRoot 'dscc-cli.exe'))
+    if ($includeBroker) {
+        $signingFiles += Join-Path $stagingRoot 'hidmaestro\dscc-hidmaestro-broker.exe'
+        $brokerAssembly = Join-Path $stagingRoot 'hidmaestro\dscc-hidmaestro-broker.dll'
+        if (Test-Path -LiteralPath $brokerAssembly) { $signingFiles += $brokerAssembly }
+    }
+    foreach ($staged in $signingFiles) {
+        Invoke-Signtool -SignTool $signTool -FilePath $staged -CertificatePath $CertificatePath -CertificatePassword $CertificatePassword -TimestampUrl $TimestampUrl
+    }
+}
+
+$stopScript = @"
+@echo off
+"%~dp0dscc-tray.exe" --stop
+exit /b %errorlevel%
+"@
+
+$backupStateScript = @"
+@echo off
+setlocal
+set "DSCC_VERSION=%~1"
+if "%DSCC_VERSION%"=="" set "DSCC_VERSION=unknown"
+
+call :BackupState "%APPDATA%\DualSenseCommand\DualSenseCommandCenter\config"
+
+if not "%DSCC_CONFIG_DIR%"=="" (
+    call :BackupState "%DSCC_CONFIG_DIR%"
+)
+
+exit /b 0
+
+:BackupState
+set "CONFIG_DIR=%~1"
+if "%CONFIG_DIR%"=="" exit /b 0
+set "STATE_FILE=%CONFIG_DIR%\state.json"
+if not exist "%STATE_FILE%" exit /b 0
+set "BACKUP_FILE=%CONFIG_DIR%\state.preinstall-%DSCC_VERSION%.json"
+if exist "%BACKUP_FILE%" (
+    set "BACKUP_FILE=%CONFIG_DIR%\state.preinstall-%DSCC_VERSION%-%RANDOM%.json"
+)
+copy /Y "%STATE_FILE%" "%BACKUP_FILE%" >nul 2>nul
+exit /b 0
+"@
+
+$readme = @"
+DualSense Command Center test build
+
+1. Install the MSI.
+2. Open "DualSense Command Center" from the Start menu.
+3. The tray icon starts the local agent and opens the UI.
+4. Right-click the tray icon to open the UI, restart DSCC, stop DSCC, or quit.
+5. If selected during setup, the login startup entry starts the tray and agent silently.
+6. Hardware output is enabled by default when the agent starts.
+7. For Forza testing, enable Data Out in-game and point it at 127.0.0.1 port 5300.
+8. The local UI opens at http://127.0.0.1:43473/.
+9. During install/upgrade, DSCC backs up persisted user state to state.preinstall-$Version.json when state.json exists.
+10. If the UI will not open, run dscc-cli.exe support-bundle from this folder and attach the sanitized output to a bug report.
+11. Installer flavor: $installerFlavorLabel.
+12. HIDMaestro broker package flavor: $brokerFlavor.
+13. Bridge installers include the HIDMaestro MIT license notice at hidmaestro\THIRD_PARTY_NOTICES.txt.
+14. Standard is the normal installer for Steam Input, controller tuning, haptics, profiles, and diagnostics. Use a Bridge installer only when you want DSCC Input Bridge testing for non-Steam games.
+15. Setup options can create a desktop shortcut, start DSCC with Windows, and launch DSCC after install.
+"@
+
+Add-TextFile -Path (Join-Path $stagingRoot "Stop DSCC.cmd") -Content $stopScript
+Add-TextFile -Path (Join-Path $stagingRoot "Backup DSCC State.cmd") -Content $backupStateScript
+Add-TextFile -Path (Join-Path $stagingRoot "README_TESTING.txt") -Content $readme
+
+$licenseRtfPath = Join-Path $wixRoot "LICENSE.rtf"
+$licenseRtf = @"
+{\rtf1\ansi\deff0{\fonttbl{\f0 Segoe UI;}}\f0\fs18
+DualSense Command Center is licensed under the Apache License, Version 2.0.\par
+\par
+The full license is installed as LICENSE.txt next to the DSCC executables.\par
+\par
+Install DSCC only if you accept the license terms.\par
+}
+"@
+Add-TextFile -Path $licenseRtfPath -Content $licenseRtf
+
+$componentRefs = [System.Collections.Generic.List[string]]::new()
+$directoryLines = [System.Collections.Generic.List[string]]::new()
+$nextId = 1
+$nextIdRef = [ref]$nextId
+Write-DirectoryXml -DirectoryPath $stagingRoot -DirectoryId "INSTALLFOLDER" -Indent 8 -NextId $nextIdRef -ComponentRefs $componentRefs -Lines $directoryLines
+
+$shortcutComponentId = "StartMenuShortcuts"
+$componentRefs.Add(('      <ComponentRef Id="{0}" />' -f $shortcutComponentId))
+$localProgramsCleanupComponentId = "LocalProgramsFolderCleanup"
+$componentRefs.Add(('      <ComponentRef Id="{0}" />' -f $localProgramsCleanupComponentId))
+$runAtLoginComponentId = "RunAtLogin"
+$componentRefs.Add(('      <ComponentRef Id="{0}" />' -f $runAtLoginComponentId))
+$runAtLoginCleanupComponentId = "RunAtLoginCleanup"
+$componentRefs.Add(('      <ComponentRef Id="{0}" />' -f $runAtLoginCleanupComponentId))
+$desktopShortcutComponentId = "DesktopShortcutComponent"
+$componentRefs.Add(('      <ComponentRef Id="{0}" />' -f $desktopShortcutComponentId))
+$desktopShortcutCleanupComponentId = "DesktopShortcutCleanup"
+$componentRefs.Add(('      <ComponentRef Id="{0}" />' -f $desktopShortcutCleanupComponentId))
+$componentRefText = $componentRefs -join "`r`n"
+$directoryText = $directoryLines -join "`r`n"
+
+$wxs = @"
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="DualSense Command Center" Language="1033" Version="$Version" Manufacturer="DualSense Command" UpgradeCode="{7D3E3504-865B-4A72-A61B-86C977729589}">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser" />
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of DualSense Command Center is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Property Id="DSCC_START_WITH_WINDOWS" Value="$DefaultStartWithWindows" />
+    <Property Id="DSCC_CREATE_DESKTOP_SHORTCUT" Value="$DefaultCreateDesktopShortcut" />
+    <Property Id="DSCC_LAUNCH_AFTER_INSTALL" Value="$DefaultLaunchAfterInstall" />
+    <Property Id="ARPPRODUCTICON" Value="DsccTrayIcon" />
+    <Icon Id="DsccTrayIcon" SourceFile="$(Escape-Xml $trayIconPath)" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(Escape-Xml $licenseRtfPath)" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="LocalProgramsFolder" Name="Programs">
+          <Directory Id="INSTALLFOLDER" Name="DualSense Command Center">
+$directoryText
+          </Directory>
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="DualSense Command Center" />
+      </Directory>
+      <Directory Id="DesktopFolder" Name="Desktop" />
+    </Directory>
+
+    <DirectoryRef Id="ApplicationProgramsFolder">
+      <Component Id="$shortcutComponentId" Guid="{22BE0FA0-2187-4F88-95EF-D0A1BEB53D88}">
+        <Shortcut Id="StartMenuShortcut" Name="DualSense Command Center" Target="[INSTALLFOLDER]dscc-tray.exe" WorkingDirectory="INSTALLFOLDER" Icon="DsccTrayIcon" IconIndex="0" />
+        <Shortcut Id="StartMenuStopShortcut" Name="Stop DualSense Command Center" Target="[INSTALLFOLDER]Stop DSCC.cmd" WorkingDirectory="INSTALLFOLDER" Icon="DsccTrayIcon" IconIndex="0" />
+        <RemoveFolder Id="ApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\DualSenseCommand\DualSenseCommandCenter" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="$runAtLoginComponentId" Guid="{CF89093D-7604-455F-8E51-5929396D60B1}">
+        <Condition>DSCC_START_WITH_WINDOWS = "1"</Condition>
+        <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="DualSense Command Center" Type="string" Value="&quot;[INSTALLFOLDER]dscc-tray.exe&quot; --startup" KeyPath="yes" />
+      </Component>
+      <Component Id="$runAtLoginCleanupComponentId" Guid="{A44C4D6F-7B76-4E29-9962-B44594F06214}">
+        <Condition>DSCC_START_WITH_WINDOWS &lt;&gt; "1"</Condition>
+        <RemoveRegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="DualSense Command Center" />
+        <RegistryValue Root="HKCU" Key="Software\DualSenseCommand\DualSenseCommandCenter\InstallOptions" Name="StartWithWindowsDisabled" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="DesktopFolder">
+      <Component Id="$desktopShortcutComponentId" Guid="{E64E8F5A-B395-4998-B94F-60F685CB2102}">
+        <Condition>DSCC_CREATE_DESKTOP_SHORTCUT = "1"</Condition>
+        <Shortcut Id="DesktopShortcut" Name="DualSense Command Center" Target="[INSTALLFOLDER]dscc-tray.exe" WorkingDirectory="INSTALLFOLDER" Icon="DsccTrayIcon" IconIndex="0" />
+        <RegistryValue Root="HKCU" Key="Software\DualSenseCommand\DualSenseCommandCenter\Shortcuts" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="$desktopShortcutCleanupComponentId" Guid="{E8203864-DA95-40C7-9E75-4C91C8370343}">
+        <Condition>DSCC_CREATE_DESKTOP_SHORTCUT &lt;&gt; "1"</Condition>
+        <RemoveFile Id="RemoveDesktopShortcut" Name="DualSense Command Center.lnk" On="install" />
+        <RegistryValue Root="HKCU" Key="Software\DualSenseCommand\DualSenseCommandCenter\InstallOptions" Name="DesktopShortcutDisabled" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="LocalProgramsFolder">
+      <Component Id="$localProgramsCleanupComponentId" Guid="{0F18B823-1C32-4A6C-8D29-3137E10DA9B0}">
+        <RemoveFolder Id="RemoveLocalProgramsFolder" Directory="LocalProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\DualSenseCommand\DualSenseCommandCenter\Folders" Name="LocalProgramsFolder" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <UI>
+      <UIRef Id="WixUI_Minimal" />
+      <Publish Dialog="WelcomeEulaDlg" Control="Install" Event="NewDialog" Value="DsccSetupOptionsDlg" Order="3">LicenseAccepted = "1"</Publish>
+      <Publish Dialog="DsccSetupOptionsDlg" Control="Back" Event="NewDialog" Value="WelcomeEulaDlg">1</Publish>
+      <Publish Dialog="DsccSetupOptionsDlg" Control="Next" Event="EndDialog" Value="Return">1</Publish>
+
+      <Dialog Id="DsccSetupOptionsDlg" Width="370" Height="270" Title="[ProductName] Setup Options">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="WixUI_Bmp_Banner" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="340" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Setup Options" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="320" Height="15" Transparent="yes" NoPrefix="yes" Text="Choose how DSCC should live on Windows." />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+
+        <Control Id="StartWithWindows" Type="CheckBox" X="25" Y="68" Width="310" Height="17" Property="DSCC_START_WITH_WINDOWS" CheckBoxValue="1" Text="Start DSCC with Windows" />
+        <Control Id="StartWithWindowsText" Type="Text" X="44" Y="86" Width="300" Height="24" Text="Recommended if you want profiles, haptics, and tray access ready after login." />
+
+        <Control Id="CreateDesktopShortcut" Type="CheckBox" X="25" Y="120" Width="310" Height="17" Property="DSCC_CREATE_DESKTOP_SHORTCUT" CheckBoxValue="1" Text="Create a desktop shortcut" />
+        <Control Id="CreateDesktopShortcutText" Type="Text" X="44" Y="138" Width="300" Height="18" Text="Adds a normal Windows shortcut that opens the DSCC tray/UI." />
+
+        <Control Id="LaunchAfterInstall" Type="CheckBox" X="25" Y="170" Width="310" Height="17" Property="DSCC_LAUNCH_AFTER_INSTALL" CheckBoxValue="1" Text="Launch DSCC after setup" />
+        <Control Id="LaunchAfterInstallText" Type="Text" X="44" Y="188" Width="300" Height="18" Text="Starts the tray and local agent once setup finishes." />
+
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)" />
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="Install" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+        </Control>
+      </Dialog>
+    </UI>
+
+    <Feature Id="MainFeature" Title="DualSense Command Center" Level="1">
+$componentRefText
+    </Feature>
+
+    <Binary Id="GracefulStopTray" SourceFile="$(Escape-Xml (Join-Path $stagingRoot 'dscc-tray.exe'))" />
+    <!-- BinaryKey selects the executable. Repeat its name in the command line
+         for CreateProcess argv[0]; otherwise Rust drops the first option.
+         https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw -->
+    <CustomAction Id="StopExistingTray" BinaryKey="GracefulStopTray" ExeCommand="dscc-tray.exe --stop" Execute="immediate" Return="check" Impersonate="yes" />
+    <CustomAction Id="BackupPersistedState" Directory="INSTALLFOLDER" ExeCommand="&quot;[INSTALLFOLDER]Backup DSCC State.cmd&quot; &quot;$Version&quot;" Execute="immediate" Return="ignore" Impersonate="yes" />
+    <CustomAction Id="LaunchTrayAfterInstall" Directory="INSTALLFOLDER" ExeCommand="&quot;[INSTALLFOLDER]dscc-tray.exe&quot;" Return="asyncNoWait" Impersonate="yes" />
+    <InstallExecuteSequence>
+      <Custom Action="StopExistingTray" Before="InstallValidate">1</Custom>
+      <Custom Action="BackupPersistedState" After="InstallFinalize">NOT REMOVE</Custom>
+      <Custom Action="LaunchTrayAfterInstall" After="BackupPersistedState">NOT REMOVE AND DSCC_LAUNCH_AFTER_INSTALL = "1"</Custom>
+    </InstallExecuteSequence>
+  </Product>
+</Wix>
+"@
+
+$wxsPath = Join-Path $wixRoot "DualSenseCommandCenter.wxs"
+Add-TextFile -Path $wxsPath -Content $wxs
+
+$wixTools = Ensure-Wix3 -TargetRoot $targetRoot
+$wixObjPath = Join-Path $wixRoot "DualSenseCommandCenter.wixobj"
+& $wixTools.Candle -nologo -arch x64 -ext WixUIExtension -out $wixObjPath $wxsPath
+if ($LASTEXITCODE -ne 0) {
+    throw "WiX candle failed with exit code $LASTEXITCODE."
+}
+& $wixTools.Light -nologo -spdb -ext WixUIExtension -sice:ICE61 -sice:ICE91 -out $msiPath $wixObjPath
+if ($LASTEXITCODE -ne 0) {
+    throw "WiX light failed with exit code $LASTEXITCODE."
+}
+
+if ($signTool) {
+    Invoke-Signtool -SignTool $signTool -FilePath $msiPath -CertificatePath $CertificatePath -CertificatePassword $CertificatePassword -TimestampUrl $TimestampUrl
+    $certSubject = try {
+        (Get-PfxCertificate -FilePath $CertificatePath -ErrorAction Stop).Subject
+    } catch {
+        '<unknown subject>'
+    }
+    Write-Output "MSI signed with $certSubject"
+} else {
+    Write-Output "MSI built unsigned (no -CertificatePath supplied)"
+}
+
+Write-Output "MSI: $msiPath"
+Write-Output "Agent: $agentExe"
+Write-Output "Tray: $trayExe"
+Write-Output "CLI: $cliExe"
+Write-Output "Installer flavor: $installerFlavorLabel"
+Write-Output "Default setup options: start-with-windows=$DefaultStartWithWindows desktop-shortcut=$DefaultCreateDesktopShortcut launch-after-install=$DefaultLaunchAfterInstall"
+if ($includeBroker) {
+    Write-Output "HIDMaestro broker: $brokerFlavor ($brokerPublish)"
+} else {
+    Write-Output "HIDMaestro broker: not bundled"
+}
+if ($frameworkDependentBroker) {
+    Write-Output "Broker prerequisite: x64 .NET 10 Runtime installed on the target machine"
+}
+Write-Output "Staging: $stagingRoot"

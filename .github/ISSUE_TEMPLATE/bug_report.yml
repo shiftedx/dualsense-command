@@ -1,0 +1,94 @@
+name: Bug report
+description: Report something broken in DSCC.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve DSCC. If DSCC opens, copy or export a
+        sanitized support bundle from the Support panel and attach it below.
+        Please do not paste raw HID paths, serial numbers, Bluetooth
+        addresses, or private Steam account paths.
+  - type: input
+    id: version
+    attributes:
+      label: DSCC version
+      description: Example: 0.3.2
+    validations:
+      required: true
+  - type: dropdown
+    id: controller
+    attributes:
+      label: Controller
+      options:
+        - DualSense
+        - DualSense Edge
+        - Other / not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection
+      options:
+        - USB
+        - Bluetooth
+        - Both
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: os_version
+    attributes:
+      label: Operating system
+      description: Example: Windows 11 24H2, Ubuntu 24.04, or Fedora 42
+  - type: textarea
+    id: support_bundle
+    attributes:
+      label: Support bundle
+      description: Attach or paste the sanitized support bundle if you can create one.
+      placeholder: I attached the exported support bundle, or DSCC would not open.
+  - type: input
+    id: hardware_matrix_step
+    attributes:
+      label: Hardware matrix step
+      description: For controller support issues, tell us which Windows hardware matrix checklist step failed.
+      placeholder: Example: Step 5, L2/R2 manual trigger preview
+  - type: input
+    id: game
+    attributes:
+      label: Game
+      description: Example: Forza Horizon 6, Assetto Corsa Rally, Global Profile
+  - type: dropdown
+    id: telemetry
+    attributes:
+      label: Telemetry status
+      options:
+        - Connected
+        - Waiting / no packets
+        - Stale
+        - Not using telemetry
+        - Not sure
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Tell us what you clicked, launched, connected, or changed.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Extra notes or screenshots
+      description: Add screenshots, release asset name, unsigned-installer warning details, or sanitized logs if useful.
