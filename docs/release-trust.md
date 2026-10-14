@@ -1,6 +1,6 @@
 # Release trust
 
-**0.5.1 is being staged as a fresh unsigned Windows installer release.** Filenames identify
+**0.5.1 is staged as a fresh unsigned Windows installer release.** Filenames identify
 unsigned MSIs; Windows may show trust prompts. Future stable releases require
 a certificate and verified signatures. Local unsigned packaging uses `-Unsigned`. See [open validation gates](production-readiness-plan.md).
 

@@ -10,7 +10,7 @@ or command line. Linux remains [beta](docs/linux-beta.md).
 
 ## Install and play
 
-**0.5.1 installers are being rebuilt for this clean public repository.**
+**0.5.1 installers are staged and awaiting publication.**
 The release will be available on the [Releases page](https://github.com/shiftedx/dualsense-command/releases)
 after validation and publication. Windows MSIs remain unsigned; expect trust prompts.
 [Build from source](docs/contributing.md) while release staging completes.
